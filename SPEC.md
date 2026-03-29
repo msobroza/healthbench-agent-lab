@@ -370,7 +370,7 @@ All agent comparisons use paired evaluation (same conversations, different agent
 
 | Layer                  | Tool                                      | Version      | Purpose |
 |------------------------|-------------------------------------------|-------------|---------|
-| Package manager        | uv                                        | latest       | Fast Python dependency management, venv creation |
+| Package manager        | uv + uv_build                             | latest       | Fast dependency management, venv creation, build backend |
 | Python                 | CPython                                   | 3.11+        | Runtime |
 | Agent framework        | google-adk[eval]                          | ≥1.0.0       | Agent definition, tool integration, eval engine |
 | Experiment tracking    | MLflow                                    | ≥2.18.0      | Log params, metrics, artifacts across runs |
@@ -399,12 +399,18 @@ All agent comparisons use paired evaluation (same conversations, different agent
 
 ```
 healthbench-agent-lab/
-├── pyproject.toml              # uv project config, all dependencies
+├── pyproject.toml              # uv project config (name: healthbench-agent), all dependencies
 ├── .python-version             # pins Python 3.11
 ├── .env.example                # API key template
 ├── .gitignore
 ├── README.md                   # setup guide, quick start, experiment workflow
 ├── SPEC.md                     # ← this document
+│
+├── src/
+│   └── healthbench_agent/      # installable package (uv_build, src layout)
+│       ├── __init__.py         # public API re-exports
+│       ├── models.py           # domain dataclasses: Conversation, Rubric, EvalResult, …
+│       └── scoring.py          # HealthBench scoring formula (pure functions)
 │
 ├── data/
 │   └── healthbench/            # dataset files (gitignored, downloaded at setup)

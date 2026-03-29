@@ -12,7 +12,7 @@ This project is a hands-on exploration of agentic system design and evaluation m
 
 | Layer                  | Tool                                      |
 |------------------------|-------------------------------------------|
-| Package Manager        | [uv](https://docs.astral.sh/uv/)         |
+| Package Manager        | [uv](https://docs.astral.sh/uv/) + uv_build |
 | Agent Framework        | Google ADK (`google-adk`)                 |
 | Built-in Eval          | ADK eval (rubrics, trajectory, response)  |
 | Experiment Tracking    | MLflow                                    |
@@ -25,10 +25,16 @@ This project is a hands-on exploration of agentic system design and evaluation m
 
 ```
 healthbench-agent-lab/
-├── pyproject.toml              # uv project config & dependencies
+├── pyproject.toml              # uv project config (name: healthbench-agent) & dependencies
 ├── README.md
 ├── .python-version             # pinned Python version
 ├── .env.example                # API keys template
+│
+├── src/
+│   └── healthbench_agent/      # installable package (uv_build, src layout)
+│       ├── __init__.py         # public API re-exports
+│       ├── models.py           # domain dataclasses: Conversation, Rubric, EvalResult, …
+│       └── scoring.py          # HealthBench scoring formula (pure functions)
 │
 ├── data/
 │   └── healthbench/            # HealthBench dataset files

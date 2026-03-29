@@ -1,5 +1,5 @@
 [project]
-name = "healthbench-agent-lab"
+name = "healthbench-agent"
 version = "0.1.0"
 description = "Building, evaluating, and iterating on agentic AI systems for health question answering — benchmarked against HealthBench."
 readme = "README.md"
@@ -38,8 +38,8 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.5.15"]
+build-backend = "uv_build"
 
 [tool.uv]
 dev-dependencies = [
