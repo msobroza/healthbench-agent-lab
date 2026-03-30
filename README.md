@@ -33,15 +33,19 @@ healthbench-agent-lab/
 ├── src/
 │   └── healthbench_agent/      # installable package (uv_build, src layout)
 │       ├── __init__.py         # public API re-exports
-│       ├── models.py           # domain dataclasses: Conversation, Rubric, EvalResult, …
+│       ├── data_models.py      # domain dataclasses: Conversation, RubricItem, HealthBenchSample, EvalResult, …
 │       └── scoring.py          # HealthBench scoring formula (pure functions)
 │
 ├── data/
 │   └── healthbench/            # HealthBench dataset files
 │
+├── dataset/
+│   ├── __init__.py
+│   └── utils.py                # download_dataset(), load_dataset() → HealthBenchDataset
+│
 ├── analysis/
 │   ├── __init__.py
-│   ├── exploration.py          # dataset loading & descriptive stats
+│   ├── exploration.py          # descriptive stats
 │   ├── insights.py             # cross-dimensional analysis (theme × specialty × language)
 │   └── visualization.py        # score distributions, heatmaps, comparisons
 │

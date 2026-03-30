@@ -2,39 +2,63 @@
 
 Public API re-exported from submodules so callers import from the package root:
 
-    from healthbench_agent import Conversation, criterion_score
+    from healthbench_agent import HealthBenchDataset, SamplerBase, calculate_score
 
-Types (from .types):
-    ConversationTurn, RubricCriterion, Rubric, ConversationMetadata,
-    Conversation, CriterionVerdict, EvalResult
+Models (from .data_models):
+    Message, MessageList,
+    SamplerBase, SamplerResponse,
+    RubricItem,
+    ConversationMetadata, Conversation,
+    HealthBenchSample, HealthBenchDataset,
+    CriterionVerdict, SingleEvalResult, EvalResult, Eval,
+    DatasetSubset
 
 Scoring (from .scoring):
-    criterion_score, clip_score, aggregate_scores, stratified_scores
+    calculate_score, clip_score, aggregate_scores, stratified_scores
 """
 
-from .scoring import aggregate_scores, clip_score, criterion_score, stratified_scores
-from .models import (
+from .data_models import (
     Conversation,
     ConversationMetadata,
-    ConversationTurn,
     CriterionVerdict,
+    DatasetSubset,
+    Eval,
     EvalResult,
-    Rubric,
-    RubricCriterion,
+    HealthBenchDataset,
+    HealthBenchSample,
+    Message,
+    MessageList,
+    RubricItem,
+    SamplerBase,
+    SamplerResponse,
+    SingleEvalResult,
 )
+from .scoring import aggregate_scores, calculate_score, clip_score, stratified_scores
 
 __all__ = [
-    # types
+    # primitive types
+    "Message",
+    "MessageList",
+    # sampler
+    "SamplerBase",
+    "SamplerResponse",
+    # rubric
+    "RubricItem",
+    # conversation
     "Conversation",
     "ConversationMetadata",
-    "ConversationTurn",
+    # dataset
+    "HealthBenchSample",
+    "HealthBenchDataset",
+    "DatasetSubset",
+    # evaluation results
     "CriterionVerdict",
+    "SingleEvalResult",
     "EvalResult",
-    "Rubric",
-    "RubricCriterion",
+    "Eval",
     # scoring
-    "aggregate_scores",
+    "calculate_score",
     "clip_score",
-    "criterion_score",
+    "aggregate_scores",
     "stratified_scores",
 ]

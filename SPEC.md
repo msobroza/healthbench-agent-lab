@@ -409,15 +409,19 @@ healthbench-agent-lab/
 ├── src/
 │   └── healthbench_agent/      # installable package (uv_build, src layout)
 │       ├── __init__.py         # public API re-exports
-│       ├── models.py           # domain dataclasses: Conversation, Rubric, EvalResult, …
+│       ├── data_models.py           # domain dataclasses: Conversation, Rubric, EvalResult, …
 │       └── scoring.py          # HealthBench scoring formula (pure functions)
 │
 ├── data/
 │   └── healthbench/            # dataset files (gitignored, downloaded at setup)
 │
+├── dataset/
+│   ├── __init__.py
+│   └── utils.py                # download_dataset(), load_dataset() → HealthBenchDataset
+│
 ├── analysis/
 │   ├── __init__.py
-│   ├── exploration.py          # load dataset, descriptive stats, distributions
+│   ├── exploration.py          # descriptive stats, distributions
 │   ├── insights.py             # cross-dimensional analysis (theme × specialty × language)
 │   └── visualization.py        # score distributions, heatmaps, radar charts
 │
@@ -464,11 +468,90 @@ healthbench-agent-lab/
 
 ---
 
-## 8. Milestones & Deliverables
+## 8. Analysis Convention
+
+Every analysis function in `analysis/` must follow this contract:
+
+- Accepts one or more `HealthBenchDataset` instances — never loads or downloads data internally.
+- **Returns a stats dict** (`dict[str, Any]`) keyed by dataset name, so callers always get per-dataset results regardless of whether artefacts are saved.
+- Accepts an `output_dir: Path` argument for where exports are written.
+- Accepts a `save: bool = False` parameter — **figures and artefacts are only written to disk when `save=True`**. When `False`, the function computes and returns results without any I/O side effects.
+- Registered with `@register_analysis` where the decorator specifies the **category** (`"exploration"`, `"insights"`, or `"visualization"`) and the **list of dataset subsets** the function applies to (`"main"`, `"hard"`, `"consensus"`, or any combination).
+
+### Categories
+
+| Category | Module | Purpose |
+|---|---|---|
+| `exploration` | `analysis/exploration.py` | Descriptive stats: counts, distributions, language/specialty breakdowns |
+| `insights` | `analysis/insights.py` | Cross-dimensional analysis: theme × axis, specialty × language, urgency × difficulty |
+| `visualization` | `analysis/visualization.py` | Figures: score distributions, heatmaps, radar charts, criteria weight histograms |
+
+### Decorator signature
+
+```python
+@register_analysis(
+    name="score_distribution",
+    category="visualization",
+    datasets=["main", "hard", "consensus"],  # subsets this function applies to
+)
+def plot_score_distribution(
+    datasets: list[HealthBenchDataset],
+    output_dir: Path,
+    save: bool = False,
+) -> dict[str, Any]:
+    """Plot the score distribution for each provided dataset.
+
+    Args:
+        datasets: Loaded HealthBench datasets to analyse, one per subset.
+        output_dir: Directory where output files are saved when save=True.
+        save: Write figures and artefacts to disk when True. When False,
+            computes and returns stats without any I/O side effects.
+
+    Returns:
+        Mapping of dataset subset name to its computed stats. Artefact paths
+        are included under the key 'paths' when save=True.
+    """
+    results = {}
+    for dataset in datasets:
+        fig, stats = _build_figure(dataset)
+        if save:
+            path = output_dir / f"score_distribution_{dataset.subset}.png"
+            fig.savefig(path)
+            stats["paths"] = [str(path)]
+        results[dataset.subset] = stats
+    return results
+```
+
+### Running the registry
+
+```python
+from analysis.registry import run_all, run_one, run_category
+
+# Run every registered analysis across all its declared datasets
+run_all(datasets, output_dir=Path("exports/"), save=True)
+
+# Run a single analysis by name
+run_one("score_distribution", datasets, output_dir=Path("exports/"), save=True)
+
+# Run all analyses in a category
+run_category("exploration", datasets, output_dir=Path("exports/"), save=False)
+```
+
+---
+
+## 9. Milestones & Deliverables
+
+### Phase 0 — Core Package (done)
+**Deliverables:**
+- [x] `src/healthbench_agent/data_models.py` — domain models aligned with simple-evals (`RubricItem`, `HealthBenchSample`, `HealthBenchDataset`, `SamplerBase`, `SingleEvalResult`, `EvalResult`, `Eval`)
+- [x] `src/healthbench_agent/scoring.py` — pure scoring functions (`calculate_score`, `clip_score`, `aggregate_scores`, `stratified_scores`)
+- [x] `dataset/utils.py` — `download_dataset()`, `download_all_datasets()`, `load_dataset() → HealthBenchDataset`
+- [x] `tests/test_data_models.py` — 30 tests covering `RubricItem`, `HealthBenchSample`, `HealthBenchDataset`, `CriterionVerdict`, `SamplerBase`, `SamplerResponse`
+- [x] `tests/test_scoring.py` — 29 tests covering `calculate_score`, `clip_score`, `aggregate_scores`, `stratified_scores`
 
 ### Phase 1 — Dataset Analysis
 **Deliverables:**
-- [ ] `analysis/exploration.py` — loads dataset, computes summary stats
+- [ ] `analysis/exploration.py` — descriptive stats (specialty, language, urgency, difficulty distributions)
 - [ ] `analysis/insights.py` — cross-dimensional breakdowns (theme × axis, specialty × language, urgency × difficulty)
 - [ ] `analysis/visualization.py` — score distribution plots, theme/axis heatmap, criteria weight histogram
 - [ ] `notebooks/01_dataset_exploration.ipynb` — complete walkthrough with findings
@@ -484,8 +567,7 @@ healthbench-agent-lab/
 
 ### Phase 3 — Evaluation Framework
 **Deliverables:**
-- [ ] `evaluation/healthbench_adapter.py` — complete HealthBench → ADK conversion
-- [ ] `evaluation/rubric_scorer.py` — end-to-end scoring pipeline
+- [ ] `evaluation/rubric_scorer.py` — end-to-end scoring pipeline using `calculate_score`
 - [ ] `evaluation/stats.py` — all statistical comparison functions
 - [ ] `evaluation/experiment_tracker.py` — MLflow integration
 - [ ] `tests/test_*.py` — regression tests for all three agents

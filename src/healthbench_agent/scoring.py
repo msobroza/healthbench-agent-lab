@@ -1,39 +1,45 @@
 """HealthBench scoring formula.
 
-Implements the per-example and aggregate scoring defined in SPEC.md §3.3.
+Implements the per-example and aggregate scoring defined in SPEC.md §3.3,
+aligned with simple-evals calculate_score() in healthbench_eval.py.
 All functions are pure (no I/O, no side effects) and depend only on types
-from `.types`. Higher-level modules (evaluation/, agents/) may call these
+from `.models`. Higher-level modules (evaluation/, agents/) may call these
 but must not be imported here.
 """
 
 from __future__ import annotations
 
-from .models import CriterionVerdict, EvalResult, RubricCriterion
+from .data_models import CriterionVerdict, RubricItem, SingleEvalResult
 
 
-def criterion_score(
-    criteria: list[RubricCriterion],
+def calculate_score(
+    rubric_items: list[RubricItem],
     verdicts: list[CriterionVerdict],
-) -> float:
+) -> float | None:
     """Compute the HealthBench score for a single conversation.
 
-    Applies the formula: sum(met weights) / sum(max(0, weight)) per SPEC.md §3.3.
-    Criteria with no matching verdict are treated as not met.
+    Mirrors simple-evals calculate_score(). Applies the formula:
+    sum(met points) / sum(max(0, points)) per SPEC.md §3.3.
 
     Args:
-        criteria: All rubric criteria for the conversation.
-        verdicts: LLM-judge verdicts, one per criterion.
+        rubric_items: All rubric items for the conversation.
+        verdicts: LLM-judge verdicts, one per rubric item in the same order.
 
     Returns:
-        Score in (-inf, 1.0]. Returns 0.0 when max_points is zero (no positive
-        criteria exist). Negative when penalty criteria dominate.
+        Score in (-inf, 1.0], or None when total_possible_points is zero
+        (no positive criteria exist, e.g. a tag-level subset with only
+        penalty criteria). Negative when penalty criteria dominate.
     """
-    verdict_map = {v.criterion_id: v.met for v in verdicts}
-    met_points = sum(c.weight for c in criteria if verdict_map.get(c.criterion_id, False))
-    max_points = sum(max(0.0, c.weight) for c in criteria)
-    if max_points == 0.0:
-        return 0.0
-    return met_points / max_points
+    total_possible_points = sum(item.points for item in rubric_items if item.points > 0)
+    if total_possible_points == 0:
+        return None
+
+    achieved_points = sum(
+        item.points
+        for item, verdict in zip(rubric_items, verdicts, strict=True)
+        if verdict.criteria_met
+    )
+    return achieved_points / total_possible_points
 
 
 def clip_score(score: float) -> float:
@@ -48,42 +54,40 @@ def clip_score(score: float) -> float:
     return max(0.0, min(1.0, score))
 
 
-def aggregate_scores(results: list[EvalResult]) -> float:
+def aggregate_scores(results: list[SingleEvalResult]) -> float:
     """Compute the overall benchmark score as the clipped mean across conversations.
 
     Each per-example score is clipped to [0, 1] before averaging, following
-    the HealthBench aggregation convention.
+    the HealthBench aggregation convention. Samples with a None score are skipped.
 
     Args:
-        results: Evaluated conversations, one result per conversation.
+        results: Per-conversation SingleEvalResult instances.
 
     Returns:
-        Mean clipped score in [0.0, 1.0]. Returns 0.0 for an empty list.
+        Mean clipped score in [0.0, 1.0]. Returns 0.0 for an empty list or
+        when all scores are None.
     """
-    if not results:
+    scored = [r.score for r in results if r.score is not None]
+    if not scored:
         return 0.0
-    return sum(clip_score(r.score) for r in results) / len(results)
+    return sum(clip_score(s) for s in scored) / len(scored)
 
 
-def stratified_scores(
-    results: list[EvalResult],
-    dimension: str,
-) -> dict[str, float]:
-    """Aggregate scores grouped by a stratification dimension.
+def stratified_scores(results: list[SingleEvalResult]) -> dict[str, float]:
+    """Aggregate scores grouped by theme and axis labels stored in metrics.
+
+    Each SingleEvalResult.metrics dict maps label → per-sample score. This
+    function collects and averages those scores across all results.
 
     Args:
-        results: Evaluated conversations.
-        dimension: Attribute name on `EvalResult` holding the per-label score
-            mapping. Typically 'theme_scores' or 'axis_scores'.
+        results: Per-conversation SingleEvalResult instances.
 
     Returns:
-        Mapping of category label to mean clipped score across all conversations
-        that have a score for that label. Labels absent from all results are
-        omitted from the output.
+        Mapping of label to mean clipped score across all conversations that
+        carry a score for that label. Labels absent from all results are omitted.
     """
     buckets: dict[str, list[float]] = {}
     for result in results:
-        scores = getattr(result, dimension, {})
-        for label, score in scores.items():
+        for label, score in result.metrics.items():
             buckets.setdefault(label, []).append(clip_score(score))
     return {label: sum(values) / len(values) for label, values in buckets.items()}

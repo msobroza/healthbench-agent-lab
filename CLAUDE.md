@@ -7,10 +7,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Project name (pyproject.toml):** `healthbench-agent` (installable package: `healthbench_agent`)
 - **Build backend:** `uv_build` with `src/` layout
 - **Installable package:** `src/healthbench_agent/` — importable as `import healthbench_agent`
-  - `models.py` — domain dataclasses (`Conversation`, `Rubric`, `RubricCriterion`, `EvalResult`, …)
+  - `data_models.py` — domain dataclasses (`Conversation`, `RubricItem`, `HealthBenchSample`, `EvalResult`, …)
   - `scoring.py` — pure HealthBench scoring functions (`criterion_score`, `aggregate_scores`, …)
 - **Working directories** (not installed, accessed via PYTHONPATH when using `uv run`):
-  - `analysis/` — dataset loading and visualization
+  - `dataset/` — dataset download and loading utilities
+  - `analysis/` — descriptive stats and visualization
   - `agents/` — ADK agent definitions
   - `evaluation/` — scoring, stats, experiment tracking
   - `prompts/` — versioned YAML prompt files
@@ -21,7 +22,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 uv sync                     # Install all dependencies
 cp .env.example .env        # Set GOOGLE_API_KEY
-uv run python -c "from analysis.exploration import download_dataset; download_dataset()"
+uv run python -c "from dataset.utils import download_dataset; download_dataset()"
 ```
 
 ### Running Agents
@@ -126,6 +127,191 @@ Rules:
 **Interface Segregation** — Prefer narrow, focused function signatures over large god-objects. A function that needs only `criteria` and `verdicts` should not receive the entire `Conversation`.
 
 **Dependency Inversion** — High-level modules (`evaluation/`, `agents/`) depend on abstractions in `healthbench_agent` (types, scoring). They must not import from each other. Concretions (MLflow, ADK, pandas) belong in the outer layers, never in `src/healthbench_agent/`.
+
+## Analysis Convention
+
+Every analysis in `analysis/` must follow this pattern:
+
+1. **One function per analysis** — each analysis is a standalone function with a clear verb name: `plot_score_distribution()`, `compute_specialty_breakdown()`.
+2. **Datasets as input** — every analysis function accepts a `list[HealthBenchDataset]`. It must not load or download data internally.
+3. **Returns per-dataset stats** — return type is `dict[str, Any]` keyed by `dataset.subset`, so callers always get structured results regardless of whether artefacts are saved.
+4. **Output directory as input** — every analysis function accepts an `output_dir: Path` argument. It must not hardcode paths.
+5. **`save` flag controls I/O** — every analysis function accepts `save: bool = False`. Figures and artefacts are **only written to disk when `save=True`**. When `False`, the function computes and returns results without any side effects.
+6. **Registered with category and datasets** — use `@register_analysis(name, category, datasets)` where `category` is one of `"exploration"`, `"insights"`, or `"visualization"`, and `datasets` is the list of subsets the function applies to.
+
+### Registry pattern
+
+`analysis/registry.py` owns the registry. Use the decorator to register:
+
+```python
+from analysis.registry import register_analysis
+
+@register_analysis(
+    name="score_distribution",
+    category="visualization",
+    datasets=["main", "hard", "consensus"],
+)
+def plot_score_distribution(
+    datasets: list[HealthBenchDataset],
+    output_dir: Path,
+    save: bool = False,
+) -> dict[str, Any]:
+    """Plot the score distribution for each provided dataset.
+
+    Args:
+        datasets: Loaded HealthBench datasets to analyse, one per subset.
+        output_dir: Directory where output files are saved when save=True.
+        save: Write figures and artefacts to disk when True. When False,
+            computes and returns stats without any I/O side effects.
+
+    Returns:
+        Mapping of dataset subset name to its computed stats. Artefact paths
+        are included under the key 'paths' when save=True.
+    """
+    results = {}
+    for dataset in datasets:
+        fig, stats = _build_figure(dataset)
+        if save:
+            path = output_dir / f"score_distribution_{dataset.subset}.png"
+            fig.savefig(path)
+            stats["paths"] = [str(path)]
+        results[dataset.subset] = stats
+    return results
+```
+
+Running analyses:
+
+```python
+from analysis.registry import run_all, run_one, run_category
+
+run_all(datasets, output_dir=Path("exports/"), save=True)
+run_one("score_distribution", datasets, output_dir=Path("exports/"), save=True)
+run_category("exploration", datasets, output_dir=Path("exports/"), save=False)
+```
+
+### Rules
+- Return `dict[str, Any]` keyed by `dataset.subset` — always return stats even when `save=False`.
+- Never mutate a dataset inside an analysis function.
+- Analyses are order-independent; do not call one analysis from another.
+- Keep each function focused: if a function produces more than one unrelated artefact type, split it.
+
+## Testing Convention (pytest)
+
+### Structure
+- One test file per module: `test_scoring.py` mirrors `scoring.py`.
+- One test function per behaviour, not per function — a single function may need many tests.
+- Name tests as sentences: `test_calculate_score_returns_none_when_no_positive_criteria`.
+- Group related tests in a class only when they share fixtures or setup.
+
+### Fixtures over setup/teardown
+```python
+@pytest.fixture
+def sample_rubric_items():
+    return [RubricItem("States emergency referral", 1.0, ["emergency"])]
+
+def test_calculate_score_full_credit(sample_rubric_items):
+    verdicts = [CriterionVerdict("States emergency referral", criteria_met=True)]
+    assert calculate_score(sample_rubric_items, verdicts) == 1.0
+```
+
+### Parametrize to avoid repetition
+```python
+@pytest.mark.parametrize("score,expected", [
+    (1.0,  1.0),   # already in range
+    (-0.5, 0.0),   # negative clipped to 0
+    (1.5,  1.0),   # above 1 clipped to 1
+])
+def test_clip_score(score, expected):
+    assert clip_score(score) == expected
+```
+
+### Assert on behaviour, not implementation
+```python
+# bad — tests internal structure
+assert len(result._buckets) == 3
+
+# good — tests the contract
+assert result["emergency"] == pytest.approx(0.75, abs=1e-6)
+```
+
+### Selecting test case scenarios — ZOMBIES
+
+Use the ZOMBIES heuristic to identify what to test for each function:
+
+| Letter | Meaning | Example for `calculate_score` |
+|---|---|---|
+| **Z** | Zero | Empty rubric → returns `None` |
+| **O** | One | Single criterion met / not met |
+| **M** | Many | Multiple criteria, mixed verdicts |
+| **B** | Boundaries | All met, all penalties, score exactly 0 |
+| **I** | Interface | Mismatched verdict/rubric length raises error |
+| **E** | Exceptions | `total_possible_points == 0` edge case |
+| **S** | Simple scenarios | Typical case: 3 criteria, 2 met |
+
+### Project-specific test priorities
+- **Scoring functions** — boundary values: all met, none met, only penalties, `max_points == 0`.
+- **`HealthBenchSample.from_dict`** — real JSONL rows, missing optional fields, malformed rubric.
+- **Analysis functions** — `save=False` produces no files and returns correct dict keys per subset.
+- **Registry** — `run_category("exploration", ...)` calls only exploration functions.
+
+### Coverage
+Run coverage after every test session and enforce a minimum of **80%** per module:
+
+```bash
+uv run pytest tests/ --cov=src/healthbench_agent --cov-report=term-missing
+```
+
+- If any module falls below 80%, add tests before merging.
+- Aim for 100% on pure functions (`scoring.py`) — they have no I/O to mock and no excuse for gaps.
+- Uncovered lines must be either tested or explicitly excluded with `# pragma: no cover` (only for unreachable abstract stubs like `raise NotImplementedError`).
+
+### Rules
+- Tests must be fast and deterministic — no network calls, fix random seeds with `random.seed(0)`.
+- Test the public contract, not private helpers — test privates through the public API.
+- Do not test Python built-ins or third-party library behaviour.
+- A test that fails must point to exactly one broken behaviour.
+
+## Logging Convention
+
+### Use the standard `logging` module — never `print`
+```python
+import logging
+
+logger = logging.getLogger(__name__)  # one logger per module, named by module path
+
+logger.info("Downloading dataset subset %r", subset)
+logger.warning("Skipping sample %s — missing required field", prompt_id)
+logger.error("Download failed for %r: %s", url, exc)
+```
+
+### Rules
+- **One logger per module**, named `__name__` — resolves to `dataset.utils`, `evaluation.rubric_scorer`, etc., giving free namespace hierarchy.
+- **Use `%s` formatting, not f-strings** — the string is only built if the log level is enabled.
+- **Configure once at the entry point** — never call `logging.basicConfig()` or add handlers inside `src/healthbench_agent/` or any library module. Configure only in `scripts/`, notebooks, or `__main__` entry points.
+- **Never log inside `src/healthbench_agent/`** — pure functions must have no side effects.
+- **Log exceptions with `logger.exception()`** inside `except` blocks — it automatically attaches the traceback.
+
+```python
+try:
+    path = download_dataset(subset)
+except urllib.error.URLError as exc:
+    logger.exception("Failed to download %r subset", subset)
+    raise
+```
+
+### Log levels
+| Level | When to use |
+|---|---|
+| `DEBUG` | Internal state useful during development |
+| `INFO` | Normal progress milestones (`"Downloaded 5000 samples"`) |
+| `WARNING` | Unexpected but recoverable (`"Skipping malformed row"`) |
+| `ERROR` | Operation failed, continuing if possible |
+| `CRITICAL` | Application cannot continue |
+
+### Per-module guidance
+- `dataset/utils.py` — `INFO` for download start/finish, `WARNING` for skipped rows.
+- `evaluation/` — `INFO` per scored sample batch, `DEBUG` for individual verdict details.
+- `agents/` — `DEBUG` for tool calls, `INFO` for agent run start/finish.
 
 ## Key Conventions
 
