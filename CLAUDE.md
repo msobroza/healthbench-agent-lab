@@ -7,11 +7,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Project name (pyproject.toml):** `healthbench-agent` (installable package: `healthbench_agent`)
 - **Build backend:** `uv_build` with `src/` layout
 - **Installable package:** `src/healthbench_agent/` — importable as `import healthbench_agent`
-  - `data_models.py` — domain dataclasses (`Conversation`, `RubricItem`, `HealthBenchSample`, `EvalResult`, …)
-  - `scoring.py` — pure HealthBench scoring functions (`criterion_score`, `aggregate_scores`, …)
+  - `domain/` — pure domain layer (no I/O, no external deps)
+    - `rubric.py` — `RubricItem`
+    - `conversation.py` — `Message`, `MessageList`, `ConversationMetadata`, `Conversation`
+    - `sampler.py` — `SamplerBase`, `SamplerResponse`
+    - `evaluation.py` — `CriterionVerdict`, `SingleEvalResult`, `EvalResult`, `Eval`
+    - `dataset.py` — `DatasetSubset`, `HealthBenchSample`, `HealthBenchDataset`
+    - `scoring.py` — pure scoring functions (`calculate_score`, `clip_score`, `aggregate_scores`, `stratified_scores`)
+  - `io/` — I/O layer (→ domain)
+    - `downloader.py` — network download (`download_dataset`, `download_all_datasets`, URL constants)
+    - `dataset_loader.py` — disk deserialization (`load_dataset`)
+  - `analysis/` — statistics layer (→ domain)
+    - `registry.py` — `@register_analysis` decorator, `run_one`, `run_category`, `run_all`
+    - `utils.py` — shared helpers (`series_stats`, `save_csv`, `DEFAULT_PERCENTILES`)
+    - `exploration.py` — 12 descriptive stats analyses (registered under `"exploration"`)
 - **Working directories** (not installed, accessed via PYTHONPATH when using `uv run`):
-  - `dataset/` — dataset download and loading utilities
-  - `analysis/` — descriptive stats and visualization
   - `agents/` — ADK agent definitions
   - `evaluation/` — scoring, stats, experiment tracking
   - `prompts/` — versioned YAML prompt files
@@ -22,7 +32,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 uv sync                     # Install all dependencies
 cp .env.example .env        # Set GOOGLE_API_KEY
-uv run python -c "from dataset.utils import download_dataset; download_dataset()"
+uv run download-healthbench              # download all subsets
+uv run download-healthbench --subset hard --force   # single subset, re-download
 ```
 
 ### Running Agents
@@ -141,10 +152,10 @@ Every analysis in `analysis/` must follow this pattern:
 
 ### Registry pattern
 
-`analysis/registry.py` owns the registry. Use the decorator to register:
+`healthbench_agent.analysis.registry` owns the registry. Use the decorator to register:
 
 ```python
-from analysis.registry import register_analysis
+from healthbench_agent.analysis import register_analysis
 
 @register_analysis(
     name="score_distribution",
@@ -182,7 +193,7 @@ def plot_score_distribution(
 Running analyses:
 
 ```python
-from analysis.registry import run_all, run_one, run_category
+from healthbench_agent.analysis import run_all, run_one, run_category
 
 run_all(datasets, output_dir=Path("exports/"), save=True)
 run_one("score_distribution", datasets, output_dir=Path("exports/"), save=True)
@@ -285,7 +296,7 @@ logger.error("Download failed for %r: %s", url, exc)
 ```
 
 ### Rules
-- **One logger per module**, named `__name__` — resolves to `dataset.utils`, `evaluation.rubric_scorer`, etc., giving free namespace hierarchy.
+- **One logger per module**, named `__name__` — resolves to `healthbench_agent.io.downloader`, `evaluation.rubric_scorer`, etc., giving free namespace hierarchy.
 - **Use `%s` formatting, not f-strings** — the string is only built if the log level is enabled.
 - **Configure once at the entry point** — never call `logging.basicConfig()` or add handlers inside `src/healthbench_agent/` or any library module. Configure only in `scripts/`, notebooks, or `__main__` entry points.
 - **Never log inside `src/healthbench_agent/`** — pure functions must have no side effects.
@@ -309,7 +320,8 @@ except urllib.error.URLError as exc:
 | `CRITICAL` | Application cannot continue |
 
 ### Per-module guidance
-- `dataset/utils.py` — `INFO` for download start/finish, `WARNING` for skipped rows.
+- `healthbench_agent.io.downloader` — `INFO` for download start/finish; `WARNING` for skipped files.
+- `healthbench_agent.io.dataset_loader` — `INFO` on load completion.
 - `evaluation/` — `INFO` per scored sample batch, `DEBUG` for individual verdict details.
 - `agents/` — `DEBUG` for tool calls, `INFO` for agent run start/finish.
 

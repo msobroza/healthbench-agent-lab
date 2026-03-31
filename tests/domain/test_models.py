@@ -6,7 +6,7 @@ HealthBenchDataset iteration/length, and CriterionVerdict defaults.
 
 import pytest
 
-from healthbench_agent.data_models import (
+from healthbench_agent.domain import (
     CriterionVerdict,
     Eval,
     HealthBenchDataset,

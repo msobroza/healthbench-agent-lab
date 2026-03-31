@@ -1,4 +1,4 @@
-"""Tests for healthbench_agent.scoring.
+"""Tests for healthbench_agent.domain.scoring.
 
 Covers calculate_score, clip_score, aggregate_scores, and stratified_scores
 using the ZOMBIES heuristic (Zero, One, Many, Boundaries, Interface, Exceptions,
@@ -7,8 +7,8 @@ Simple scenarios).
 
 import pytest
 
-from healthbench_agent.data_models import CriterionVerdict, RubricItem, SingleEvalResult
-from healthbench_agent.scoring import (
+from healthbench_agent.domain import CriterionVerdict, RubricItem, SingleEvalResult
+from healthbench_agent.domain.scoring import (
     aggregate_scores,
     calculate_score,
     clip_score,

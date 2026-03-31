@@ -2,14 +2,14 @@
 
 Implements the per-example and aggregate scoring defined in SPEC.md §3.3,
 aligned with simple-evals calculate_score() in healthbench_eval.py.
-All functions are pure (no I/O, no side effects) and depend only on types
-from `.models`. Higher-level modules (evaluation/, agents/) may call these
-but must not be imported here.
+All functions are pure (no I/O, no side effects). Higher-level modules
+(analysis/, dataset/, agents/) may call these but must not be imported here.
 """
 
 from __future__ import annotations
 
-from .data_models import CriterionVerdict, RubricItem, SingleEvalResult
+from .evaluation import CriterionVerdict, SingleEvalResult
+from .rubric import RubricItem
 
 
 def calculate_score(

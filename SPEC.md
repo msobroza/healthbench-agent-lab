@@ -482,9 +482,9 @@ Every analysis function in `analysis/` must follow this contract:
 
 | Category | Module | Purpose |
 |---|---|---|
-| `exploration` | `analysis/exploration.py` | Descriptive stats: counts, distributions, language/specialty breakdowns |
-| `insights` | `analysis/insights.py` | Cross-dimensional analysis: theme × axis, specialty × language, urgency × difficulty |
-| `visualization` | `analysis/visualization.py` | Figures: score distributions, heatmaps, radar charts, criteria weight histograms |
+| `exploration` | `healthbench_agent.analysis.exploration` | Descriptive stats: counts, distributions, language/specialty breakdowns |
+| `insights` | `healthbench_agent.analysis.insights` | Cross-dimensional analysis: theme × axis, specialty × language, urgency × difficulty |
+| `visualization` | `healthbench_agent.analysis.visualization` | Figures: score distributions, heatmaps, radar charts, criteria weight histograms |
 
 ### Decorator signature
 
@@ -545,15 +545,18 @@ run_category("exploration", datasets, output_dir=Path("exports/"), save=False)
 **Deliverables:**
 - [x] `src/healthbench_agent/data_models.py` — domain models aligned with simple-evals (`RubricItem`, `HealthBenchSample`, `HealthBenchDataset`, `SamplerBase`, `SingleEvalResult`, `EvalResult`, `Eval`)
 - [x] `src/healthbench_agent/scoring.py` — pure scoring functions (`calculate_score`, `clip_score`, `aggregate_scores`, `stratified_scores`)
-- [x] `dataset/utils.py` — `download_dataset()`, `download_all_datasets()`, `load_dataset() → HealthBenchDataset`
+- [x] `src/healthbench_agent/dataset/downloader.py` — `download_dataset()`, `download_all_datasets()`, URL/filename constants
+- [x] `src/healthbench_agent/dataset/loader.py` — `load_dataset() → HealthBenchDataset`
 - [x] `tests/test_data_models.py` — 30 tests covering `RubricItem`, `HealthBenchSample`, `HealthBenchDataset`, `CriterionVerdict`, `SamplerBase`, `SamplerResponse`
 - [x] `tests/test_scoring.py` — 29 tests covering `calculate_score`, `clip_score`, `aggregate_scores`, `stratified_scores`
 
 ### Phase 1 — Dataset Analysis
 **Deliverables:**
-- [ ] `analysis/exploration.py` — descriptive stats (specialty, language, urgency, difficulty distributions)
-- [ ] `analysis/insights.py` — cross-dimensional breakdowns (theme × axis, specialty × language, urgency × difficulty)
-- [ ] `analysis/visualization.py` — score distribution plots, theme/axis heatmap, criteria weight histogram
+- [x] `src/healthbench_agent/analysis/registry.py` — `@register_analysis` decorator, `run_one`, `run_category`, `run_all`
+- [x] `src/healthbench_agent/analysis/utils.py` — `series_stats`, `save_csv`, `DEFAULT_PERCENTILES`
+- [x] `src/healthbench_agent/analysis/exploration.py` — 12 descriptive stats analyses: sample counts, prompt structure, rubric size, points distribution, positive vs penalty, score range, rubric tag frequency, rubric tags per sample, example tag frequency, tag prefix distribution, data quality, subset overlap
+- [ ] `src/healthbench_agent/analysis/insights.py` — cross-dimensional breakdowns (theme × axis, specialty × language, urgency × difficulty)
+- [ ] `src/healthbench_agent/analysis/visualization.py` — score distribution plots, theme/axis heatmap, criteria weight histogram
 - [ ] `notebooks/01_dataset_exploration.ipynb` — complete walkthrough with findings
 - [ ] Written summary of 3–5 actionable insights that inform agent design
 
