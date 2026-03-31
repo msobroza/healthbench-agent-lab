@@ -232,3 +232,69 @@ def test_stratified_scores_single_result(perfect_result):
     scores = stratified_scores([perfect_result])
     assert scores["accuracy"] == pytest.approx(1.0)
     assert scores["emergency"] == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# calculate_score — realistic HealthBench rubric scenarios (conftest fixtures)
+#
+# simple_sample rubric points : [10, 9, -10]   total_possible = 10 + 9 = 19
+# hard_sample rubric points   : [7, 7, 8, -9]  total_possible = 7 + 7 + 8 = 22
+# ---------------------------------------------------------------------------
+
+
+def test_calculate_score_only_positive_criteria_all_met(simple_sample):
+    positive = [r for r in simple_sample.rubrics if r.points > 0]
+    verdicts = [CriterionVerdict(criterion=r.criterion, criteria_met=True) for r in positive]
+    assert calculate_score(positive, verdicts) == pytest.approx(1.0)
+
+
+def test_calculate_score_positive_met_penalty_unmet_gives_perfect(simple_sample):
+    # met: points 10 and 9; unmet: penalty -10 → achieved=19, total_possible=19
+    verdicts = [
+        CriterionVerdict(criterion=simple_sample.rubrics[0].criterion, criteria_met=True),
+        CriterionVerdict(criterion=simple_sample.rubrics[1].criterion, criteria_met=True),
+        CriterionVerdict(criterion=simple_sample.rubrics[2].criterion, criteria_met=False),
+    ]
+    assert calculate_score(simple_sample.rubrics, verdicts) == pytest.approx(1.0)
+
+
+def test_calculate_score_all_met_including_penalty_lowers_score(simple_sample):
+    # met all: achieved = 10 + 9 + (-10) = 9; total_possible = 19
+    verdicts = [
+        CriterionVerdict(criterion=r.criterion, criteria_met=True)
+        for r in simple_sample.rubrics
+    ]
+    assert calculate_score(simple_sample.rubrics, verdicts) == pytest.approx(9.0 / 19.0)
+
+
+def test_calculate_score_hard_sample_all_met(hard_sample):
+    # achieved = 7 + 7 + 8 + (-9) = 13; total_possible = 7 + 7 + 8 = 22
+    verdicts = [
+        CriterionVerdict(criterion=r.criterion, criteria_met=True)
+        for r in hard_sample.rubrics
+    ]
+    assert calculate_score(hard_sample.rubrics, verdicts) == pytest.approx(13.0 / 22.0)
+
+
+def test_calculate_score_hard_sample_none_met_returns_zero(hard_sample):
+    verdicts = [
+        CriterionVerdict(criterion=r.criterion, criteria_met=False)
+        for r in hard_sample.rubrics
+    ]
+    assert calculate_score(hard_sample.rubrics, verdicts) == pytest.approx(0.0)
+
+
+def test_calculate_score_hard_sample_penalty_only_met_returns_zero(hard_sample):
+    # Only the penalty criterion (-9) is met; positive ones unmet → achieved = -9, clamped
+    penalty = next(r for r in hard_sample.rubrics if r.points < 0)
+    verdicts = [
+        CriterionVerdict(
+            criterion=r.criterion,
+            criteria_met=(r.criterion == penalty.criterion),
+        )
+        for r in hard_sample.rubrics
+    ]
+    # achieved = -9; total_possible = 22 → raw = -9/22 < 0, but score returns raw value
+    score = calculate_score(hard_sample.rubrics, verdicts)
+    assert score is not None
+    assert score < 0

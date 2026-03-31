@@ -41,6 +41,9 @@ class HealthBenchSample:
         ideal_completions_data: Physician ideal completion data when available,
             including the completion group and reference responses. None for
             samples without physician annotations.
+        canary: Dataset integrity signature embedded by the benchmark authors.
+            Format: 'healthbench:<uuid>'. Present in all records; not used for
+            scoring.
     """
 
     prompt_id: str
@@ -48,6 +51,7 @@ class HealthBenchSample:
     rubrics: list[RubricItem]
     example_tags: list[str]
     ideal_completions_data: dict[str, Any] | None = None
+    canary: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> HealthBenchSample:
@@ -55,7 +59,7 @@ class HealthBenchSample:
 
         Args:
             data: Parsed JSONL row with keys prompt_id, prompt, rubrics,
-                example_tags, and optionally ideal_completions_data.
+                example_tags, and optionally ideal_completions_data and canary.
 
         Returns:
             A HealthBenchSample instance with rubrics deserialized as RubricItem.
@@ -66,6 +70,7 @@ class HealthBenchSample:
             rubrics=[RubricItem.from_dict(r) for r in data["rubrics"]],
             example_tags=data["example_tags"],
             ideal_completions_data=data.get("ideal_completions_data"),
+            canary=data.get("canary"),
         )
 
 

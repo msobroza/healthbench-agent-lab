@@ -400,32 +400,47 @@ All agent comparisons use paired evaluation (same conversations, different agent
 ```
 healthbench-agent-lab/
 ├── pyproject.toml              # uv project config (name: healthbench-agent), all dependencies
-├── .python-version             # pins Python 3.11
-├── .env.example                # API key template
+├── uv.lock                     # pinned dependency lockfile
 ├── .gitignore
+├── LICENSE
 ├── README.md                   # setup guide, quick start, experiment workflow
 ├── SPEC.md                     # ← this document
+├── CLAUDE.md                   # coding conventions for Claude Code
+│
+├── scripts/
+│   └── clean_cache.sh          # removes __pycache__, .mypy_cache, .ruff_cache
 │
 ├── src/
 │   └── healthbench_agent/      # installable package (uv_build, src layout)
-│       ├── __init__.py         # public API re-exports
-│       ├── data_models.py           # domain dataclasses: Conversation, Rubric, EvalResult, …
-│       └── scoring.py          # HealthBench scoring formula (pure functions)
+│       ├── __init__.py         # public API re-exports (all subpackages)
+│       │
+│       ├── domain/             # pure domain layer — no I/O, no external deps
+│       │   ├── __init__.py     # re-exports all public types and scoring functions
+│       │   ├── rubric.py       # RubricItem
+│       │   ├── conversation.py # Message, MessageList, Conversation, ConversationMetadata
+│       │   ├── sampler.py      # SamplerBase, SamplerResponse
+│       │   ├── evaluation.py   # CriterionVerdict, SingleEvalResult, EvalResult, Eval
+│       │   ├── dataset.py      # DatasetSubset, HealthBenchSample, HealthBenchDataset
+│       │   └── scoring.py      # calculate_score, clip_score, aggregate_scores, stratified_scores
+│       │
+│       ├── dataset/            # I/O layer — download, load, split
+│       │   ├── __init__.py     # re-exports loader and split_utils symbols
+│       │   ├── loader.py       # download_dataset, download_all_datasets, load_dataset
+│       │   └── split_utils.py  # sample_dataset, stratified_sample
+│       │
+│       └── analysis/           # statistics layer — registered analyses
+│           ├── __init__.py     # re-exports registry runners and decorator
+│           ├── registry.py     # @register_analysis, run_one, run_category, run_all
+│           ├── utils.py        # series_stats, save_csv, DEFAULT_PERCENTILES
+│           └── exploration.py  # 12 descriptive stats analyses (category: "exploration")
 │
 ├── data/
 │   └── healthbench/            # dataset files (gitignored, downloaded at setup)
+│       ├── healthbench.jsonl           # main subset  (~5,000 samples)
+│       ├── healthbench_hard.jsonl      # hard subset  (~1,000 samples)
+│       └── healthbench_consensus.jsonl # consensus subset (~3,671 samples)
 │
-├── dataset/
-│   ├── __init__.py
-│   └── utils.py                # download_dataset(), load_dataset() → HealthBenchDataset
-│
-├── analysis/
-│   ├── __init__.py
-│   ├── exploration.py          # descriptive stats, distributions
-│   ├── insights.py             # cross-dimensional analysis (theme × specialty × language)
-│   └── visualization.py        # score distributions, heatmaps, radar charts
-│
-├── agents/
+├── agents/                     # ADK agent definitions (not installed; via PYTHONPATH)
 │   ├── baseline_agent/         # Architecture A: single agent, no tools
 │   │   ├── __init__.py
 │   │   └── agent.py            # root_agent definition
@@ -438,21 +453,18 @@ healthbench-agent-lab/
 │       ├── agent.py            # root_agent with SequentialAgent orchestration
 │       └── sub_agents.py       # EmergencyAgent, GeneralHealthAgent, ReviewerAgent
 │
-├── prompts/
+├── prompts/                    # versioned YAML prompt files with documented rationale
 │   ├── v1_baseline.yaml        # minimal instruction
 │   ├── v2_clinical.yaml        # clinically-aware, tool-guidance
 │   └── v3_structured.yaml      # structured output, multi-agent coordination
 │
-├── evaluation/
+├── evaluation/                 # scoring pipeline and experiment tracking (via PYTHONPATH)
 │   ├── __init__.py
 │   ├── healthbench_adapter.py  # HealthBench ↔ ADK eval format conversion
 │   ├── rubric_scorer.py        # map HealthBench rubrics → ADK rubrics_based_criterion
 │   ├── stats.py                # bootstrap CI, t-test, Bonferroni, Cohen's d
 │   ├── experiment_tracker.py   # MLflow logging wrapper
 │   └── test_config.json        # ADK eval criteria configuration
-│
-├── experiments/
-│   └── results/                # MLflow artifacts, exported scores (gitignored)
 │
 ├── notebooks/
 │   ├── 01_dataset_exploration.ipynb    # descriptive stats, distributions
@@ -461,9 +473,21 @@ healthbench-agent-lab/
 │
 └── tests/
     ├── __init__.py
-    ├── test_baseline_agent.py  # golden dataset regression tests
-    ├── test_tool_agent.py
-    └── test_multi_agent.py
+    ├── conftest.py             # shared fixtures and make_sample factory (all suites)
+    ├── domain/
+    │   ├── __init__.py
+    │   ├── test_models.py      # RubricItem, HealthBenchSample, HealthBenchDataset, CriterionVerdict
+    │   └── test_scoring.py     # calculate_score, clip_score, aggregate_scores, stratified_scores
+    ├── dataset/
+    │   ├── __init__.py
+    │   ├── test_downloader.py  # download_dataset, download_all_datasets
+    │   ├── test_loader.py      # load_dataset
+    │   └── test_split_utils.py # sample_dataset, stratified_sample
+    └── analysis/
+        ├── __init__.py
+        ├── test_exploration.py # all 12 exploration analyses
+        ├── test_registry.py    # @register_analysis, run_one, run_category, run_all
+        └── test_utils.py       # series_stats, save_csv
 ```
 
 ---

@@ -191,3 +191,45 @@ def test_stratified_sample_does_not_mutate_source(themed_dataset):
     original_ids = [s.prompt_id for s in themed_dataset.samples]
     stratified_sample(themed_dataset, n=5, tag_prefix="theme")
     assert [s.prompt_id for s in themed_dataset.samples] == original_ids
+
+
+# ---------------------------------------------------------------------------
+# Realistic samples — conftest fixtures
+#
+# main_dataset   : 2 samples (simple_sample + multi_turn_sample), subset="main"
+# consensus_dataset : 1 sample with ideal_completions_data, subset="consensus"
+# ---------------------------------------------------------------------------
+
+
+def test_sample_dataset_with_realistic_samples_returns_subset_label(main_dataset):
+    result = sample_dataset(main_dataset, n=1)
+    assert result.subset == "main"
+
+
+def test_sample_dataset_preserves_canary_on_sampled_items(main_dataset):
+    result = sample_dataset(main_dataset, n=2)
+    for sample in result.samples:
+        assert sample.canary is not None
+
+
+def test_sample_dataset_multi_turn_sample_preserved_intact(main_dataset):
+    # main_dataset contains a multi-turn sample; sampling all should keep its turn count
+    result = sample_dataset(main_dataset, n=2, seed=0)
+    multi_turn = [s for s in result.samples if len(s.prompt) > 1]
+    assert len(multi_turn) == 1
+    assert len(multi_turn[0].prompt) == 3
+
+
+def test_sample_dataset_ideal_completions_data_preserved(consensus_dataset):
+    result = sample_dataset(consensus_dataset, n=1)
+    assert result.samples[0].ideal_completions_data is not None
+
+
+def test_stratified_sample_on_consensus_subset_preserves_label(consensus_dataset):
+    result = stratified_sample(consensus_dataset, n=1, tag_prefix="theme")
+    assert result.subset == "consensus"
+
+
+def test_stratified_sample_on_main_dataset_respects_n(main_dataset):
+    result = stratified_sample(main_dataset, n=1, tag_prefix="theme")
+    assert len(result) <= 1
