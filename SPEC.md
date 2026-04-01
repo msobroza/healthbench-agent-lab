@@ -958,21 +958,21 @@ Based on the insights above, the recommended implementation order for Phase 2:
 
 ### Phase 2 — Agent Development
 **Deliverables:**
-- [ ] `agents/baseline_agent/agent.py` — working baseline, runnable with `uv run adk web`
-- [ ] `agents/tool_agent/` — agent + tools, verified tool calls via ADK tracing
-- [ ] `agents/multi_agent/` — multi-agent pipeline with triage → specialist → reviewer
-- [ ] `prompts/v1–v3.yaml` — versioned prompts with documented rationale
-- [ ] Golden datasets captured from ADK web UI for each agent
+- [x] `agents/baseline_agent/agent.py` — working baseline, runnable with `uv run adk web`
+- [x] `agents/tool_agent/` — agent + tools, verified tool calls via ADK tracing
+- [x] `agents/multi_agent/` — multi-agent pipeline with triage → specialist → reviewer
+- [x] `prompts/v1–v3.yaml` — versioned prompts with documented rationale
+- [x] Golden datasets captured from ADK web UI for each agent
 
 ### Phase 3 — Evaluation Framework
 **Deliverables:**
-- [ ] `src/healthbench_agent/llm_eval/grader.py` — `GRADER_TEMPLATE` (verbatim simple-evals), `grade_sample()`, `format_conversation()`, `parse_grading_response()`
-- [ ] `src/healthbench_agent/llm_eval/samplers.py` — `OpenAIChatSampler`, `GeminiChatSampler` (both implement `SamplerBase`)
-- [ ] `src/healthbench_agent/llm_eval/runner.py` — `EvalRunner` with async (ThreadPool) and batch (OpenAI Batch API) modes
-- [ ] `tests/llm_eval/` — unit tests for grader, samplers (mocked), and runner modes
+- [x] `src/healthbench_agent/llm_eval/grader.py` — `GRADER_TEMPLATE` (verbatim simple-evals), `grade_sample()`, `format_conversation()`, `parse_grading_response()`
+- [x] `src/healthbench_agent/llm_eval/samplers.py` — `OpenAIChatSampler`, `GeminiChatSampler` (both implement `SamplerBase`)
+- [x] `src/healthbench_agent/llm_eval/runner.py` — `EvalRunner` with async (ThreadPool) and batch (OpenAI Batch API) modes
+- [x] `tests/llm_eval/` — unit tests for grader, samplers (mocked), and runner modes
 - [ ] `evaluation/rubric_scorer.py` — thin adapter wiring `EvalRunner` → `calculate_score` → MLflow
-- [ ] `evaluation/stats.py` — all statistical comparison functions
-- [ ] `evaluation/experiment_tracker.py` — MLflow integration
+- [x] `evaluation/stats.py` — all statistical comparison functions
+- [x] `evaluation/experiment_tracker.py` — MLflow integration
 - [ ] `notebooks/02_agent_comparison.ipynb` — comparative analysis with CI plots
 - [ ] `notebooks/03_evaluation_deep_dive.ipynb` — failure mode analysis, per-theme deep dives
 

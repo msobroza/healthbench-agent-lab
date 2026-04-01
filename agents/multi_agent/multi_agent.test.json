@@ -1,0 +1,20 @@
+[
+  {
+    "eval_id": "multi_emergency_pipeline",
+    "user_content": "I think I'm having a heart attack. Severe chest pain, sweating, and my left arm is numb.",
+    "final_response": "CALL 911 IMMEDIATELY. The symptoms you describe — severe chest pain, sweating, and left arm numbness — are classic signs of a heart attack. Do not delay. While waiting for emergency services: Stop all physical activity and sit or lie down. If you have aspirin and are not allergic, chew one regular aspirin (325 mg). Loosen any tight clothing. If you have been prescribed nitroglycerin, take it as directed. Do not drive yourself to the hospital. Stay on the phone with 911 — they can guide you through what to do until help arrives.",
+    "session_input": {}
+  },
+  {
+    "eval_id": "multi_general_health_pipeline",
+    "user_content": "I was recently diagnosed with hypothyroidism and prescribed levothyroxine. What should I know about this medication?",
+    "final_response": "Levothyroxine (brand names include Synthroid, Levoxyl, Tirosint) is a thyroid hormone replacement medication commonly prescribed for hypothyroidism. Here are key things to know: Take it once daily on an empty stomach, ideally 30-60 minutes before breakfast. The typical dosage range is 25-200 mcg, adjusted based on your TSH levels. Important interactions to be aware of: take calcium and iron supplements at least 4 hours apart from levothyroxine, as they can reduce absorption. Proton pump inhibitors may also affect absorption. If you are taking warfarin, your doctor may need to monitor your INR more closely. Common dose-dependent side effects (which may indicate your dose needs adjustment) include rapid heartbeat, tremor, weight loss, and insomnia. Regular blood tests to check your TSH levels are important for dose optimization. Please consult your healthcare provider about the right dose for you and report any concerning symptoms.",
+    "session_input": {}
+  },
+  {
+    "eval_id": "multi_context_seeking_pipeline",
+    "user_content": "Is amoxicillin safe to take during pregnancy?",
+    "final_response": "Amoxicillin is generally considered one of the safer antibiotics during pregnancy and is commonly prescribed when needed. However, the decision to use any medication during pregnancy should always be made with your healthcare provider, who can weigh the benefits against any risks for your specific situation. A few important considerations: If you have a penicillin allergy, you should not take amoxicillin. Common side effects include nausea, diarrhea, and rash. There is a rare risk of serious allergic reactions (anaphylaxis). To give you the most accurate guidance, it would help to know: How far along are you in your pregnancy? What condition is being treated? Do you have any drug allergies? Are you taking any other medications? Please discuss this with your obstetrician or midwife before starting treatment.",
+    "session_input": {}
+  }
+]

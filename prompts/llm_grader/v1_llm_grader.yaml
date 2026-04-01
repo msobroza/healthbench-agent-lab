@@ -1,0 +1,23 @@
+version: "1.0.0"
+source: "verbatim from openai/simple-evals healthbench_eval.py"
+created: "2026-04-01"
+rationale: >
+  Must not be modified so results remain comparable to the published
+  HealthBench benchmark. Create grader_v2.yaml for any deviation.
+  The prompt is reproduced exactly from the simple-evals codebase so
+  that grading results are directly comparable to published scores.
+template: |
+  Your job is to look at a conversation and a rubric item, and score the last turn (i.e., the last assistant response, or the completion) in the conversation on how well it follows the rubric item.
+
+  # Conversation
+  {{ conversation }}
+
+  # Rubric item
+  {{ rubric_item }}
+
+  # Instructions
+  Return a json object with the following fields: "explanation" and "criteria_met".
+  - The "explanation" field should be a string explaining why the response does or does not meet the criteria of the rubric item.
+  - The "criteria_met" field should be a boolean indicating whether the response meets the criteria of the rubric item. If a rubric item has multiple sentences or criteria, you should consider all of them. If any of the criteria is not met, the answer should be false. Only return true if all of the criteria are met.
+
+  Return just the json object in markdown format. Do not include any other text.

@@ -354,6 +354,71 @@ except urllib.error.URLError as exc:
 - `evaluation/` — `INFO` per scored sample batch, `DEBUG` for individual verdict details.
 - `agents/` — `DEBUG` for tool calls, `INFO` for agent run start/finish.
 
+## Phase 2 — Agent Development Subtasks
+
+See `AGENT_DECISIONS.md` for exhaustive pros/cons and design rationale for each decision.
+
+### Subtask 2.1 — Baseline Agent
+- `prompts/v1_baseline.yaml` — minimal health instruction with version/rationale metadata
+- `agents/baseline_agent/__init__.py` — empty, makes directory a package
+- `agents/baseline_agent/agent.py` — `root_agent = Agent(name, model, instruction)` loaded from YAML
+- Tests: verify prompt loading, agent configuration, root_agent export
+
+### Subtask 2.2 — Medical Tools + Clinical Prompt
+- `prompts/v2_clinical.yaml` — clinically-aware prompt with tool-usage guidance
+- `agents/tool_agent/__init__.py`
+- `agents/tool_agent/tools.py` — `drug_reference(drug_name)`, `symptom_checker(symptoms)`, `emergency_flag(description)`
+- Tests: each tool function returns correct dict shape, edge cases, keyword matching
+
+### Subtask 2.3 — Tool-Augmented Agent
+- `agents/tool_agent/agent.py` — `root_agent = Agent(name, model, instruction, tools=[...])` with v2_clinical prompt
+- Tests: agent has tools attached, instruction loaded correctly
+
+### Subtask 2.4 — Multi-Agent Prompts + Sub-Agents
+- `prompts/v3_structured.yaml` — multi-agent coordination prompts (triage, emergency, general, reviewer, coordinator)
+- `agents/multi_agent/__init__.py`
+- `agents/multi_agent/sub_agents.py` — `triage_agent`, `emergency_agent`, `general_health_agent`, `reviewer_agent`
+- Tests: each sub-agent has correct model/tools/output_key configuration
+
+### Subtask 2.5 — Multi-Agent Orchestration
+- `agents/multi_agent/agent.py` — `root_agent` as coordinator with `sub_agents=[emergency_agent, general_health_agent]`
+- Pipeline: triage → specialist (emergency or general) → reviewer
+- Tests: root_agent has sub_agents, output_keys set, prompt loaded
+
+### Subtask 2.6 — Golden Datasets
+- `agents/baseline_agent/baseline_agent.test.json` — golden test cases
+- `agents/tool_agent/tool_agent.test.json` — golden test cases with tool trajectories
+- `agents/multi_agent/multi_agent.test.json` — golden test cases with delegation
+- `evaluation/test_config.json` — ADK eval criteria thresholds
+
+## Phase 3 — Evaluation Framework Subtasks
+
+### Subtask 3.1 — Grader Module
+- `src/healthbench_agent/llm_eval/__init__.py`
+- `src/healthbench_agent/llm_eval/grader.py` — `GRADER_TEMPLATE`, `grade_sample()`, `format_conversation()`, `parse_grading_response()`, `load_grader_prompt()`
+- `prompts/grader_v1.yaml` — verbatim simple-evals grader template with Jinja2 placeholders
+- Tests: template rendering, response parsing, grade_sample with mocked sampler
+
+### Subtask 3.2 — Samplers
+- `src/healthbench_agent/llm_eval/samplers.py` — `OpenAIChatSampler`, `GeminiChatSampler`
+- `src/healthbench_agent/llm_eval/config.py` — `JudgeConfig` (pydantic-settings)
+- Tests: both samplers mocked, JudgeConfig validation, env var override
+
+### Subtask 3.3 — Eval Runner
+- `src/healthbench_agent/llm_eval/runner.py` — `EvalRunner` with `mode="async"` (ThreadPool) and `mode="batch"` (OpenAI Batch API)
+- Tests: async mode with mocked samplers, batch mode with mocked API
+
+### Subtask 3.4 — Evaluation Pipeline
+- `evaluation/__init__.py`
+- `evaluation/rubric_scorer.py` — adapter wiring `EvalRunner` → `calculate_score` → MLflow
+- `evaluation/stats.py` — `paired_bootstrap_ci()`, `paired_t_test()`, `effect_size_cohens_d()`, `bonferroni_correction()`
+- `evaluation/experiment_tracker.py` — MLflow logging wrapper
+- Tests: stats functions, experiment tracker with mocked MLflow
+
+### Subtask 3.5 — Analysis Notebooks
+- `notebooks/02_agent_comparison.ipynb` — comparative analysis with CI plots
+- `notebooks/03_evaluation_deep_dive.ipynb` — failure mode analysis, per-theme deep dives
+
 ## Key Conventions
 
 **Prompt Versioning** — All system prompts live in `prompts/` as YAML with documented rationale. Always link prompt version to MLflow runs.

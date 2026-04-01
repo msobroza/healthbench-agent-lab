@@ -11,6 +11,11 @@ import pytest
 
 from healthbench_agent.analysis.visualization import (
     plot_criteria_weight_histogram,
+    plot_multiturn_complexity_comparison,
+    plot_penalty_heatmap,
+    plot_penalty_ratio_cdf,
+    plot_positive_share_by_axis,
+    plot_positive_share_heatmap,
     plot_score_ceiling_distribution,
     plot_theme_axis_heatmap,
 )
@@ -217,3 +222,169 @@ class TestPlotCriteriaWeightHistogram:
 
     def test_no_datasets_returns_empty_dict(self, tmp_path):
         assert plot_criteria_weight_histogram([], tmp_path, save=False) == {}
+
+
+# ---------------------------------------------------------------------------
+# plot_penalty_heatmap
+# ---------------------------------------------------------------------------
+
+
+class TestPlotPenaltyHeatmap:
+    def test_save_false_returns_dict_keyed_by_subset(self, main_dataset, tmp_path):
+        result = plot_penalty_heatmap([main_dataset], tmp_path, save=False)
+        assert "main" in result
+
+    def test_save_false_writes_no_files(self, main_dataset, tmp_path):
+        plot_penalty_heatmap([main_dataset], tmp_path, save=False)
+        assert list(tmp_path.iterdir()) == []
+
+    def test_empty_dataset_returns_empty_subset_dict(self, empty_dataset, tmp_path):
+        result = plot_penalty_heatmap([empty_dataset], tmp_path, save=False)
+        assert result["consensus"] == {}
+
+    def test_dataset_with_penalties_returns_themes_and_axes(self, tmp_path):
+        s = _make_sample("p1", [1.0, -2.0], ["theme:cardiology", "axis:accuracy"])
+        dataset = HealthBenchDataset(subset="main", samples=[s], source_path="/tmp/x.jsonl")
+        result = plot_penalty_heatmap([dataset], tmp_path, save=False)
+        assert "themes" in result["main"]
+        assert "axes" in result["main"]
+
+    def test_no_penalties_returns_empty(self, tmp_path):
+        s = _make_sample("p1", [1.0, 2.0])
+        dataset = HealthBenchDataset(subset="main", samples=[s], source_path="/tmp/x.jsonl")
+        result = plot_penalty_heatmap([dataset], tmp_path, save=False)
+        assert result["main"] == {}
+
+    def test_save_true_writes_png(self, tmp_path):
+        s = _make_sample("p1", [1.0, -2.0], ["theme:cardiology", "axis:accuracy"])
+        dataset = HealthBenchDataset(subset="main", samples=[s], source_path="/tmp/x.jsonl")
+        plot_penalty_heatmap([dataset], tmp_path, save=True)
+        assert any(tmp_path.glob("penalty_heatmap_*.png"))
+
+    def test_no_datasets_returns_empty_dict(self, tmp_path):
+        assert plot_penalty_heatmap([], tmp_path, save=False) == {}
+
+
+# ---------------------------------------------------------------------------
+# plot_multiturn_complexity_comparison
+# ---------------------------------------------------------------------------
+
+
+class TestPlotMultiturnComplexityComparison:
+    def test_save_false_returns_dict_keyed_by_subset(self, main_dataset, tmp_path):
+        result = plot_multiturn_complexity_comparison([main_dataset], tmp_path, save=False)
+        assert "main" in result
+
+    def test_save_false_writes_no_files(self, main_dataset, tmp_path):
+        plot_multiturn_complexity_comparison([main_dataset], tmp_path, save=False)
+        assert list(tmp_path.iterdir()) == []
+
+    def test_empty_dataset_returns_empty_subset_dict(self, empty_dataset, tmp_path):
+        result = plot_multiturn_complexity_comparison([empty_dataset], tmp_path, save=False)
+        assert result["consensus"] == {}
+
+    def test_result_contains_turn_type_keys(self, main_dataset, tmp_path):
+        result = plot_multiturn_complexity_comparison([main_dataset], tmp_path, save=False)
+        subset_data = result["main"]
+        assert "single_turn_count" in subset_data
+        assert "multi_turn_count" in subset_data
+
+    def test_save_true_writes_png(self, main_dataset, tmp_path):
+        plot_multiturn_complexity_comparison([main_dataset], tmp_path, save=True)
+        assert any(tmp_path.glob("multiturn_complexity_*.png"))
+
+    def test_no_datasets_returns_empty_dict(self, tmp_path):
+        assert plot_multiturn_complexity_comparison([], tmp_path, save=False) == {}
+
+
+# ---------------------------------------------------------------------------
+# plot_penalty_ratio_cdf
+# ---------------------------------------------------------------------------
+
+
+class TestPlotPenaltyRatioCdf:
+    def test_returns_overlay_key(self, main_dataset, tmp_path):
+        result = plot_penalty_ratio_cdf([main_dataset], tmp_path, save=False)
+        assert "overlay" in result
+
+    def test_overlay_contains_per_subset(self, main_dataset, tmp_path):
+        result = plot_penalty_ratio_cdf([main_dataset], tmp_path, save=False)
+        assert "per_subset" in result["overlay"]
+        assert "main" in result["overlay"]["per_subset"]
+
+    def test_save_false_writes_no_files(self, main_dataset, tmp_path):
+        plot_penalty_ratio_cdf([main_dataset], tmp_path, save=False)
+        assert list(tmp_path.iterdir()) == []
+
+    def test_empty_dataset_returns_empty_dict(self, empty_dataset, tmp_path):
+        result = plot_penalty_ratio_cdf([empty_dataset], tmp_path, save=False)
+        assert result == {}
+
+    def test_save_true_writes_png(self, main_dataset, tmp_path):
+        plot_penalty_ratio_cdf([main_dataset], tmp_path, save=True)
+        assert any(tmp_path.glob("penalty_ratio_cdf_*.png"))
+
+    def test_no_datasets_returns_empty_dict(self, tmp_path):
+        assert plot_penalty_ratio_cdf([], tmp_path, save=False) == {}
+
+
+# ---------------------------------------------------------------------------
+# plot_positive_share_by_axis
+# ---------------------------------------------------------------------------
+
+
+class TestPlotPositiveShareByAxis:
+    def test_save_false_returns_dict_keyed_by_subset(self, main_dataset, tmp_path):
+        result = plot_positive_share_by_axis([main_dataset], tmp_path, save=False)
+        assert "main" in result
+
+    def test_result_contains_share_keys(self, main_dataset, tmp_path):
+        result = plot_positive_share_by_axis([main_dataset], tmp_path, save=False)
+        assert "positive_share" in result["main"]
+        assert "penalty_share" in result["main"]
+
+    def test_save_false_writes_no_files(self, main_dataset, tmp_path):
+        plot_positive_share_by_axis([main_dataset], tmp_path, save=False)
+        assert list(tmp_path.iterdir()) == []
+
+    def test_empty_dataset_returns_empty_subset_dict(self, empty_dataset, tmp_path):
+        result = plot_positive_share_by_axis([empty_dataset], tmp_path, save=False)
+        assert result["consensus"] == {}
+
+    def test_save_true_writes_png(self, main_dataset, tmp_path):
+        plot_positive_share_by_axis([main_dataset], tmp_path, save=True)
+        assert any(tmp_path.glob("positive_share_by_axis_*.png"))
+
+    def test_no_datasets_returns_empty_dict(self, tmp_path):
+        assert plot_positive_share_by_axis([], tmp_path, save=False) == {}
+
+
+# ---------------------------------------------------------------------------
+# plot_positive_share_heatmap
+# ---------------------------------------------------------------------------
+
+
+class TestPlotPositiveShareHeatmap:
+    def test_save_false_returns_dict_keyed_by_subset(self, main_dataset, tmp_path):
+        result = plot_positive_share_heatmap([main_dataset], tmp_path, save=False)
+        assert "main" in result
+
+    def test_result_contains_expected_keys(self, main_dataset, tmp_path):
+        result = plot_positive_share_heatmap([main_dataset], tmp_path, save=False)
+        for k in ("share_table", "themes", "axes"):
+            assert k in result["main"]
+
+    def test_save_false_writes_no_files(self, main_dataset, tmp_path):
+        plot_positive_share_heatmap([main_dataset], tmp_path, save=False)
+        assert list(tmp_path.iterdir()) == []
+
+    def test_empty_dataset_returns_empty_subset_dict(self, empty_dataset, tmp_path):
+        result = plot_positive_share_heatmap([empty_dataset], tmp_path, save=False)
+        assert result["consensus"] == {}
+
+    def test_save_true_writes_png(self, main_dataset, tmp_path):
+        plot_positive_share_heatmap([main_dataset], tmp_path, save=True)
+        assert any(tmp_path.glob("positive_share_heatmap_*.png"))
+
+    def test_no_datasets_returns_empty_dict(self, tmp_path):
+        assert plot_positive_share_heatmap([], tmp_path, save=False) == {}

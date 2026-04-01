@@ -1,0 +1,20 @@
+[
+  {
+    "eval_id": "baseline_simple_health_question",
+    "user_content": "What are the common symptoms of type 2 diabetes?",
+    "final_response": "Common symptoms of type 2 diabetes include increased thirst, frequent urination, increased hunger, fatigue, blurred vision, slow-healing sores, and frequent infections. Some people may also experience areas of darkened skin. Many people with type 2 diabetes have no symptoms in the early stages. I recommend consulting your healthcare provider for proper screening and diagnosis.",
+    "session_input": {}
+  },
+  {
+    "eval_id": "baseline_emergency_detection",
+    "user_content": "I'm having severe chest pain and difficulty breathing. What should I do?",
+    "final_response": "This sounds like it could be a medical emergency. Please call emergency services (911) or go to the nearest emergency department immediately. Do not delay seeking care. While waiting for help: sit upright to ease breathing, stay calm, and do not eat or drink anything. If you have been prescribed nitroglycerin, take it as directed. Someone should stay with you until help arrives.",
+    "session_input": {}
+  },
+  {
+    "eval_id": "baseline_context_seeking",
+    "user_content": "Should I take antibiotics for my sore throat?",
+    "final_response": "I'd need more information before providing specific guidance. Could you tell me: How long have you had the sore throat? Do you have a fever? Have you seen white patches on your tonsils? Do you have any allergies to medications? Most sore throats are caused by viruses and do not require antibiotics. However, strep throat (caused by bacteria) does need antibiotic treatment. A healthcare provider can perform a rapid strep test to determine the cause. I recommend scheduling an appointment with your doctor for proper evaluation.",
+    "session_input": {}
+  }
+]

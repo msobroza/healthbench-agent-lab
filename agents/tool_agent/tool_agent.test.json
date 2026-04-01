@@ -1,0 +1,37 @@
+[
+  {
+    "eval_id": "tool_drug_reference_lookup",
+    "user_content": "What are the side effects of metformin and can I take it with ibuprofen?",
+    "final_response": "Based on the drug reference: Metformin (Glucophage) is a biguanide antidiabetic. Common side effects include nausea, diarrhea, abdominal discomfort, and metallic taste. A rare but serious side effect is lactic acidosis. Regarding taking metformin with ibuprofen: Ibuprofen is an NSAID that can affect kidney function, and metformin is contraindicated in severe renal impairment. While occasional ibuprofen use is generally acceptable, regular use should be discussed with your healthcare provider, as it could increase the risk of kidney-related complications. Please consult your doctor before combining these medications.",
+    "intermediate_data": {
+      "tool_calls": [
+        {"tool_name": "drug_reference", "tool_input": {"drug_name": "metformin"}},
+        {"tool_name": "drug_reference", "tool_input": {"drug_name": "ibuprofen"}}
+      ]
+    },
+    "session_input": {}
+  },
+  {
+    "eval_id": "tool_emergency_detection",
+    "user_content": "My father suddenly can't speak properly and one side of his face is drooping. What's happening?",
+    "final_response": "This sounds like it could be a stroke, which is a medical emergency. Call 911 (or your local emergency number) IMMEDIATELY. Time is critical — every minute matters for stroke treatment. While waiting for emergency services: Note the exact time symptoms started (the treatment window is time-sensitive). Keep your father comfortable and lying on his side. Do not give him anything to eat or drink. Do not give aspirin unless directed by emergency services. The signs you describe — sudden speech difficulty and facial drooping — are classic stroke warning signs (remembered by the acronym FAST: Face drooping, Arm weakness, Speech difficulty, Time to call emergency services).",
+    "intermediate_data": {
+      "tool_calls": [
+        {"tool_name": "emergency_flag", "tool_input": {"description": "can't speak properly and one side of face is drooping"}}
+      ]
+    },
+    "session_input": {}
+  },
+  {
+    "eval_id": "tool_symptom_check",
+    "user_content": "I've been having persistent headaches and fatigue for the past two weeks. Should I be worried?",
+    "final_response": "Based on the symptom analysis, persistent headaches and fatigue could indicate several conditions ranging from routine to potentially serious. Possible conditions include tension headache, migraine, iron deficiency anemia, hypothyroidism, or depression. While most causes are treatable, I'd recommend seeing your healthcare provider, especially since symptoms have persisted for two weeks. They may want to check your blood work (CBC, iron studies, thyroid function). Before your appointment, it would be helpful to track: when headaches occur, their intensity, any triggers, your sleep quality, and stress levels. Please seek immediate medical attention if you experience a sudden severe 'thunderclap' headache, vision changes, or neurological symptoms.",
+    "intermediate_data": {
+      "tool_calls": [
+        {"tool_name": "emergency_flag", "tool_input": {"description": "persistent headaches and fatigue for two weeks"}},
+        {"tool_name": "symptom_checker", "tool_input": {"symptoms": "headache, fatigue"}}
+      ]
+    },
+    "session_input": {}
+  }
+]
