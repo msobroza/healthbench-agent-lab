@@ -8,16 +8,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import patch
 
 import pytest
 
-from healthbench_agent.domain import HealthBenchDataset, HealthBenchSample
 from healthbench_agent.dataset.loader import (
     DATASET_FILENAMES,
-    DEFAULT_DATA_DIR,
     load_dataset,
 )
+from healthbench_agent.domain import HealthBenchDataset, HealthBenchSample
 
 # ---------------------------------------------------------------------------
 # Helpers

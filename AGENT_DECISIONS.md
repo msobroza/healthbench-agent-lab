@@ -473,7 +473,7 @@ root_agent = Agent(
 | **Pros** | Could improve grading accuracy on Gemini; tailored for specific model strengths; may reduce grader variance |
 | **Cons** | Breaks comparability with published scores; no meta-evaluation data for modified prompt; introduces confounding variable; requires new validation study |
 
-**Decision:** **Option A — Verbatim.** SPEC §5.9.3 rule 4: "Never edit a prompt file in place." The grader prompt is reproduced exactly from `simple-evals/healthbench_eval.py` in `prompts/grader_v1.yaml`. Any modifications create `grader_v2.yaml`.
+**Decision:** **Option A — Verbatim.** SPEC §5.9.3 rule 4: "Never edit a prompt file in place." The grader prompt is reproduced exactly from `simple-evals/healthbench_eval.py` in `prompts/llm_v1_llm_grader.yaml`. Any modifications create `grader_v2.yaml`.
 
 ---
 
@@ -620,7 +620,7 @@ From SPEC §Phase 1A insights:
 | **P0** | `agents/baseline_agent/` | 2.1 | Performance floor; required for all comparisons |
 | **P0** | `drug_reference()` tool | 2.2 | Insight 1: accuracy penalties dominate (7.0-7.8 pts/item) |
 | **P0** | `emergency_flag()` tool | 2.2 | Insight 3: 34% of samples have emergency criteria |
-| **P1** | `prompts/v2_clinical.yaml` | 2.2 | Insight 2: data tasks need conservative strategy |
+| **P1** | `prompts/v1_clinical.yaml` | 2.2 | Insight 2: data tasks need conservative strategy |
 | **P1** | `agents/tool_agent/` | 2.3 | Validates tool-augmented improvement hypothesis |
 | **P1** | Reviewer Agent | 2.4-2.5 | Insight 4: critical for hard samples (penalty mass) |
 | **P2** | `symptom_checker()` tool | 2.2 | Completeness axis (39%) but lower penalty density |

@@ -7,10 +7,6 @@ in-memory HealthBenchDataset to avoid network and disk I/O.
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-from typing import Any
-
 import pytest
 
 from healthbench_agent.analysis.exploration import (

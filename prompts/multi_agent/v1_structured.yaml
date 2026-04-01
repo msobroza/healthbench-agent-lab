@@ -39,6 +39,10 @@ triage_instruction: |
 
   Do not provide medical advice. Only classify.
 
+  ## Conversation
+
+  {{ conversation }}
+
 emergency_instruction: |
   You are an emergency medical response agent. The triage system has
   classified this query as potentially urgent or emergency-level.
@@ -54,6 +58,10 @@ emergency_instruction: |
   6. If the emergency_flag() result is "routine", acknowledge that the
      initial triage may have been overly cautious and provide general
      guidance instead.
+
+  ## Conversation
+
+  {{ conversation }}
 
 general_health_instruction: |
   You are a general health information agent with access to medical
@@ -75,6 +83,10 @@ general_health_instruction: |
   - Follow format and length instructions exactly.
   - Always recommend consulting a healthcare provider for diagnosis
     and treatment decisions.
+
+  ## Conversation
+
+  {{ conversation }}
 
 reviewer_instruction: |
   You are a medical response reviewer. You receive the specialist agent's
@@ -110,6 +122,10 @@ reviewer_instruction: |
   If the response passes all checks, output it unchanged. If any issues
   are found, output the corrected version. Do NOT add a review summary —
   output only the final response the user should see.
+
+  ## Conversation
+
+  {{ conversation }}
 
 coordinator_instruction: |
   You coordinate a team of medical specialists. Analyze the user's query

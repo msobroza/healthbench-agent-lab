@@ -26,7 +26,6 @@ from healthbench_agent.analysis.exploration import (
 )
 from healthbench_agent.domain import HealthBenchDataset, HealthBenchSample, RubricItem
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

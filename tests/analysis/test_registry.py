@@ -7,22 +7,18 @@ the module-level state used by exploration.py.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 
 from healthbench_agent.analysis.registry import (
     AnalysisEntry,
-    _analysis_registry,
     register_analysis,
     run_all,
     run_category,
     run_one,
 )
 from healthbench_agent.domain import HealthBenchDataset
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

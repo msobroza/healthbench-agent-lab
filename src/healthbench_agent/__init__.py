@@ -16,31 +16,15 @@ Package structure:
 # ---------------------------------------------------------------------------
 # Domain — types
 # ---------------------------------------------------------------------------
-from .domain import (
-    Conversation,
-    ConversationMetadata,
-    CriterionVerdict,
-    DatasetSubset,
-    Eval,
-    EvalResult,
-    HealthBenchDataset,
-    HealthBenchSample,
-    Message,
-    MessageList,
-    RubricItem,
-    SamplerBase,
-    SamplerResponse,
-    SingleEvalResult,
-)
-
 # ---------------------------------------------------------------------------
-# Domain — scoring
+# Analysis — registry and runners
 # ---------------------------------------------------------------------------
-from .domain import (
-    aggregate_scores,
-    calculate_score,
-    clip_score,
-    stratified_scores,
+from .analysis import (
+    AnalysisEntry,
+    register_analysis,
+    run_all,
+    run_category,
+    run_one,
 )
 
 # ---------------------------------------------------------------------------
@@ -58,14 +42,27 @@ from .dataset import (
 )
 
 # ---------------------------------------------------------------------------
-# Analysis — registry and runners
+# Domain — scoring
 # ---------------------------------------------------------------------------
-from .analysis import (
-    AnalysisEntry,
-    register_analysis,
-    run_all,
-    run_category,
-    run_one,
+from .domain import (
+    Conversation,
+    ConversationMetadata,
+    CriterionVerdict,
+    DatasetSubset,
+    Eval,
+    EvalResult,
+    HealthBenchDataset,
+    HealthBenchSample,
+    Message,
+    MessageList,
+    RubricItem,
+    SamplerBase,
+    SamplerResponse,
+    SingleEvalResult,
+    aggregate_scores,
+    calculate_score,
+    clip_score,
+    stratified_scores,
 )
 
 __all__ = [

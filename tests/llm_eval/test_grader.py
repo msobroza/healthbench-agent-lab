@@ -1,7 +1,7 @@
 """Tests for healthbench_agent.llm_eval.grader — grading logic.
 
 Tests template rendering, response parsing, conversation formatting,
-and grade_sample orchestration with mocked samplers.
+LLMJudgeGrader, create_judge, and grade_sample with mocked samplers.
 """
 
 from __future__ import annotations
@@ -12,17 +12,18 @@ from unittest.mock import MagicMock
 import pytest
 
 from healthbench_agent.domain.conversation import MessageList
-from healthbench_agent.domain.evaluation import CriterionVerdict
+from healthbench_agent.domain.judge import JudgeGrader
 from healthbench_agent.domain.rubric import RubricItem
 from healthbench_agent.domain.sampler import SamplerResponse
 from healthbench_agent.llm_eval.grader import (
     GRADER_TEMPLATE,
+    LLMJudgeGrader,
+    create_judge,
     format_conversation,
     grade_sample,
     load_grader_prompt,
     parse_grading_response,
 )
-
 
 # ---------------------------------------------------------------------------
 # GRADER_TEMPLATE tests
@@ -37,10 +38,10 @@ class TestGraderTemplate:
         assert len(GRADER_TEMPLATE) > 100
 
     def test_template_contains_conversation_placeholder(self):
-        assert "{{ conversation }}" in GRADER_TEMPLATE
+        assert "<<conversation>>" in GRADER_TEMPLATE
 
     def test_template_contains_rubric_item_placeholder(self):
-        assert "{{ rubric_item }}" in GRADER_TEMPLATE
+        assert "<<rubric_item>>" in GRADER_TEMPLATE
 
     def test_template_mentions_criteria_met(self):
         assert "criteria_met" in GRADER_TEMPLATE
@@ -58,7 +59,7 @@ class TestLoadGraderPrompt:
     """Tests for load_grader_prompt()."""
 
     def test_load_from_yaml_returns_template_version_hash(self):
-        prompt_path = Path(__file__).resolve().parents[2] / "prompts" / "grader_v1.yaml"
+        prompt_path = Path(__file__).resolve().parents[2] / "prompts" / "llm_grader" / "v1_llm_grader.yaml"
         template, version, sha256 = load_grader_prompt(prompt_path)
         assert version == "1.0.0"
         assert len(sha256) == 64  # SHA-256 hex digest
@@ -67,7 +68,7 @@ class TestLoadGraderPrompt:
         assert "test item" in rendered
 
     def test_hash_is_deterministic(self):
-        prompt_path = Path(__file__).resolve().parents[2] / "prompts" / "grader_v1.yaml"
+        prompt_path = Path(__file__).resolve().parents[2] / "prompts" / "llm_grader" / "v1_llm_grader.yaml"
         _, _, hash1 = load_grader_prompt(prompt_path)
         _, _, hash2 = load_grader_prompt(prompt_path)
         assert hash1 == hash2
@@ -252,3 +253,104 @@ class TestGradeSample:
         sampler = _make_mock_sampler([])
         verdicts = grade_sample(sampler, [], [])
         assert verdicts == []
+
+
+# ---------------------------------------------------------------------------
+# LLMJudgeGrader tests
+# ---------------------------------------------------------------------------
+
+
+class TestLLMJudgeGrader:
+    """Tests for LLMJudgeGrader concrete class."""
+
+    def test_is_judge_grader_subclass(self):
+        sampler = _make_mock_sampler([])
+        judge = LLMJudgeGrader(sampler=sampler)
+        assert isinstance(judge, JudgeGrader)
+
+    def test_grade_single_item_met(self):
+        sampler = _make_mock_sampler(
+            ['{"explanation": "Good", "criteria_met": true}']
+        )
+        judge = LLMJudgeGrader(sampler=sampler)
+        rubric_items = [RubricItem("Correct diagnosis", 5.0)]
+        conversation: MessageList = [
+            {"role": "user", "content": "What do I have?"},
+            {"role": "assistant", "content": "You have X."},
+        ]
+        verdicts = judge.grade(conversation, rubric_items)
+        assert len(verdicts) == 1
+        assert verdicts[0].criteria_met is True
+        assert verdicts[0].criterion == "Correct diagnosis"
+
+    def test_grade_multiple_items(self):
+        sampler = _make_mock_sampler([
+            '{"explanation": "A", "criteria_met": true}',
+            '{"explanation": "B", "criteria_met": false}',
+        ])
+        judge = LLMJudgeGrader(sampler=sampler)
+        rubric_items = [
+            RubricItem("Item A", 5.0),
+            RubricItem("Item B", 3.0),
+        ]
+        conversation: MessageList = [{"role": "user", "content": "Q"}]
+        verdicts = judge.grade(conversation, rubric_items)
+        assert len(verdicts) == 2
+        assert verdicts[0].criteria_met is True
+        assert verdicts[1].criteria_met is False
+
+    def test_malformed_response_defaults_to_not_met(self):
+        sampler = _make_mock_sampler(["not json"])
+        judge = LLMJudgeGrader(sampler=sampler)
+        verdicts = judge.grade(
+            [{"role": "user", "content": "Q"}],
+            [RubricItem("X", 5.0)],
+        )
+        assert verdicts[0].criteria_met is False
+        assert "Failed to parse" in verdicts[0].explanation
+
+    def test_sampler_called_once_per_rubric_item(self):
+        sampler = _make_mock_sampler([
+            '{"explanation": "A", "criteria_met": true}',
+            '{"explanation": "B", "criteria_met": true}',
+        ])
+        judge = LLMJudgeGrader(sampler=sampler)
+        judge.grade(
+            [{"role": "user", "content": "Q"}],
+            [RubricItem("X", 1.0), RubricItem("Y", 2.0)],
+        )
+        assert sampler.call_count == 2
+
+    def test_empty_rubric_returns_empty(self):
+        sampler = _make_mock_sampler([])
+        judge = LLMJudgeGrader(sampler=sampler)
+        assert judge.grade([], []) == []
+
+
+# ---------------------------------------------------------------------------
+# create_judge factory tests
+# ---------------------------------------------------------------------------
+
+
+class TestCreateJudge:
+    """Tests for the create_judge() factory function."""
+
+    def test_returns_llm_judge_grader(self):
+        from healthbench_agent.llm_eval.config_grader import JudgeConfig
+
+        config = JudgeConfig(prompt_path="prompts/llm_grader/v1_llm_grader.yaml")
+        judge = create_judge(config)
+        assert isinstance(judge, LLMJudgeGrader)
+        assert isinstance(judge, JudgeGrader)
+
+    def test_template_loaded_from_config_path(self):
+        from healthbench_agent.llm_eval.config_grader import JudgeConfig
+
+        config = JudgeConfig(prompt_path="prompts/llm_grader/v1_llm_grader.yaml")
+        judge = create_judge(config)
+        # Template should render successfully with <<>> placeholders
+        rendered = judge.template.render(
+            conversation="test convo", rubric_item="test item"
+        )
+        assert "test convo" in rendered
+        assert "test item" in rendered

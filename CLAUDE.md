@@ -14,6 +14,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
     - `evaluation.py` — `CriterionVerdict`, `SingleEvalResult`, `EvalResult`, `Eval`
     - `dataset.py` — `DatasetSubset`, `HealthBenchSample`, `HealthBenchDataset`
     - `scoring.py` — pure scoring functions (`calculate_score`, `clip_score`, `aggregate_scores`, `stratified_scores`)
+    - `judge.py` — `JudgeGrader` (ABC — grade conversation against rubric items)
+    - `experiment.py` — `RunParams`, `RunMetrics` (experiment tracking metadata dataclasses)
+  - `agent/` — agent infrastructure (pipeline ABC, config, prompt rendering, tool registry, framework adapters)
+    - `__init__.py` — re-exports `AgentPipeline`, `AgentNodeConfig`, `RootAgentPipelineConfig`, `FrameworkAdapter`, `create_pipeline`, `format_conversation`, `load_instruction`, `register_tool`, `get_tool`, `get_tools`, `registered_tools`
+    - `agent_pipeline.py` — `AgentPipeline` (ABC — async generate response from conversation)
+    - `config.py` — `AgentNodeConfig` (recursive BaseModel, shared agent fields incl. `framework`), `RootAgentPipelineConfig(AgentNodeConfig, BaseSettings)` (root config with env/YAML support, tools, sub_agents, orchestration, condition)
+    - `framework_adapter.py` — `FrameworkAdapter` (ABC — translates config into runnable `AgentPipeline`)
+    - `factory.py` — `create_pipeline()` factory function (dispatches on `config.framework`)
+    - `prompt.py` — `load_instruction()` (Jinja2 template rendering from YAML), `format_conversation()` (formats `MessageList`)
+    - `tool_registry.py` — `@register_tool` decorator, `get_tool()`, `get_tools()`, `registered_tools()`
+    - `adapters/` — framework-specific adapter implementations
+      - `adk_adapter.py` — `ADKFrameworkAdapter` (→ `FrameworkAdapter`), `ADKAgentPipeline` (→ `AgentPipeline`, shared `generate()`), `build_agent_node()` (recursive ADK agent tree builder)
   - `io/` — I/O layer (→ domain)
     - `downloader.py` — network download (`download_dataset`, `download_all_datasets`, URL constants)
     - `dataset_loader.py` — disk deserialization (`load_dataset`)
@@ -23,10 +35,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
     - `exploration.py` — 12 descriptive stats analyses (registered under `"exploration"`)
     - `insights.py` — 8 cross-cutting insight analyses (registered under `"insights"`)
     - `visualization.py` — 8 matplotlib visualizations (registered under `"visualization"`)
+  - `llm_eval/` — LLM-as-judge evaluation (provider-agnostic, → domain)
+    - `config_grader.py` — `JudgeConfig` (pydantic-settings `BaseSettings`), `EvalMode` enum
+    - `grader.py` — `LLMJudgeGrader` (→ `JudgeGrader`), `create_judge()` factory, `GRADER_TEMPLATE`, `grade_sample()`, `format_conversation()`, `parse_grading_response()`, `load_grader_prompt()`
+    - `samplers.py` — `OpenAIChatSampler`, `GeminiChatSampler` (both → `SamplerBase`), `create_sampler()` factory
+    - `runner.py` — `EvalRunner` (depends on `JudgeGrader` and `AgentPipeline` abstractions)
 - **Working directories** (not installed, accessed via PYTHONPATH when using `uv run`):
-  - `agents/` — ADK agent definitions
-  - `evaluation/` — scoring, stats, experiment tracking
-  - `prompts/` — versioned YAML prompt files
+  - `agents/` — ADK agent definitions (each delegates to `create_pipeline()` via the factory and exports `root_agent` for ADK CLI)
+  - `evaluation/` — scoring, stats, experiment tracking (`experiment_tracker.py` CLI, `stats.py`)
+  - `prompts/` — versioned YAML prompt files (subdirs: `llm_grader/`, `baseline_agent/`, `tool_agent/`, `multi_agent/`)
+  - `config/` — YAML configuration files for agent pipelines (`config/agents/*.yaml`)
 
 ## Commands
 
@@ -69,9 +87,9 @@ Three agent architectures are built and compared against HealthBench:
 
 1. **Baseline Agent** (`agents/baseline_agent/`) — Single ADK agent (gemini-2.0-flash), no tools, minimal prompt (`prompts/v1_baseline.yaml`). Establishes performance floor.
 
-2. **Tool-Augmented Agent** (`agents/tool_agent/`) — Single ADK agent + custom tools: `drug_reference()`, `symptom_checker()`, `emergency_flag()`. Uses `prompts/v2_clinical.yaml`.
+2. **Tool-Augmented Agent** (`agents/tool_agent/`) — Single ADK agent + custom tools: `drug_reference()`, `symptom_checker()`, `emergency_flag()`. Uses `prompts/v1_clinical.yaml`.
 
-3. **Multi-Agent Pipeline** (`agents/multi_agent/`) — SequentialAgent: Triage → Specialist (Emergency/GeneralHealth) → Reviewer. Uses `prompts/v3_structured.yaml`.
+3. **Multi-Agent Pipeline** (`agents/multi_agent/`) — SequentialAgent: Triage → Specialist (Emergency/GeneralHealth) → Reviewer. Uses `prompts/v1_structured.yaml`.
 
 ### Evaluation Pipeline (`evaluation/`)
 - `healthbench_adapter.py` — Converts HealthBench conversations ↔ ADK eval format
@@ -361,29 +379,33 @@ See `AGENT_DECISIONS.md` for exhaustive pros/cons and design rationale for each 
 ### Subtask 2.1 — Baseline Agent
 - `prompts/v1_baseline.yaml` — minimal health instruction with version/rationale metadata
 - `agents/baseline_agent/__init__.py` — empty, makes directory a package
-- `agents/baseline_agent/agent.py` — `root_agent = Agent(name, model, instruction)` loaded from YAML
+- `agents/baseline_pipeline.py` — `root_agent = Agent(name, model, instruction)` loaded from YAML
 - Tests: verify prompt loading, agent configuration, root_agent export
 
 ### Subtask 2.2 — Medical Tools + Clinical Prompt
-- `prompts/v2_clinical.yaml` — clinically-aware prompt with tool-usage guidance
+- `prompts/v1_clinical.yaml` — clinically-aware prompt with tool-usage guidance (Jinja2 `{{ conversation }}` template)
 - `agents/tool_agent/__init__.py`
-- `agents/tool_agent/tools.py` — `drug_reference(drug_name)`, `symptom_checker(symptoms)`, `emergency_flag(description)`
+- `agents/tool_agent/drug_reference.py` — `@register_tool("drug_reference")`, drug lookup function
+- `agents/tool_agent/symptom_checker.py` — `@register_tool("symptom_checker")`, symptom analysis function
+- `agents/tool_agent/emergency_flag.py` — `@register_tool("emergency_flag")`, emergency detection function
+- `agents/tool_agent/tools.py` — imports all tool modules (triggers registration), re-exports
 - Tests: each tool function returns correct dict shape, edge cases, keyword matching
 
 ### Subtask 2.3 — Tool-Augmented Agent
-- `agents/tool_agent/agent.py` — `root_agent = Agent(name, model, instruction, tools=[...])` with v2_clinical prompt
+- `agents/tool_pipeline.py` — `root_agent = Agent(name, model, instruction, tools=[...])` with v1_clinical prompt
 - Tests: agent has tools attached, instruction loaded correctly
 
 ### Subtask 2.4 — Multi-Agent Prompts + Sub-Agents
-- `prompts/v3_structured.yaml` — multi-agent coordination prompts (triage, emergency, general, reviewer, coordinator)
+- `prompts/v1_structured.yaml` — multi-agent coordination prompts (triage, emergency, general, reviewer, coordinator)
+- `config/agents/multi_agent.yaml` — full pipeline config with recursive `sub_agents` definitions
 - `agents/multi_agent/__init__.py`
-- `agents/multi_agent/sub_agents.py` — `triage_agent`, `emergency_agent`, `general_health_agent`, `reviewer_agent`
 - Tests: each sub-agent has correct model/tools/output_key configuration
 
 ### Subtask 2.5 — Multi-Agent Orchestration
-- `agents/multi_agent/agent.py` — `root_agent` as coordinator with `sub_agents=[emergency_agent, general_health_agent]`
-- Pipeline: triage → specialist (emergency or general) → reviewer
-- Tests: root_agent has sub_agents, output_keys set, prompt loaded
+- `agents/multi_pipeline.py` — `ADKAgentPipeline` builds agent tree from `RootAgentPipelineConfig.sub_agents`
+- Config-driven: recursive `AgentNodeConfig` with `orchestration` (sequential/routing) and `condition`
+- Pipeline: triage → coordinator(routing: emergency, general_health) → reviewer
+- Tests: routing vs sequential orchestration, condition in description, prompt_path inheritance, unsupported orchestration raises
 
 ### Subtask 2.6 — Golden Datasets
 - `agents/baseline_agent/baseline_agent.test.json` — golden test cases
@@ -396,7 +418,7 @@ See `AGENT_DECISIONS.md` for exhaustive pros/cons and design rationale for each 
 ### Subtask 3.1 — Grader Module
 - `src/healthbench_agent/llm_eval/__init__.py`
 - `src/healthbench_agent/llm_eval/grader.py` — `GRADER_TEMPLATE`, `grade_sample()`, `format_conversation()`, `parse_grading_response()`, `load_grader_prompt()`
-- `prompts/grader_v1.yaml` — verbatim simple-evals grader template with Jinja2 placeholders
+- `prompts/llm_v1_llm_grader.yaml` — verbatim simple-evals grader template with Jinja2 placeholders
 - Tests: template rendering, response parsing, grade_sample with mocked sampler
 
 ### Subtask 3.2 — Samplers

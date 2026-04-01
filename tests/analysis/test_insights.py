@@ -21,7 +21,6 @@ from healthbench_agent.analysis.insights import (
 )
 from healthbench_agent.domain import HealthBenchDataset, HealthBenchSample, RubricItem
 
-
 # ---------------------------------------------------------------------------
 # Local fixtures — extend conftest.py fixtures with insights-specific shapes
 # ---------------------------------------------------------------------------

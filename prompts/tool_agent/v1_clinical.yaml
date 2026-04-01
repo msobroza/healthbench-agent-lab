@@ -75,3 +75,9 @@ instruction: |
      - Emergency referral when emergency_flag() returns urgent/emergency
      - Interaction warnings from drug_reference() results
      - Disclaimer that this is informational, not a diagnosis
+
+  ## Conversation
+
+  {{ conversation }}
+
+  Respond to the last user message above using the tools and protocol described.

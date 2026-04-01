@@ -1,0 +1,43 @@
+# Multi-agent pipeline configuration — triage → specialist → reviewer.
+name: multi_agent
+description: Multi-agent health pipeline with triage, specialist, and reviewer stages.
+model: gemini-2.0-flash
+prompt_version: "3.0.0"
+prompt_path: prompts/multi_agent/v1_structured.yaml
+prompt_key: coordinator_instruction
+orchestration: sequential
+
+sub_agents:
+  - name: triage_agent
+    description: Classifies query urgency, topic, and user expertise level.
+    prompt_key: triage_instruction
+    output_key: triage_classification
+
+  - name: coordinator_agent
+    description: Routes queries to the appropriate specialist based on triage.
+    orchestration: routing
+    prompt_key: coordinator_instruction
+    output_key: specialist_response
+    sub_agents:
+      - name: emergency_agent
+        description: Handles high-urgency medical queries requiring immediate referral.
+        condition: "Query involves potentially life-threatening symptoms, severe pain, or situations requiring immediate medical attention."
+        prompt_key: emergency_instruction
+        tools:
+          - emergency_flag
+        output_key: specialist_response
+
+      - name: general_health_agent
+        description: Handles general health queries with medical reference tools.
+        condition: "Query involves general health questions, medication queries, symptom analysis, and routine health information."
+        prompt_key: general_health_instruction
+        tools:
+          - drug_reference
+          - symptom_checker
+          - emergency_flag
+        output_key: specialist_response
+
+  - name: reviewer_agent
+    description: Reviews responses for completeness, safety, and communication quality.
+    prompt_key: reviewer_instruction
+    output_key: final_response

@@ -11,7 +11,6 @@ import pytest
 from healthbench_agent.dataset.split_utils import sample_dataset, stratified_sample
 from healthbench_agent.domain import HealthBenchDataset, HealthBenchSample, RubricItem
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

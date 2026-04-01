@@ -12,8 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .rubric import RubricItem
 from .conversation import MessageList
+from .rubric import RubricItem
 
 # ---------------------------------------------------------------------------
 # Dataset subset type alias

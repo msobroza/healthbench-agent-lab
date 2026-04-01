@@ -33,39 +33,75 @@ healthbench-agent-lab/
 ├── src/
 │   └── healthbench_agent/      # installable package (uv_build, src layout)
 │       ├── __init__.py         # public API re-exports
-│       ├── data_models.py      # domain dataclasses: Conversation, RubricItem, HealthBenchSample, EvalResult, …
-│       └── scoring.py          # HealthBench scoring formula (pure functions)
+│       ├── domain/             # pure domain layer — types, scoring, abstractions
+│       │   ├── rubric.py       # RubricItem
+│       │   ├── conversation.py # Message, MessageList, Conversation
+│       │   ├── sampler.py      # SamplerBase, SamplerResponse
+│       │   ├── evaluation.py   # CriterionVerdict, SingleEvalResult, EvalResult
+│       │   ├── dataset.py      # HealthBenchSample, HealthBenchDataset
+│       │   ├── scoring.py      # calculate_score, clip_score, aggregate_scores
+│       │   ├── judge.py        # JudgeGrader (ABC)
+│       │   └── experiment.py   # RunParams, RunMetrics
+│       ├── agent/              # agent infrastructure — pipeline ABC, config, prompts, adapters
+│       │   ├── agent_pipeline.py # AgentPipeline (ABC)
+│       │   ├── config.py       # AgentNodeConfig (recursive), RootAgentPipelineConfig (root)
+│       │   ├── framework_adapter.py # FrameworkAdapter (ABC — config → AgentPipeline)
+│       │   ├── factory.py      # create_pipeline() factory (dispatches on config.framework)
+│       │   ├── prompt.py       # load_instruction(), format_conversation()
+│       │   ├── tool_registry.py # @register_tool, get_tool(), get_tools(), registered_tools()
+│       │   └── adapters/
+│       │       └── adk_adapter.py # ADKFrameworkAdapter, ADKAgentPipeline, build_agent_node()
+│       ├── dataset/            # I/O layer — download, load, split
+│       │   ├── loader.py       # download_dataset, load_dataset
+│       │   └── split_utils.py  # sample_dataset, stratified_sample
+│       ├── analysis/           # statistics layer — registered analyses
+│       │   ├── registry.py     # @register_analysis, run_one, run_category, run_all
+│       │   ├── utils.py        # build_rubric_dataframe, build_sample_dataframe
+│       │   ├── exploration.py  # 12 descriptive stats analyses
+│       │   ├── insights.py     # 8 cross-cutting insight analyses
+│       │   └── visualization.py # 8 matplotlib visualizations
+│       └── llm_eval/           # LLM-as-judge evaluation (provider-agnostic)
+│           ├── config_grader.py # JudgeConfig (pydantic-settings), EvalMode
+│           ├── grader.py       # LLMJudgeGrader, create_judge(), GRADER_TEMPLATE
+│           ├── samplers.py     # OpenAIChatSampler, GeminiChatSampler, create_sampler()
+│           └── runner.py       # EvalRunner (async/batch orchestration)
 │
 ├── data/
-│   └── healthbench/            # HealthBench dataset files
+│   └── healthbench/            # HealthBench dataset files (gitignored)
 │
-├── dataset/
-│   ├── __init__.py
-│   └── utils.py                # download_dataset(), load_dataset() → HealthBenchDataset
-│
-├── analysis/
-│   ├── __init__.py
-│   ├── exploration.py          # descriptive stats
-│   ├── insights.py             # cross-dimensional analysis (theme × specialty × language)
-│   └── visualization.py        # score distributions, heatmaps, comparisons
+├── config/                     # YAML configuration files
+│   └── agents/                 # per-agent configs (name, model, prompt_version)
+│       ├── baseline_agent.yaml
+│       ├── tool_agent.yaml
+│       └── multi_agent.yaml
 │
 ├── agents/
-│   ├── baseline_agent/         # single ADK agent — minimal prompt, no tools
+│   ├── baseline_pipeline.py    # Architecture A: single agent, no tools
+│   ├── tool_pipeline.py        # Architecture B: single agent + medical tools
+│   ├── multi_pipeline.py       # Architecture C: triage → specialist → reviewer
+│   ├── baseline_agent/         # ADK entry point (re-exports root_agent)
 │   │   ├── __init__.py
 │   │   └── agent.py
-│   ├── tool_agent/             # agent augmented with medical reference tools
+│   ├── tool_agent/             # ADK entry point + medical tool modules
 │   │   ├── __init__.py
 │   │   ├── agent.py
-│   │   └── tools.py
-│   └── multi_agent/            # multi-agent pipeline (triage → specialist → reviewer)
+│   │   ├── drug_reference.py   # @register_tool("drug_reference")
+│   │   ├── symptom_checker.py  # @register_tool("symptom_checker")
+│   │   ├── emergency_flag.py   # @register_tool("emergency_flag")
+│   │   └── tools.py            # imports tool modules (triggers registration), re-exports
+│   └── multi_agent/            # ADK entry point (re-exports root_agent)
 │       ├── __init__.py
-│       ├── agent.py
-│       └── sub_agents.py
+│       └── agent.py
 │
 ├── prompts/
-│   ├── v1_baseline.yaml        # initial system prompt
-│   ├── v2_clinical.yaml        # clinically-aware prompt
-│   └── v3_structured.yaml      # structured output prompt
+│   ├── llm_grader/
+│   │   └── v1_llm_grader.yaml      # LLM-as-judge grader prompt (from simple-evals)
+│   ├── baseline_agent/
+│   │   └── v1_baseline.yaml    # minimal instruction
+│   ├── tool_agent/
+│   │   └── v1_clinical.yaml    # clinically-aware prompt
+│   └── multi_agent/
+│       └── v1_structured.yaml  # structured output prompt
 │
 ├── evaluation/
 │   ├── __init__.py
@@ -84,9 +120,12 @@ healthbench-agent-lab/
 │   └── 03_evaluation_deep_dive.ipynb
 │
 └── tests/
-    ├── test_baseline_agent.py  # ADK eval: golden dataset regression
-    ├── test_tool_agent.py
-    └── test_multi_agent.py
+    ├── conftest.py             # shared fixtures and make_sample factory
+    ├── domain/                 # domain layer tests (models, scoring)
+    ├── dataset/                # I/O layer tests (download, load, split)
+    ├── analysis/               # analysis layer tests (exploration, insights, viz)
+    ├── evaluation/             # evaluation layer tests (stats, experiment tracker)
+    └── llm_eval/               # eval layer tests (grader, samplers, runner)
 ```
 
 ## Quick Start
@@ -135,7 +174,9 @@ uv run adk eval agents/baseline_agent evaluation/test_config.json
 uv run pytest tests/ -v
 
 # Run with experiment tracking
-uv run python -m evaluation.experiment_tracker --agent baseline_agent --sample-size 100
+uv run python -m evaluation.experiment_tracker \
+    --agent-config config/agents/baseline_agent.yaml \
+    --sample-size 100 --seed 42
 ```
 
 ### Explore the Dataset

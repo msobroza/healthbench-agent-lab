@@ -1,0 +1,6 @@
+# Baseline agent configuration — minimal prompt, no tools.
+name: baseline_agent
+description: Baseline health assistant with no tools or sub-agents.
+model: gemini-2.0-flash
+prompt_version: "1.0.0"
+prompt_path: prompts/baseline_agent/v1_baseline.yaml

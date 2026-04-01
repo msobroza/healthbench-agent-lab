@@ -4,50 +4,63 @@ Supports two modes:
 - async (ThreadPoolExecutor): for development iterations, ≤500 samples
 - batch (OpenAI Batch API): for full benchmark runs, 50% cost reduction
 
-See SPEC §5.7 and AGENT_DECISIONS.md §13.
+See SPEC §5.7.
 """
 
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Literal
 
-from jinja2 import Template
-
+from healthbench_agent.agent import AgentPipeline
+from healthbench_agent.domain.conversation import MessageList
 from healthbench_agent.domain.dataset import HealthBenchSample
 from healthbench_agent.domain.evaluation import CriterionVerdict, SingleEvalResult
-from healthbench_agent.domain.sampler import SamplerBase
+from healthbench_agent.domain.judge import JudgeGrader
+from healthbench_agent.domain.rubric import RubricItem
 from healthbench_agent.domain.scoring import calculate_score
 
-from .grader import (
-    GRADER_TEMPLATE,
-    format_conversation,
-    grade_sample,
-    parse_grading_response,
-)
+from .config_grader import EvalMode, JudgeConfig
+from .grader import create_judge
 
 
 class EvalRunner:
     """Orchestrates LLM-as-judge evaluation across multiple samples.
 
+    Depends on the ``JudgeGrader`` abstraction (Dependency Inversion),
+    so any grader implementation — LLM-based, rule-based, or human —
+    can be injected. Operational settings (mode, concurrency) are read
+    from ``JudgeConfig``.
+
     Attributes:
-        sampler: Model sampler for grading (OpenAI or Gemini).
-        template: Jinja2 grader prompt template.
-        max_workers: ThreadPool concurrency for async mode.
-        mode: Execution mode — "async" or "batch".
+        judge: Grader that evaluates conversations against rubrics.
+        config: Judge configuration controlling mode and concurrency.
     """
 
     def __init__(
         self,
-        sampler: SamplerBase,
-        template: Template | None = None,
-        max_workers: int = 120,
-        mode: Literal["async", "batch"] = "async",
+        judge: JudgeGrader,
+        config: JudgeConfig | None = None,
     ) -> None:
-        self.sampler = sampler
-        self.template = template or Template(GRADER_TEMPLATE)
-        self.max_workers = max_workers
-        self.mode = mode
+        self.judge = judge
+        self.config = config or JudgeConfig()
+
+    @classmethod
+    def from_config(cls, config: JudgeConfig | None = None) -> EvalRunner:
+        """Create an EvalRunner from a JudgeConfig.
+
+        Convenience factory that builds the judge from config, avoiding
+        the need for callers to construct the judge themselves.
+
+        Args:
+            config: Judge configuration. Uses defaults if None.
+
+        Returns:
+            A fully configured EvalRunner.
+        """
+        cfg = config or JudgeConfig()
+        judge = create_judge(cfg)
+        return cls(judge=judge, config=cfg)
 
     def evaluate_sample(
         self,
@@ -56,8 +69,8 @@ class EvalRunner:
     ) -> SingleEvalResult:
         """Evaluate a single sample's agent response against its rubric.
 
-        Appends the response as an assistant turn, grades each rubric item,
-        and computes the HealthBench score.
+        Appends the response as an assistant turn, grades each rubric item
+        via the judge, and computes the HealthBench score.
 
         Args:
             sample: The HealthBench sample with prompt and rubric.
@@ -66,23 +79,13 @@ class EvalRunner:
         Returns:
             SingleEvalResult with score, per-tag metrics, and verdicts.
         """
-        # Build full conversation with agent response
-        conversation = list(sample.prompt) + [
+        conversation: MessageList = list(sample.prompt) + [
             {"role": "assistant", "content": response_text}
         ]
 
-        # Grade each rubric item
-        verdicts = grade_sample(
-            sampler=self.sampler,
-            conversation=conversation,
-            rubric_items=sample.rubrics,
-            template=self.template,
-        )
+        verdicts = self.judge.grade(conversation, sample.rubrics)
 
-        # Compute score
         score = calculate_score(sample.rubrics, verdicts)
-
-        # Compute per-tag metrics
         metrics = _compute_tag_metrics(sample, verdicts)
 
         return SingleEvalResult(
@@ -119,7 +122,7 @@ class EvalRunner:
         """
         results: list[SingleEvalResult | None] = [None] * len(samples)
 
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+        with ThreadPoolExecutor(max_workers=self.config.max_workers) as executor:
             future_to_index = {
                 executor.submit(self.evaluate_sample, sample, response): i
                 for i, (sample, response) in enumerate(zip(samples, responses))
@@ -145,14 +148,37 @@ class EvalRunner:
             List of SingleEvalResult in the same order as input samples.
 
         Raises:
-            NotImplementedError: If mode is "batch" (not yet implemented).
+            NotImplementedError: If mode is ``BATCH`` (not yet implemented).
         """
-        if self.mode == "async":
+        if self.config.mode == EvalMode.ASYNC:
             return self.run_async(samples, responses)
         raise NotImplementedError(  # pragma: no cover
             "Batch mode (OpenAI Batch API) is not yet implemented. "
             "Use mode='async' for now."
         )
+
+    async def evaluate_pipeline(
+        self,
+        pipeline: AgentPipeline,
+        samples: list[HealthBenchSample],
+    ) -> list[SingleEvalResult]:
+        """Generate responses via an agent pipeline, then evaluate them.
+
+        Each sample's conversation is sent to the pipeline to produce a
+        response. The response is appended to the conversation and then
+        graded by the judge.
+
+        Args:
+            pipeline: Agent pipeline that generates responses asynchronously.
+            samples: HealthBench samples to evaluate.
+
+        Returns:
+            List of SingleEvalResult in the same order as input samples.
+        """
+        responses = await asyncio.gather(
+            *[pipeline.generate(sample.prompt) for sample in samples]
+        )
+        return self.run(samples, list(responses))
 
 
 def _compute_tag_metrics(
@@ -171,17 +197,13 @@ def _compute_tag_metrics(
     Returns:
         Dict mapping tag names to scores.
     """
-    from healthbench_agent.domain.rubric import RubricItem
-
     metrics: dict[str, float] = {}
 
-    # Group rubric items by tag
     tag_groups: dict[str, list[tuple[RubricItem, CriterionVerdict]]] = {}
     for item, verdict in zip(sample.rubrics, verdicts):
         for tag in item.tags:
             tag_groups.setdefault(tag, []).append((item, verdict))
 
-    # Compute score per tag
     for tag, pairs in tag_groups.items():
         items = [p[0] for p in pairs]
         tag_verdicts = [p[1] for p in pairs]

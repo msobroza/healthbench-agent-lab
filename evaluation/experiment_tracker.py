@@ -5,10 +5,17 @@ evaluation run as specified in SPEC §5.4. Each run captures the full
 configuration needed to reproduce results: agent identity, judge
 settings, prompt fingerprint, and per-dimension scores.
 
+The pure data types (``RunParams``, ``RunMetrics``) live in
+``healthbench_agent.domain.experiment``. This module provides the
+MLflow I/O layer plus the ``build_run_params`` factory that bridges
+``JudgeConfig`` + ``RootAgentPipelineConfig`` → ``RunParams``
+(Dependency Inversion).
+
 Usage::
 
     uv run python -m evaluation.experiment_tracker \
-        --agent baseline_agent --sample-size 100
+        --agent-config config/agents/baseline_agent.yaml \
+        --sample-size 100 --seed 42
 """
 
 from __future__ import annotations
@@ -17,89 +24,100 @@ import json
 import logging
 import shutil
 import tempfile
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import mlflow
 
+from healthbench_agent.agent import RootAgentPipelineConfig
+from healthbench_agent.domain.experiment import RunMetrics, RunParams
+from healthbench_agent.llm_eval.config_grader import JudgeConfig
+from healthbench_agent.llm_eval.grader import load_grader_prompt
+
 logger = logging.getLogger(__name__)
 
 EXPERIMENT_NAME = "healthbench-agent-eval"
 
 
-@dataclass
-class RunParams:
-    """Parameters logged at the start of every MLflow run.
+def build_run_params(
+    judge_config: JudgeConfig,
+    agent_config: RootAgentPipelineConfig,
+    sample_size: int,
+    seed: int = 0,
+) -> RunParams:
+    """Build RunParams from a JudgeConfig and RootAgentPipelineConfig.
 
-    Attributes:
-        agent_name: Which architecture (baseline, tool, multi).
-        prompt_version: Prompt YAML version string.
-        model: Agent LLM model string.
-        sample_size: Number of conversations evaluated.
-        grader_provider: Judge LLM provider (openai or gemini).
-        grader_model: Judge LLM model string.
-        grader_temperature: Judge temperature setting.
-        grader_prompt_version: Grader prompt YAML version.
-        grader_prompt_sha256: SHA-256 of the raw grader template.
-        eval_mode: Evaluation mode (async or batch).
+    Extracts grader settings from the judge config, agent identity from
+    the agent config, and loads the prompt fingerprint (version + SHA-256)
+    from the configured grader prompt file. This keeps ``RunParams`` as a
+    pure domain type while the bridge logic lives in the outer layer
+    (Dependency Inversion).
+
+    Args:
+        judge_config: Judge configuration with provider, model, and
+            prompt path.
+        agent_config: Agent configuration with name, model, and
+            prompt version.
+        sample_size: Number of conversations to evaluate.
+        seed: Random seed used for sampling.
+
+    Returns:
+        A fully populated RunParams ready for ``log_evaluation_run``.
     """
-
-    agent_name: str
-    prompt_version: str
-    model: str
-    sample_size: int
-    grader_provider: str = "openai"
-    grader_model: str = "gpt-4.1-2025-04-14"
-    grader_temperature: float = 0.0
-    grader_prompt_version: str = "1.0.0"
-    grader_prompt_sha256: str = ""
-    eval_mode: str = "async"
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialise to a flat dictionary suitable for mlflow.log_params."""
-        return {
-            "agent_name": self.agent_name,
-            "prompt_version": self.prompt_version,
-            "model": self.model,
-            "sample_size": self.sample_size,
-            "timestamp": datetime.now(UTC).isoformat(),
-            "grader_provider": self.grader_provider,
-            "grader_model": self.grader_model,
-            "grader_temperature": self.grader_temperature,
-            "grader_prompt_version": self.grader_prompt_version,
-            "grader_prompt_sha256": self.grader_prompt_sha256,
-            "eval_mode": self.eval_mode,
-        }
+    _, grader_prompt_version, grader_prompt_sha256 = load_grader_prompt(
+        Path(judge_config.prompt_path)
+    )
+    return RunParams(
+        agent_name=agent_config.name,
+        prompt_version=agent_config.prompt_version,
+        model=agent_config.model,
+        sample_size=sample_size,
+        grader_provider=judge_config.provider,
+        grader_model=judge_config.model,
+        grader_temperature=judge_config.temperature,
+        grader_prompt_version=grader_prompt_version,
+        grader_prompt_sha256=grader_prompt_sha256,
+        eval_mode=str(judge_config.mode),
+        seed=seed,
+    )
 
 
-@dataclass
-class RunMetrics:
-    """Metrics logged for an evaluation run.
+def build_run_metrics(results: list[Any]) -> RunMetrics:
+    """Build RunMetrics from a list of SingleEvalResult instances.
 
-    Attributes:
-        overall_score: Aggregate HealthBench score (0-100 scale).
-        theme_scores: Per-theme mean scores keyed by theme name.
-        axis_scores: Per-axis mean scores keyed by axis name.
+    Computes overall aggregate score and per-dimension breakdowns
+    using the domain scoring functions.
+
+    Args:
+        results: Per-conversation SingleEvalResult instances.
+
+    Returns:
+        RunMetrics with overall, theme, and axis scores.
     """
+    from healthbench_agent.domain.scoring import (
+        aggregate_scores,
+        stratified_scores,
+    )
 
-    overall_score: float
-    theme_scores: dict[str, float] = field(default_factory=dict)
-    axis_scores: dict[str, float] = field(default_factory=dict)
+    overall = aggregate_scores(results)
+    stratified = stratified_scores(results)
 
-    def to_flat_dict(self) -> dict[str, float]:
-        """Serialise to a flat dictionary suitable for mlflow.log_metrics.
-
-        Theme scores are prefixed with ``theme/`` and axis scores with
-        ``axis/``.
-        """
-        metrics: dict[str, float] = {"overall_score": self.overall_score}
-        for theme, score in self.theme_scores.items():
-            metrics[f"theme/{theme}/mean"] = score
-        for axis, score in self.axis_scores.items():
-            metrics[f"axis/{axis}/mean"] = score
-        return metrics
+    theme_scores = {
+        k.removeprefix("theme:"): v
+        for k, v in stratified.items()
+        if k.startswith("theme:")
+    }
+    axis_scores = {
+        k.removeprefix("axis:"): v
+        for k, v in stratified.items()
+        if k.startswith("axis:")
+    }
+    return RunMetrics(
+        overall_score=overall,
+        theme_scores=theme_scores,
+        axis_scores=axis_scores,
+    )
 
 
 def log_evaluation_run(
@@ -147,17 +165,6 @@ def log_evaluation_run(
         )
 
     return run_id
-
-
-def _log_json_artifact(data: dict[str, Any], filename: str) -> None:
-    """Write a dict as JSON to a temp file and log it as an MLflow artifact."""
-    tmp_dir = tempfile.mkdtemp()
-    try:
-        path = Path(tmp_dir) / filename
-        path.write_text(json.dumps(data, indent=2, default=str))
-        mlflow.log_artifact(str(path))
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def log_comparison(
@@ -220,3 +227,172 @@ def log_comparison(
         )
 
     return run_id
+
+
+def _log_json_artifact(data: dict[str, Any], filename: str) -> None:
+    """Write a dict as JSON to a temp file and log it as an MLflow artifact."""
+    tmp_dir = tempfile.mkdtemp()
+    try:
+        path = Path(tmp_dir) / filename
+        path.write_text(json.dumps(data, indent=2, default=str))
+        mlflow.log_artifact(str(path))
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _cli() -> None:
+    """CLI entry point for running evaluation and logging to MLflow.
+
+    Loads agent and judge configuration from YAML files, samples N
+    conversations (stratified by theme, deterministic via ``--seed``),
+    evaluates each sample with the configured LLM judge, and logs
+    params + metrics + artifacts to MLflow.
+
+    Usage::
+
+        uv run python -m evaluation.experiment_tracker \
+            --agent-config config/agents/baseline_agent.yaml \
+            --sample-size 100 --seed 42
+    """
+    import argparse
+
+    from healthbench_agent.dataset.loader import load_dataset
+    from healthbench_agent.dataset.split_utils import stratified_sample
+    from healthbench_agent.llm_eval.runner import EvalRunner
+
+    logging.basicConfig(
+        level=logging.INFO, format="%(levelname)s: %(message)s"
+    )
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Run HealthBench evaluation and log results to MLflow."
+        ),
+    )
+    parser.add_argument(
+        "--agent-config",
+        required=True,
+        help=(
+            "Path to agent YAML config "
+            "(e.g. config/agents/baseline_agent.yaml)."
+        ),
+    )
+    parser.add_argument(
+        "--judge-config",
+        default=None,
+        help=(
+            "Path to judge YAML config. "
+            "Uses JudgeConfig defaults if not provided."
+        ),
+    )
+    parser.add_argument(
+        "--sample-size",
+        type=int,
+        default=100,
+        help="Number of conversations to evaluate (default: 100).",
+    )
+    parser.add_argument(
+        "--subset",
+        default="main",
+        choices=["main", "hard", "consensus"],
+        help="HealthBench subset to evaluate (default: main).",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Random seed for reproducible sampling (default: 0).",
+    )
+    args = parser.parse_args()
+
+    # Load configs from YAML
+    agent_config = RootAgentPipelineConfig.from_yaml(args.agent_config)
+    if args.judge_config:
+        judge_config = JudgeConfig.from_yaml(args.judge_config)
+    else:
+        judge_config = JudgeConfig()
+
+    logger.info(
+        "Agent: name=%s, model=%s",
+        agent_config.name,
+        agent_config.model,
+    )
+    logger.info(
+        "Judge: provider=%s, model=%s, mode=%s",
+        judge_config.provider,
+        judge_config.model,
+        judge_config.mode,
+    )
+
+    # Load and sample dataset (deterministic via seed)
+    dataset = load_dataset(subset=args.subset)
+    sampled = stratified_sample(
+        dataset,
+        n=args.sample_size,
+        tag_prefix="theme",
+        seed=args.seed,
+    )
+    logger.info(
+        "Loaded %d samples from %s subset (sampled %d, seed=%d)",
+        len(dataset),
+        args.subset,
+        len(sampled),
+        args.seed,
+    )
+
+    # Build runner and evaluate
+    runner = EvalRunner.from_config(judge_config)
+    responses = [
+        "I cannot provide a response without proper clinical context."
+    ] * len(sampled)
+    results = runner.run(list(sampled.samples), responses)
+    logger.info("Evaluated %d samples", len(results))
+
+    # Build params and metrics
+    params = build_run_params(
+        judge_config=judge_config,
+        agent_config=agent_config,
+        sample_size=len(sampled),
+        seed=args.seed,
+    )
+    metrics = build_run_metrics(results)
+
+    # Build results JSON for artifact
+    results_json = {
+        "agent": agent_config.name,
+        "subset": args.subset,
+        "sample_size": len(sampled),
+        "seed": args.seed,
+        "results": [
+            {
+                "prompt_id": (
+                    r.example_level_metadata.get("prompt_id", "")
+                ),
+                "score": r.score,
+                "verdicts": (
+                    r.example_level_metadata.get("verdicts", [])
+                ),
+            }
+            for r in results
+            if r.example_level_metadata
+        ],
+    }
+
+    prompt_path = Path(judge_config.prompt_path)
+    run_id = log_evaluation_run(
+        params=params,
+        metrics=metrics,
+        results_json=results_json,
+        prompt_yaml_path=prompt_path if prompt_path.exists() else None,
+    )
+    logger.info("MLflow run ID: %s", run_id)
+    logger.info(
+        "Overall score: %.4f | Themes: %s | Axes: %s",
+        metrics.overall_score,
+        {k: f"{v:.3f}" for k, v in metrics.theme_scores.items()},
+        {k: f"{v:.3f}" for k, v in metrics.axis_scores.items()},
+    )
+
+
+if __name__ == "__main__":
+    _cli()

@@ -21,7 +21,6 @@ from healthbench_agent.analysis.visualization import (
 )
 from healthbench_agent.domain import HealthBenchDataset, HealthBenchSample, RubricItem
 
-
 # ---------------------------------------------------------------------------
 # Local fixture helpers
 # ---------------------------------------------------------------------------

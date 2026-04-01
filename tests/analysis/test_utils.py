@@ -6,8 +6,6 @@ using the ZOMBIES heuristic.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pandas as pd
 import pytest
 
@@ -17,7 +15,6 @@ from healthbench_agent.analysis.utils import (
     save_csv,
     series_stats,
 )
-
 
 # ---------------------------------------------------------------------------
 # DEFAULT_PERCENTILES

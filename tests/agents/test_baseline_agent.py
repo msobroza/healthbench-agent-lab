@@ -1,4 +1,4 @@
-"""Tests for agents/baseline_agent/agent.py — Architecture A.
+"""Tests for agents/baseline_pipeline.py — Architecture A.
 
 Validates agent configuration, prompt loading, and the root_agent contract.
 Does NOT test LLM inference (no network calls).
@@ -6,10 +6,15 @@ Does NOT test LLM inference (no network calls).
 
 from __future__ import annotations
 
-import yaml
 from pathlib import Path
 
-from agents.baseline_agent.agent import root_agent, _load_instruction, _PROMPT_PATH
+import yaml
+
+from agents.baseline_pipeline import _pipeline, from_config, root_agent
+from healthbench_agent.agent import AgentPipeline, RootAgentPipelineConfig, load_instruction
+from healthbench_agent.agent.adapters.adk_adapter import ADKAgentPipeline
+
+_PROMPT_PATH = Path(_pipeline.config.prompt_path)
 
 
 # ---------------------------------------------------------------------------
@@ -39,9 +44,14 @@ class TestPromptYaml:
         assert all(p.isdigit() for p in parts)
 
     def test_prompt_instruction_is_nonempty_string(self):
-        instruction = _load_instruction()
+        instruction = load_instruction(_PROMPT_PATH)
         assert isinstance(instruction, str)
         assert len(instruction) > 100, "Instruction seems too short for a health prompt"
+
+    def test_prompt_instruction_contains_conversation_placeholder(self):
+        with open(_PROMPT_PATH) as f:
+            raw = yaml.safe_load(f)["instruction"]
+        assert "{{ conversation }}" in raw
 
 
 # ---------------------------------------------------------------------------
@@ -68,10 +78,6 @@ class TestBaselineAgentConfig:
     def test_root_agent_has_no_sub_agents(self):
         assert not root_agent.sub_agents, "Baseline agent should have no sub_agents"
 
-    def test_root_agent_instruction_matches_yaml(self):
-        expected = _load_instruction()
-        assert root_agent.instruction == expected
-
     def test_root_agent_instruction_contains_safety_guidance(self):
         instruction = root_agent.instruction
         assert "emergency" in instruction.lower()
@@ -84,3 +90,31 @@ class TestBaselineAgentConfig:
     def test_root_agent_instruction_contains_limitation_disclaimer(self):
         instruction = root_agent.instruction
         assert "healthcare provider" in instruction.lower() or "doctor" in instruction.lower()
+
+
+# ---------------------------------------------------------------------------
+# Pipeline class tests
+# ---------------------------------------------------------------------------
+
+
+class TestBaselinePipeline:
+    """Tests for the baseline ADKAgentPipeline concrete class."""
+
+    def test_is_agent_pipeline_subclass(self):
+        assert isinstance(_pipeline, AgentPipeline)
+
+    def test_config_is_agent_pipeline_config(self):
+        assert isinstance(_pipeline.config, RootAgentPipelineConfig)
+
+    def test_config_matches_yaml(self):
+        assert _pipeline.config.name == "baseline_agent"
+        assert _pipeline.config.model == "gemini-2.0-flash"
+        assert _pipeline.config.prompt_version == "1.0.0"
+
+    def test_from_config_creates_pipeline(self):
+        pipeline = from_config()
+        assert isinstance(pipeline, ADKAgentPipeline)
+        assert pipeline.agent.name == "baseline_agent"
+
+    def test_description_from_config(self):
+        assert _pipeline.config.description == root_agent.description

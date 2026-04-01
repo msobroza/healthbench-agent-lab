@@ -49,3 +49,9 @@ instruction: |
   8. **Do no harm.** Never recommend specific dosages without qualification,
      never discourage seeking professional care, and never provide information
      that could delay emergency treatment.
+
+  ## Conversation
+
+  {{ conversation }}
+
+  Respond to the last user message above.

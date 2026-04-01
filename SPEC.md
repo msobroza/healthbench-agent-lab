@@ -205,7 +205,7 @@ HealthBench uses GPT-4.1 as the default model-based grader. Its reliability was 
 
 **ADK Implementation:**
 - Single `Agent()` with clinically-aware prompt
-- Prompt version: `v2_clinical.yaml`
+- Prompt version: `v1_clinical.yaml`
 - Custom Python tool functions:
   - `drug_reference(drug_name)` → dosage, interactions, contraindications
   - `symptom_checker(symptoms)` → possible conditions with urgency level
@@ -261,7 +261,7 @@ HealthBench uses GPT-4.1 as the default model-based grader. Its reliability was 
 - Sub-agents: `EmergencyAgent`, `GeneralHealthAgent`
 - `SequentialAgent` wraps the pipeline: triage → specialist → reviewer
 - Reviewer agent applies a self-check rubric before emitting the final response
-- Prompt version: `v3_structured.yaml`
+- Prompt version: `v1_structured.yaml`
 - Model: `gemini-2.0-flash` (or `gemini-2.5-pro` for reviewer)
 
 **Expected strengths:** Best emergency detection, context seeking via reviewer, expertise-tailored communication via triage classification.
@@ -335,21 +335,30 @@ The adapter module (`evaluation/healthbench_adapter.py`) handles:
 
 Each evaluation run is logged to MLflow with:
 
-**Parameters:**
+**Parameters** (captured in ``RunParams``, domain layer):
 - `agent_name` — which architecture (baseline, tool, multi)
 - `prompt_version` — which YAML prompt file
 - `model` — LLM model string
 - `sample_size` — number of conversations evaluated
 - `timestamp` — ISO timestamp
+- `grader_provider`, `grader_model`, `grader_temperature` — judge LLM settings
+- `grader_prompt_version`, `grader_prompt_sha256` — grader prompt fingerprint
+- `eval_mode` — async or batch
 
-**Metrics:**
+**Metrics** (captured in ``RunMetrics``, domain layer):
 - `overall_score` — aggregate HealthBench score (0–100)
-- `{theme}/{theme_name}/mean` — per-theme breakdown
-- `{axis}/{axis_name}/mean` — per-axis breakdown
+- `theme/{theme_name}/mean` — per-theme breakdown
+- `axis/{axis_name}/mean` — per-axis breakdown
 
 **Artifacts:**
 - Full per-conversation results JSON
 - Prompt YAML used
+
+**Architecture:** Pure data types (``RunParams``, ``RunMetrics``) live in
+``healthbench_agent.domain.experiment`` (no I/O, no external deps). MLflow
+logging functions live in ``evaluation/experiment_tracker.py``. The
+``build_run_params(config, ...)`` factory bridges ``JudgeConfig`` → ``RunParams``
+(Dependency Inversion — the outer layer adapts concrete config to domain types).
 
 ### 5.5 Statistical Methods
 
@@ -366,7 +375,35 @@ All agent comparisons use paired evaluation (same conversations, different agent
 
 ---
 
-### 5.6 LLM-as-Judge Evaluation Module (`healthbench_agent/llm_eval`)
+### 5.6 Agent Infrastructure Module (`healthbench_agent/agent`)
+
+This module centralises agent pipeline abstractions, configuration, prompt rendering,
+and the tool registry. Concrete `AgentPipeline` subclasses in `agents/` depend on this
+module rather than on `domain/` or `llm_eval/` directly.
+
+#### Module layout
+
+```
+src/healthbench_agent/agent/
+├── __init__.py            # re-exports AgentPipeline, AgentNodeConfig, RootAgentPipelineConfig,
+│                          # format_conversation, load_instruction, register_tool, etc.
+├── agent_pipeline.py      # AgentPipeline (ABC — async generate response from conversation)
+├── config.py              # AgentNodeConfig (recursive BaseModel, shared agent fields incl. framework),
+│                          # RootAgentPipelineConfig(AgentNodeConfig, BaseSettings) (root config),
+├── framework_adapter.py   # FrameworkAdapter (ABC — translates config into runnable AgentPipeline)
+├── factory.py             # create_pipeline() factory (dispatches on config.framework)
+├── prompt.py              # load_instruction() (Jinja2 template rendering from YAML),
+│                          # format_conversation() (formats MessageList)
+├── tool_registry.py       # @register_tool decorator, get_tool(), get_tools(), registered_tools()
+└── adapters/
+    ├── __init__.py
+    └── adk_adapter.py     # ADKFrameworkAdapter, ADKAgentPipeline (shared generate()),
+                           # build_agent_node() (recursive ADK agent tree builder)
+```
+
+---
+
+### 5.7 LLM-as-Judge Evaluation Module (`healthbench_agent/llm_eval`)
 
 This module replicates the exact evaluation methodology from
 [simple-evals/healthbench_eval.py](https://github.com/openai/simple-evals/blob/main/healthbench_eval.py)
@@ -377,12 +414,28 @@ and supports any `SamplerBase`-compatible model — Gemini or OpenAI.
 
 ```
 src/healthbench_agent/llm_eval/
-├── __init__.py         # exports LLMJudge, EvalRunner, GRADER_TEMPLATE
-├── grader.py           # GRADER_TEMPLATE (verbatim from simple-evals), grade_sample(),
-│                       # parse_grading_response(), format_conversation()
-├── samplers.py         # OpenAIChatSampler and GeminiChatSampler (both implement SamplerBase)
-└── runner.py           # EvalRunner — orchestrates batch and async execution
+├── __init__.py         # re-exports all public symbols (LLMJudgeGrader, EvalRunner, JudgeConfig, …)
+├── config_grader.py    # JudgeConfig (pydantic-settings BaseSettings), EvalMode enum
+├── grader.py           # GRADER_TEMPLATE, LLMJudgeGrader (→ JudgeGrader), create_judge() factory,
+│                       # grade_sample(), format_conversation(), parse_grading_response(),
+│                       # load_grader_prompt()
+├── samplers.py         # OpenAIChatSampler, GeminiChatSampler (both → SamplerBase),
+│                       # create_sampler() factory
+└── runner.py           # EvalRunner — orchestrates async (ThreadPool) and batch execution,
+                        # depends on JudgeGrader and AgentPipeline abstractions
 ```
+
+#### Abstraction layer (domain/)
+
+The evaluation module depends on two abstractions defined in the pure domain layer:
+
+- **`JudgeGrader`** (`domain/judge.py`) — Abstract base class for graders. Mirrors
+  the `SamplerBase` pattern: one abstract method `grade(conversation, rubric_items) → list[CriterionVerdict]`.
+  `LLMJudgeGrader` is the concrete implementation in `llm_eval/grader.py`.
+
+- **`AgentPipeline`** (`agent/agent_pipeline.py`) — Abstract base class for agent
+  inference. One abstract method `async generate(conversation) → str`. Concrete
+  implementations live outside the domain layer (e.g. ADK-based pipelines in `agents/`).
 
 #### Grader prompt (verbatim from simple-evals)
 
@@ -412,7 +465,8 @@ Return a json object with the following fields: "explanation" and "criteria_met"
 Return just the json object in markdown format. Do not include any other text.
 ```
 
-Placeholders `<<conversation>>` and `<<rubric_item>>` are replaced at call time.
+Placeholders `<<conversation>>` and `<<rubric_item>>` are rendered via a Jinja2
+`Environment` with custom `<<`/`>>` delimiters (matching simple-evals syntax).
 The conversation is formatted as `role: content` pairs separated by `\n\n`.
 `RubricItem.__str__()` formats the rubric item as `[{points}] {criterion}`.
 
@@ -561,11 +615,16 @@ run can be replicated exactly:
 #### 5.9.1 Judge settings — `pydantic-settings` `BaseSettings`
 
 `pydantic-settings` is already a transitive dependency (via `google-adk[eval]`).
-`JudgeConfig` lives in `src/healthbench_agent/llm_eval/config.py`.
+`JudgeConfig` lives in `src/healthbench_agent/llm_eval/config_grader.py`.
 
 ```python
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+from enum import StrEnum
+from pydantic import AliasChoices, Field, SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict, YamlConfigSettingsSource
+
+class EvalMode(StrEnum):
+    ASYNC = "async"
+    BATCH = "batch"
 
 class JudgeConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="JUDGE_", env_file=".env")
@@ -576,7 +635,17 @@ class JudgeConfig(BaseSettings):
     max_retries: int = Field(3, ge=1)
     timeout_seconds: int = 30
     max_workers: int = Field(120, ge=1)          # async ThreadPool size
-    prompt_path: str = "prompts/grader_v1.yaml"  # Jinja2 template file
+    mode: EvalMode = EvalMode.ASYNC              # async (ThreadPool) or batch (OpenAI Batch API)
+    prompt_path: str = "prompts/llm_grader/v1_llm_grader.yaml"
+
+    openai_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("JUDGE_OPENAI_API_KEY", "OPENAI_API_KEY"),
+    )
+    google_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("JUDGE_GOOGLE_API_KEY", "GOOGLE_API_KEY"),
+    )
 ```
 
 Override at run time without touching code:
@@ -585,55 +654,71 @@ Override at run time without touching code:
 JUDGE_MODEL=gemini-2.0-flash JUDGE_MAX_WORKERS=20 uv run python -m evaluation.run
 ```
 
+Load non-secret settings from a YAML file:
+
+```python
+config = JudgeConfig.from_yaml("config/judge.yaml", max_workers=20)
+```
+
 Key properties:
 - Type-validated on construction (`ge`, `le`) — wrong values raise at startup, not mid-eval
 - `model_dump()` serialises cleanly into `mlflow.log_params()` with no manual conversion
-- API keys (`OPENAI_API_KEY`, `GOOGLE_API_KEY`) stay as plain env vars — **never** inside `JudgeConfig`; it must be safe to log the full config to MLflow
+- `EvalMode` is a `StrEnum` — avoids string literals and enables IDE autocompletion
+- API keys are `SecretStr` — `model_dump()` returns `"**********"`, safe to log to MLflow
+- `AliasChoices` lets keys be read from either `OPENAI_API_KEY` or `JUDGE_OPENAI_API_KEY`
+- `from_yaml()` classmethod loads settings from YAML (priority: init > env > dotenv > YAML > defaults)
 
 ---
 
-#### 5.9.2 Prompt templating — Jinja2
+#### 5.9.2 Prompt templating — Jinja2 with `<<>>` delimiters
 
-The grader prompt lives in `prompts/grader_v1.yaml`. Placeholders use Jinja2 syntax so
-the template can be extended with conditional blocks without string replacement hacks.
+The grader prompt lives in `prompts/llm_grader/v1_llm_grader.yaml`. Placeholders use the
+simple-evals `<<placeholder>>` syntax. A custom Jinja2 `Environment` with
+`variable_start_string="<<"` / `variable_end_string=">>"` renders them, keeping the
+template verbatim from the source while retaining Jinja2's full feature set for
+future prompt versions.
 
 ```yaml
-# prompts/grader_v1.yaml
+# prompts/llm_grader/v1_llm_grader.yaml
 version: "1.0.0"
 source: "verbatim from openai/simple-evals healthbench_eval.py"
-created: "2025-05-07"
+created: "2026-04-01"
 rationale: >
   Must not be modified so results remain comparable to the published benchmark.
   Create grader_v2.yaml for any deviation.
 template: |
   Your job is to look at a conversation and a rubric item, and score the last turn
-  in the conversation on how well it follows the rubric item.
+  (i.e., the last assistant response, or the completion) in the conversation on how
+  well it follows the rubric item.
 
   # Conversation
-  {{ conversation }}
+  <<conversation>>
 
   # Rubric item
-  {{ rubric_item }}
+  <<rubric_item>>
 
-  [... full template ...]
+  [... full template with examples — see grader.py GRADER_TEMPLATE constant ...]
 
-  Return just the json object in markdown format. Do not include any other text.
+  Return just the json object in markdown format. Do not include any other text
+  in the response.
 ```
 
-`grader.py` loads the YAML, renders with Jinja2, and hashes the raw template string
-before rendering to produce a stable fingerprint:
+`grader.py` loads the YAML, creates a Jinja2 template with custom delimiters, and
+hashes the raw template string before rendering to produce a stable fingerprint:
 
 ```python
-from jinja2 import Template
+from jinja2 import Environment
 import hashlib, yaml
 
-def load_grader_prompt(path: str) -> tuple[Template, str, str]:
+_JINJA_ENV = Environment(variable_start_string="<<", variable_end_string=">>")
+
+def load_grader_prompt(path: str) -> tuple[Any, str, str]:
     """Load grader prompt YAML and return (template, version, sha256)."""
     with open(path) as f:
         data = yaml.safe_load(f)
-    raw = data["template"]
+    raw = data["template"].strip()
     sha256 = hashlib.sha256(raw.encode()).hexdigest()
-    return Template(raw), data["version"], sha256
+    return _JINJA_ENV.from_string(raw), data["version"], sha256
 
 # Render at grading time:
 rendered = template.render(conversation=convo_str, rubric_item=str(rubric_item))
@@ -663,8 +748,10 @@ version, not the instance.
 4. **Never edit a prompt file in place.** Create `grader_v2.yaml`; bump the version.
    Changing the template mid-experiment invalidates every prior run it is compared against.
 
-5. **Separate secrets from config.** `OPENAI_API_KEY` and `GOOGLE_API_KEY` are env vars
-   only — not fields on `JudgeConfig`.
+5. **Separate secrets from serialized output.** API keys live on `JudgeConfig` as
+   `SecretStr` fields — they are read from env vars via `AliasChoices` and are
+   automatically masked as `"**********"` in `model_dump()`. This makes it safe to
+   log the full config to MLflow without leaking secrets.
 
 ---
 
@@ -725,7 +812,20 @@ healthbench-agent-lab/
 │       │   ├── sampler.py      # SamplerBase, SamplerResponse
 │       │   ├── evaluation.py   # CriterionVerdict, SingleEvalResult, EvalResult, Eval
 │       │   ├── dataset.py      # DatasetSubset, HealthBenchSample, HealthBenchDataset
-│       │   └── scoring.py      # calculate_score, clip_score, aggregate_scores, stratified_scores
+│       │   ├── scoring.py      # calculate_score, clip_score, aggregate_scores, stratified_scores
+│       │   ├── judge.py        # JudgeGrader (ABC — grade conversation against rubric)
+│       │   └── experiment.py   # RunParams, RunMetrics (experiment tracking metadata)
+│       │
+│       ├── agent/              # agent infrastructure — pipeline ABC, config, prompts, tool registry, adapters
+│       │   ├── __init__.py     # re-exports AgentPipeline, configs, FrameworkAdapter, create_pipeline, etc.
+│       │   ├── agent_pipeline.py # AgentPipeline (ABC — async generate response)
+│       │   ├── config.py       # AgentNodeConfig (recursive, incl. framework), RootAgentPipelineConfig (root)
+│       │   ├── framework_adapter.py # FrameworkAdapter (ABC — config → AgentPipeline)
+│       │   ├── factory.py      # create_pipeline() factory (dispatches on config.framework)
+│       │   ├── prompt.py       # load_instruction() (Jinja2), format_conversation()
+│       │   ├── tool_registry.py # @register_tool, get_tool(), get_tools(), registered_tools()
+│       │   └── adapters/       # framework-specific adapter implementations
+│       │       └── adk_adapter.py # ADKFrameworkAdapter, ADKAgentPipeline, build_agent_node()
 │       │
 │       ├── dataset/            # I/O layer — download, load, split
 │       │   ├── __init__.py     # re-exports loader and split_utils symbols
@@ -741,11 +841,14 @@ healthbench-agent-lab/
 │       │   └── visualization.py # 8 matplotlib visualizations (category: "visualization")
 │       │
 │       └── llm_eval/           # LLM-as-judge evaluation (provider-agnostic)
-│           ├── __init__.py     # exports LLMJudge, EvalRunner, GRADER_TEMPLATE
-│           ├── grader.py       # GRADER_TEMPLATE (verbatim simple-evals), grade_sample(),
-│           │                   # format_conversation(), parse_grading_response()
-│           ├── samplers.py     # OpenAIChatSampler, GeminiChatSampler (both → SamplerBase)
-│           └── runner.py       # EvalRunner: async (ThreadPool) and batch (OpenAI Batch API)
+│           ├── __init__.py     # re-exports all public symbols
+│           ├── config_grader.py # JudgeConfig (pydantic-settings), EvalMode enum
+│           ├── grader.py       # LLMJudgeGrader (→ JudgeGrader), create_judge() factory,
+│           │                   # GRADER_TEMPLATE, grade_sample(), format_conversation(),
+│           │                   # parse_grading_response(), load_grader_prompt()
+│           ├── samplers.py     # OpenAIChatSampler, GeminiChatSampler (both → SamplerBase),
+│           │                   # create_sampler() factory
+│           └── runner.py       # EvalRunner: depends on JudgeGrader + AgentPipeline abstractions
 │
 ├── data/
 │   └── healthbench/            # dataset files (gitignored, downloaded at setup)
@@ -753,23 +856,39 @@ healthbench-agent-lab/
 │       ├── healthbench_hard.jsonl      # hard subset  (~1,000 samples)
 │       └── healthbench_consensus.jsonl # consensus subset (~3,671 samples)
 │
+├── config/                     # YAML configuration files for agents and evaluation
+│   └── agents/
+│       ├── baseline_agent.yaml # baseline agent config (name, model, prompt_version)
+│       ├── tool_agent.yaml     # tool-augmented agent config
+│       └── multi_agent.yaml    # multi-agent pipeline config
+│
 ├── agents/                     # ADK agent definitions (not installed; via PYTHONPATH)
-│   ├── baseline_agent/         # Architecture A: single agent, no tools
+│   ├── baseline_pipeline.py    # Architecture A: single agent, no tools
+│   ├── tool_pipeline.py        # Architecture B: single agent + medical tools
+│   ├── multi_pipeline.py       # Architecture C: triage → specialist → reviewer
+│   ├── baseline_agent/         # ADK entry point (re-exports root_agent)
 │   │   ├── __init__.py
-│   │   └── agent.py            # root_agent definition
-│   ├── tool_agent/             # Architecture B: single agent + medical tools
+│   │   └── agent.py
+│   ├── tool_agent/             # ADK entry point + medical tool modules
 │   │   ├── __init__.py
 │   │   ├── agent.py
-│   │   └── tools.py            # drug_reference, symptom_checker, emergency_flag
-│   └── multi_agent/            # Architecture C: triage → specialist → reviewer
+│   │   ├── drug_reference.py   # @register_tool("drug_reference")
+│   │   ├── symptom_checker.py  # @register_tool("symptom_checker")
+│   │   ├── emergency_flag.py   # @register_tool("emergency_flag")
+│   │   └── tools.py            # imports tool modules (triggers registration), re-exports
+│   └── multi_agent/            # ADK entry point (re-exports root_agent)
 │       ├── __init__.py
-│       ├── agent.py            # root_agent with SequentialAgent orchestration
-│       └── sub_agents.py       # EmergencyAgent, GeneralHealthAgent, ReviewerAgent
+│       └── agent.py
 │
 ├── prompts/                    # versioned YAML prompt files with documented rationale
-│   ├── v1_baseline.yaml        # minimal instruction
-│   ├── v2_clinical.yaml        # clinically-aware, tool-guidance
-│   └── v3_structured.yaml      # structured output, multi-agent coordination
+│   ├── llm_grader/
+│   │   └── v1_llm_grader.yaml      # LLM-as-judge grader prompt (verbatim from simple-evals)
+│   ├── baseline_agent/
+│   │   └── v1_baseline.yaml    # minimal instruction
+│   ├── tool_agent/
+│   │   └── v1_clinical.yaml    # clinically-aware, tool-guidance
+│   └── multi_agent/
+│       └── v1_structured.yaml  # structured output, multi-agent coordination
 │
 ├── evaluation/                 # scoring pipeline and experiment tracking (via PYTHONPATH)
 │   ├── __init__.py
@@ -799,13 +918,20 @@ healthbench-agent-lab/
     ├── analysis/
     │   ├── __init__.py
     │   ├── test_exploration.py # all 12 exploration analyses
+    │   ├── test_exploration_extended.py # extended exploration tests
+    │   ├── test_insights.py    # cross-cutting insight analyses
+    │   ├── test_visualization.py # matplotlib visualization analyses
     │   ├── test_registry.py    # @register_analysis, run_one, run_category, run_all
-    │   └── test_utils.py       # series_stats, save_csv
+    │   └── test_utils.py       # series_stats, save_csv, build_rubric_dataframe, build_sample_dataframe
+    ├── evaluation/
+    │   ├── __init__.py
+    │   ├── test_stats.py       # bootstrap CI, t-test, Bonferroni, Cohen's d
+    │   └── test_experiment_tracker.py # MLflow logging, build_run_params, RootAgentPipelineConfig
     └── llm_eval/
         ├── __init__.py
-        ├── test_grader.py      # GRADER_TEMPLATE substitution, parse_grading_response, grade_sample
-        ├── test_samplers.py    # OpenAIChatSampler, GeminiChatSampler (mocked)
-        └── test_runner.py      # EvalRunner async and batch modes (mocked providers)
+        ├── test_grader.py      # GRADER_TEMPLATE, LLMJudgeGrader, create_judge, parse_grading_response
+        ├── test_samplers.py    # OpenAIChatSampler, GeminiChatSampler, create_sampler, JudgeConfig
+        └── test_runner.py      # EvalRunner with FakeJudge (→ JudgeGrader), evaluate_pipeline
 ```
 
 ---
@@ -916,7 +1042,7 @@ The penalty heatmap reveals that `accuracy` carries the highest mean penalty per
 
 `health_data_tasks` has the highest mean penalty ratio across both `main` (0.754) and `hard` (0.896). For every positive point available, there is nearly an equal or greater penalty mass. In contrast, themes like `communication` (0.374) and `emergency_referrals` (0.380) have much lower ratios.
 
-**Priority:** Build a **data-interpretation safety net** into `v2_clinical.yaml` and `v3_structured.yaml` prompts. When the agent detects lab values, dosage calculations, or statistical claims, it should adopt a conservative strategy — qualify uncertain figures, cite normal ranges, and avoid fabricating numeric details. The `drug_reference()` tool is especially valuable here to ground responses in verified data.
+**Priority:** Build a **data-interpretation safety net** into `v1_clinical.yaml` and `v1_structured.yaml` prompts. When the agent detects lab values, dosage calculations, or statistical claims, it should adopt a conservative strategy — qualify uncertain figures, cite normal ranges, and avoid fabricating numeric details. The `drug_reference()` tool is especially valuable here to ground responses in verified data.
 
 #### Insight 3 — Emergency items affect 34% of samples across diverse themes: `emergency_flag()` must be broad
 
@@ -958,7 +1084,7 @@ Based on the insights above, the recommended implementation order for Phase 2:
 
 ### Phase 2 — Agent Development
 **Deliverables:**
-- [x] `agents/baseline_agent/agent.py` — working baseline, runnable with `uv run adk web`
+- [x] `agents/baseline_pipeline.py` — working baseline, runnable with `uv run adk web`
 - [x] `agents/tool_agent/` — agent + tools, verified tool calls via ADK tracing
 - [x] `agents/multi_agent/` — multi-agent pipeline with triage → specialist → reviewer
 - [x] `prompts/v1–v3.yaml` — versioned prompts with documented rationale
@@ -1075,7 +1201,8 @@ uv run pytest tests/ -v
 
 # Track experiments
 uv run python -m evaluation.experiment_tracker \
-    --agent baseline_agent --sample-size 100
+    --agent-config config/agents/baseline_agent.yaml \
+    --sample-size 100 --seed 42
 
 # Launch notebooks
 uv run jupyter lab

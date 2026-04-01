@@ -13,11 +13,16 @@ Dependency order (each module only imports from modules above it):
     evaluation.py    → conversation, sampler
     dataset.py       → rubric, conversation
     scoring.py       → evaluation, rubric
+    judge.py         → conversation, evaluation, rubric
+    experiment.py    → (stdlib only)
+
 """
 
 from .conversation import Conversation, ConversationMetadata, Message, MessageList
 from .dataset import DatasetSubset, HealthBenchDataset, HealthBenchSample
 from .evaluation import CriterionVerdict, Eval, EvalResult, SingleEvalResult
+from .experiment import RunMetrics, RunParams
+from .judge import JudgeGrader
 from .rubric import RubricItem
 from .sampler import SamplerBase, SamplerResponse
 from .scoring import aggregate_scores, calculate_score, clip_score, stratified_scores
@@ -34,11 +39,16 @@ __all__ = [
     # sampler
     "SamplerBase",
     "SamplerResponse",
+    # judge
+    "JudgeGrader",
     # evaluation
     "CriterionVerdict",
     "SingleEvalResult",
     "EvalResult",
     "Eval",
+    # experiment tracking
+    "RunParams",
+    "RunMetrics",
     # dataset
     "DatasetSubset",
     "HealthBenchSample",
