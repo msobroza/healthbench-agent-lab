@@ -11,12 +11,11 @@ from pathlib import Path
 
 import pytest
 import yaml
-from google.adk.agents import Agent, SequentialAgent
+from google.adk.agents import LlmAgent, SequentialAgent
 
-from agents.multi_pipeline import _pipeline, from_config, root_agent
+from agents.multi_pipeline import _pipeline, root_agent
 from healthbench_agent.agent import AgentPipeline, RootAgentPipelineConfig, load_instruction
-from healthbench_agent.agent.adapters.adk_adapter import ADKAgentPipeline
-from healthbench_agent.agent.adapters.adk_adapter import build_agent_node
+from healthbench_agent.agent.adapters.adk_adapter import ADKAgentPipeline, build_agent_node
 from healthbench_agent.agent.config import AgentNodeConfig
 
 _PROMPT_PATH = Path(_pipeline.config.prompt_path)
@@ -27,10 +26,10 @@ _PROMPT_PATH = Path(_pipeline.config.prompt_path)
 # ---------------------------------------------------------------------------
 
 
-def _find_agent(name: str) -> Agent:
+def _find_agent(name: str) -> LlmAgent:
     """Find an agent by name anywhere in the pipeline tree."""
 
-    def _search(agent: Agent | SequentialAgent) -> Agent | None:
+    def _search(agent: LlmAgent | SequentialAgent) -> LlmAgent | None:
         if agent.name == name:
             return agent
         for sub in getattr(agent, "sub_agents", []):
@@ -101,9 +100,7 @@ class TestAgentNodeConfig:
         assert all(isinstance(sa, AgentNodeConfig) for sa in config.sub_agents)
 
     def test_coordinator_has_nested_sub_agents_in_config(self):
-        coordinator_configs = [
-            sa for sa in _pipeline.config.sub_agents if sa.sub_agents
-        ]
+        coordinator_configs = [sa for sa in _pipeline.config.sub_agents if sa.sub_agents]
         assert len(coordinator_configs) == 1
         assert coordinator_configs[0].name == "coordinator_agent"
         child_names = [c.name for c in coordinator_configs[0].sub_agents]
@@ -139,40 +136,32 @@ class TestRoutingConfig:
 
     def test_coordinator_orchestration_is_routing(self):
         coordinator_config = next(
-            sa for sa in _pipeline.config.sub_agents
-            if sa.name == "coordinator_agent"
+            sa for sa in _pipeline.config.sub_agents if sa.name == "coordinator_agent"
         )
         assert coordinator_config.orchestration == "routing"
 
     def test_emergency_agent_has_condition(self):
         coordinator_config = next(
-            sa for sa in _pipeline.config.sub_agents
-            if sa.name == "coordinator_agent"
+            sa for sa in _pipeline.config.sub_agents if sa.name == "coordinator_agent"
         )
         emergency_config = next(
-            sa for sa in coordinator_config.sub_agents
-            if sa.name == "emergency_agent"
+            sa for sa in coordinator_config.sub_agents if sa.name == "emergency_agent"
         )
         assert emergency_config.condition is not None
         assert "life-threatening" in emergency_config.condition
 
     def test_general_health_agent_has_condition(self):
         coordinator_config = next(
-            sa for sa in _pipeline.config.sub_agents
-            if sa.name == "coordinator_agent"
+            sa for sa in _pipeline.config.sub_agents if sa.name == "coordinator_agent"
         )
         general_config = next(
-            sa for sa in coordinator_config.sub_agents
-            if sa.name == "general_health_agent"
+            sa for sa in coordinator_config.sub_agents if sa.name == "general_health_agent"
         )
         assert general_config.condition is not None
         assert "general health" in general_config.condition
 
     def test_triage_has_no_condition(self):
-        triage_config = next(
-            sa for sa in _pipeline.config.sub_agents
-            if sa.name == "triage_agent"
-        )
+        triage_config = next(sa for sa in _pipeline.config.sub_agents if sa.name == "triage_agent")
         assert triage_config.condition is None
 
     def test_sub_agents_count(self):
@@ -229,11 +218,13 @@ class TestMultiAgentPromptYaml:
     def test_prompt_instructions_contain_conversation_placeholder(self):
         with open(_PROMPT_PATH) as f:
             data = yaml.safe_load(f)
-        for key in ["triage_instruction", "emergency_instruction",
-                     "general_health_instruction", "reviewer_instruction"]:
-            assert "{{ conversation }}" in data[key], (
-                f"Missing conversation placeholder in {key}"
-            )
+        for key in [
+            "triage_instruction",
+            "emergency_instruction",
+            "general_health_instruction",
+            "reviewer_instruction",
+        ]:
+            assert "{{ conversation }}" in data[key], f"Missing conversation placeholder in {key}"
 
 
 # ---------------------------------------------------------------------------
@@ -412,7 +403,7 @@ class TestCoordinatorAgent:
 
     def test_is_regular_agent_not_sequential(self):
         """Routing agents are ADK Agent, not SequentialAgent."""
-        assert isinstance(_coordinator, Agent)
+        assert isinstance(_coordinator, LlmAgent)
         assert not isinstance(_coordinator, SequentialAgent)
 
     def test_has_two_sub_agents(self):
@@ -467,8 +458,8 @@ class TestMultiPipeline:
     def test_config_is_root_agent_pipeline_config(self):
         assert isinstance(_pipeline.config, RootAgentPipelineConfig)
 
-    def test_from_config_function_exists(self):
-        assert callable(from_config)
+    def test_from_config_class_method_exists(self):
+        assert callable(ADKAgentPipeline.from_config)
 
     def test_module_pipeline_is_multi_agent(self):
         assert isinstance(_pipeline, ADKAgentPipeline)
@@ -480,7 +471,7 @@ class TestMultiPipeline:
     def test_unsupported_orchestration_raises(self):
         config = AgentNodeConfig(
             name="test",
-            orchestration="parallel",
+            orchestration="unknown_type",
             sub_agents=[AgentNodeConfig(name="a", prompt_key="triage_instruction")],
             prompt_path=str(_PROMPT_PATH),
         )
@@ -506,7 +497,8 @@ class TestBuilderRouting:
             ],
         )
         agent = build_agent_node(
-            config, parent_prompt_path=str(_PROMPT_PATH),
+            config,
+            parent_prompt_path=str(_PROMPT_PATH),
         )
         assert isinstance(agent, SequentialAgent)
         assert len(agent.sub_agents) == 2
@@ -522,9 +514,10 @@ class TestBuilderRouting:
             ],
         )
         agent = build_agent_node(
-            config, parent_prompt_path=str(_PROMPT_PATH),
+            config,
+            parent_prompt_path=str(_PROMPT_PATH),
         )
-        assert isinstance(agent, Agent)
+        assert isinstance(agent, LlmAgent)
         assert not isinstance(agent, SequentialAgent)
         assert len(agent.sub_agents) == 2
 
@@ -536,7 +529,8 @@ class TestBuilderRouting:
             prompt_key="emergency_instruction",
         )
         agent = build_agent_node(
-            config, parent_prompt_path=str(_PROMPT_PATH),
+            config,
+            parent_prompt_path=str(_PROMPT_PATH),
         )
         assert "Condition: Query is urgent" in agent.description
         assert "Handles emergencies." in agent.description
@@ -548,7 +542,8 @@ class TestBuilderRouting:
             prompt_key="triage_instruction",
         )
         agent = build_agent_node(
-            config, parent_prompt_path=str(_PROMPT_PATH),
+            config,
+            parent_prompt_path=str(_PROMPT_PATH),
         )
         assert agent.description == "Handles triage."
 
@@ -560,7 +555,8 @@ class TestBuilderRouting:
         )
         # prompt_path is empty → inherits from parent_prompt_path
         agent = build_agent_node(
-            config, parent_prompt_path=str(_PROMPT_PATH),
+            config,
+            parent_prompt_path=str(_PROMPT_PATH),
         )
         assert agent.instruction is not None
         assert len(agent.instruction) > 0
@@ -593,13 +589,15 @@ class TestPipelineStructure:
         assert models == {"gemini-2.0-flash"}
 
     def test_emergency_agent_has_emergency_flag_tool(self):
-        from agents.tool_agent.emergency_flag import emergency_flag
+        from tools.emergency_flag import emergency_flag
+
         assert emergency_flag in _emergency.tools
 
     def test_general_agent_has_all_tools(self):
-        from agents.tool_agent.drug_reference import drug_reference
-        from agents.tool_agent.emergency_flag import emergency_flag
-        from agents.tool_agent.symptom_checker import symptom_checker
+        from tools.drug_reference import drug_reference
+        from tools.emergency_flag import emergency_flag
+        from tools.symptom_checker import symptom_checker
+
         assert drug_reference in _general_health.tools
         assert symptom_checker in _general_health.tools
         assert emergency_flag in _general_health.tools

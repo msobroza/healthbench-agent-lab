@@ -20,12 +20,14 @@ The same field set supports all pipeline types:
 Orchestration modes:
     - ``"sequential"``: children run in order (``SequentialAgent``).
     - ``"routing"``: parent LLM decides which child to delegate to.
+    - ``"loop"``: children run iteratively (``LoopAgent``).
+    - ``"parallel"``: children run concurrently (``ParallelAgent``).
 
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, Field, SecretStr
 from pydantic_settings import (
@@ -34,6 +36,29 @@ from pydantic_settings import (
     SettingsConfigDict,
     YamlConfigSettingsSource,
 )
+
+
+class PlannerConfig(BaseModel):
+    """Planner configuration for LlmAgent nodes.
+
+    ADK supports two planner types:
+        - ``"builtin"``: Leverages the model's built-in thinking
+          capability (e.g. Gemini thinking). Controlled by
+          ``thinking_budget`` and ``include_thoughts``.
+        - ``"plan_react"``: Structured plan-action-reasoning format.
+          Useful for models without built-in thinking.
+
+    Attributes:
+        type: Planner type discriminator.
+        thinking_budget: Token budget for built-in thinking (builtin
+            planner only).
+        include_thoughts: Whether to include raw thinking in the
+            response (builtin planner only).
+    """
+
+    type: Literal["builtin", "plan_react"] = "builtin"
+    thinking_budget: int | None = None
+    include_thoughts: bool | None = None
 
 
 class AgentNodeConfig(BaseModel):
@@ -48,6 +73,8 @@ class AgentNodeConfig(BaseModel):
     ``orchestration`` field determines how children are composed:
         - ``"sequential"``: children run in order (``SequentialAgent``).
         - ``"routing"``: parent LLM decides which child to delegate to.
+        - ``"loop"``: children run iteratively (``LoopAgent``).
+        - ``"parallel"``: children run concurrently (``ParallelAgent``).
 
     Attributes:
         name: Unique identifier for this agent.
@@ -61,11 +88,34 @@ class AgentNodeConfig(BaseModel):
         framework: Orchestration framework backend (``"adk"`` or
             ``"langgraph"``). Used by the pipeline factory to select
             the appropriate ``FrameworkAdapter``.
-        orchestration: How children are composed (sequential or routing).
+        orchestration: How children are composed.
         condition: Routing condition — describes when this agent should
             be activated by its parent routing agent.
         output_key: ADK session state key for this agent's output.
         sub_agents: Child agent configs (recursive).
+        max_iterations: Maximum loop iterations (loop orchestration
+            only). ``None`` means no limit.
+        planner: Optional planner configuration (LlmAgent nodes only).
+        include_contents: Whether to include conversation history.
+            ``"default"`` sends history; ``"none"`` omits it.
+        disallow_transfer_to_parent: Prevent this agent from
+            transferring control back to its parent.
+        disallow_transfer_to_peers: Prevent this agent from
+            transferring control to sibling agents.
+        global_instruction: System-wide instruction applied to this
+            agent and all its descendants.
+        before_agent_callback: Registered callback name to run before
+            agent execution.
+        after_agent_callback: Registered callback name to run after
+            agent execution.
+        before_model_callback: Registered callback name to run before
+            LLM calls (LlmAgent only).
+        after_model_callback: Registered callback name to run after
+            LLM calls (LlmAgent only).
+        before_tool_callback: Registered callback name to run before
+            tool execution (LlmAgent only).
+        after_tool_callback: Registered callback name to run after
+            tool execution (LlmAgent only).
     """
 
     name: str = "agent"
@@ -80,6 +130,26 @@ class AgentNodeConfig(BaseModel):
     condition: str | None = None
     output_key: str | None = None
     sub_agents: list[AgentNodeConfig] = Field(default_factory=list)
+
+    # Loop orchestration.
+    max_iterations: int | None = None
+
+    # Planner (LlmAgent nodes only).
+    planner: PlannerConfig | None = None
+
+    # Multi-agent control.
+    include_contents: Literal["default", "none"] = "default"
+    disallow_transfer_to_parent: bool = False
+    disallow_transfer_to_peers: bool = False
+    global_instruction: str = ""
+
+    # Callbacks (registered names resolved at build time).
+    before_agent_callback: str | None = None
+    after_agent_callback: str | None = None
+    before_model_callback: str | None = None
+    after_model_callback: str | None = None
+    before_tool_callback: str | None = None
+    after_tool_callback: str | None = None
 
 
 AgentNodeConfig.model_rebuild()
@@ -124,15 +194,11 @@ class RootAgentPipelineConfig(AgentNodeConfig, BaseSettings):
 
     google_api_key: SecretStr | None = Field(
         default=None,
-        validation_alias=AliasChoices(
-            "AGENT_GOOGLE_API_KEY", "GOOGLE_API_KEY"
-        ),
+        validation_alias=AliasChoices("AGENT_GOOGLE_API_KEY", "GOOGLE_API_KEY"),
     )
     openai_api_key: SecretStr | None = Field(
         default=None,
-        validation_alias=AliasChoices(
-            "AGENT_OPENAI_API_KEY", "OPENAI_API_KEY"
-        ),
+        validation_alias=AliasChoices("AGENT_OPENAI_API_KEY", "OPENAI_API_KEY"),
     )
 
     @classmethod
@@ -155,7 +221,9 @@ class RootAgentPipelineConfig(AgentNodeConfig, BaseSettings):
 
     @classmethod
     def from_yaml(
-        cls, yaml_path: str, **overrides: Any,
+        cls,
+        yaml_path: str,
+        **overrides: Any,
     ) -> RootAgentPipelineConfig:
         """Create config loading non-secret settings from a YAML file.
 

@@ -30,7 +30,8 @@ class FrameworkAdapter(ABC):
 
     @abstractmethod
     def create_pipeline(
-        self, config: RootAgentPipelineConfig,
+        self,
+        config: RootAgentPipelineConfig,
     ) -> AgentPipeline:
         """Build a framework-specific AgentPipeline from config.
 

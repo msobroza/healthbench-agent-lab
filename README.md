@@ -82,16 +82,24 @@ healthbench-agent-lab/
 │   ├── baseline_agent/         # ADK entry point (re-exports root_agent)
 │   │   ├── __init__.py
 │   │   └── agent.py
-│   ├── tool_agent/             # ADK entry point + medical tool modules
+│   ├── tool_agent/             # ADK entry point (re-exports root_agent)
 │   │   ├── __init__.py
-│   │   ├── agent.py
-│   │   ├── drug_reference.py   # @register_tool("drug_reference")
-│   │   ├── symptom_checker.py  # @register_tool("symptom_checker")
-│   │   ├── emergency_flag.py   # @register_tool("emergency_flag")
-│   │   └── tools.py            # imports tool modules (triggers registration), re-exports
+│   │   └── agent.py
 │   └── multi_agent/            # ADK entry point (re-exports root_agent)
 │       ├── __init__.py
 │       └── agent.py
+│
+├── tools/                      # medical reference tool modules
+│   ├── __init__.py
+│   ├── drug_reference.py
+│   ├── symptom_checker.py
+│   ├── emergency_flag.py
+│   └── tools.py
+│
+├── agent_test_cases/           # golden test cases for ADK eval
+│   ├── baseline_pipeline.test.json
+│   ├── tool_pipeline.test.json
+│   └── multi_pipeline.test.json
 │
 ├── prompts/
 │   ├── llm_grader/

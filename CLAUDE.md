@@ -17,15 +17,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
     - `judge.py` — `JudgeGrader` (ABC — grade conversation against rubric items)
     - `experiment.py` — `RunParams`, `RunMetrics` (experiment tracking metadata dataclasses)
   - `agent/` — agent infrastructure (pipeline ABC, config, prompt rendering, tool registry, framework adapters)
-    - `__init__.py` — re-exports `AgentPipeline`, `AgentNodeConfig`, `RootAgentPipelineConfig`, `FrameworkAdapter`, `create_pipeline`, `format_conversation`, `load_instruction`, `register_tool`, `get_tool`, `get_tools`, `registered_tools`
+    - `__init__.py` — re-exports `AgentPipeline`, `AgentNodeConfig`, `PlannerConfig`, `RootAgentPipelineConfig`, `FrameworkAdapter`, `create_pipeline`, `format_conversation`, `load_instruction`, `register_callback`, `get_callback`, `registered_callbacks`, `register_tool`, `get_tool`, `get_tools`, `registered_tools`
     - `agent_pipeline.py` — `AgentPipeline` (ABC — async generate response from conversation)
-    - `config.py` — `AgentNodeConfig` (recursive BaseModel, shared agent fields incl. `framework`), `RootAgentPipelineConfig(AgentNodeConfig, BaseSettings)` (root config with env/YAML support, tools, sub_agents, orchestration, condition)
+    - `config.py` — `PlannerConfig` (planner type + thinking params), `AgentNodeConfig` (recursive BaseModel, shared agent fields incl. `framework`, `orchestration`, `planner`, `include_contents`, `disallow_transfer_to_parent`, `disallow_transfer_to_peers`, `global_instruction`, callback names), `RootAgentPipelineConfig(AgentNodeConfig, BaseSettings)` (root config with env/YAML support)
     - `framework_adapter.py` — `FrameworkAdapter` (ABC — translates config into runnable `AgentPipeline`)
     - `factory.py` — `create_pipeline()` factory function (dispatches on `config.framework`)
     - `prompt.py` — `load_instruction()` (Jinja2 template rendering from YAML), `format_conversation()` (formats `MessageList`)
     - `tool_registry.py` — `@register_tool` decorator, `get_tool()`, `get_tools()`, `registered_tools()`
+    - `callback_registry.py` — `@register_callback` decorator, `get_callback()`, `registered_callbacks()`
     - `adapters/` — framework-specific adapter implementations
-      - `adk_adapter.py` — `ADKFrameworkAdapter` (→ `FrameworkAdapter`), `ADKAgentPipeline` (→ `AgentPipeline`, shared `generate()`), `build_agent_node()` (recursive ADK agent tree builder)
+      - `adk_adapter.py` — `ADKFrameworkAdapter` (→ `FrameworkAdapter`), `ADKAgentPipeline` (→ `AgentPipeline`, shared `generate()`), `build_agent_node()` (recursive ADK agent tree builder, supports sequential/routing/loop/parallel orchestration, planners, callbacks, multi-agent control)
   - `io/` — I/O layer (→ domain)
     - `downloader.py` — network download (`download_dataset`, `download_all_datasets`, URL constants)
     - `dataset_loader.py` — disk deserialization (`load_dataset`)
@@ -41,7 +42,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
     - `samplers.py` — `OpenAIChatSampler`, `GeminiChatSampler` (both → `SamplerBase`), `create_sampler()` factory
     - `runner.py` — `EvalRunner` (depends on `JudgeGrader` and `AgentPipeline` abstractions)
 - **Working directories** (not installed, accessed via PYTHONPATH when using `uv run`):
-  - `agents/` — ADK agent definitions (each delegates to `create_pipeline()` via the factory and exports `root_agent` for ADK CLI)
+  - `agents/` — ADK agent pipeline definitions (`*_pipeline.py`) and ADK entry points (subdirs with `agent.py`)
+  - `tools/` — medical reference tool modules (`drug_reference`, `symptom_checker`, `emergency_flag`)
+  - `agent_test_cases/` — golden test cases for ADK eval (`*_pipeline.test.json`)
   - `evaluation/` — scoring, stats, experiment tracking (`experiment_tracker.py` CLI, `stats.py`)
   - `prompts/` — versioned YAML prompt files (subdirs: `llm_grader/`, `baseline_agent/`, `tool_agent/`, `multi_agent/`)
   - `config/` — YAML configuration files for agent pipelines (`config/agents/*.yaml`)
@@ -66,7 +69,8 @@ uv run adk run agents/baseline_agent    # Terminal
 ```bash
 uv run adk eval agents/baseline_agent evaluation/test_config.json
 uv run pytest tests/ -v
-uv run python -m evaluation.experiment_tracker --agent baseline_agent --sample-size 100
+uv run track-experiment --agent-config config/agents/baseline_agent.yaml --sample-size 100
+uv run track-experiment --agent-config config/agents/tool_agent.yaml --subset hard --seed 42
 ```
 
 ### Code Quality
@@ -85,11 +89,17 @@ uv run jupyter lab
 
 Three agent architectures are built and compared against HealthBench:
 
-1. **Baseline Agent** (`agents/baseline_agent/`) — Single ADK agent (gemini-2.0-flash), no tools, minimal prompt (`prompts/v1_baseline.yaml`). Establishes performance floor.
+1. **Baseline Agent** (`agents/baseline_pipeline.py`) — Single ADK agent (gemini-2.0-flash), no tools, minimal prompt (`prompts/v1_baseline.yaml`). Establishes performance floor.
 
-2. **Tool-Augmented Agent** (`agents/tool_agent/`) — Single ADK agent + custom tools: `drug_reference()`, `symptom_checker()`, `emergency_flag()`. Uses `prompts/v1_clinical.yaml`.
+2. **Tool-Augmented Agent** (`agents/tool_pipeline.py`) — Single ADK agent + custom tools (`tools/`): `drug_reference()`, `symptom_checker()`, `emergency_flag()`. Uses `prompts/v1_clinical.yaml`.
 
-3. **Multi-Agent Pipeline** (`agents/multi_agent/`) — SequentialAgent: Triage → Specialist (Emergency/GeneralHealth) → Reviewer. Uses `prompts/v1_structured.yaml`.
+3. **Multi-Agent Pipeline** (`agents/multi_pipeline.py`) — SequentialAgent: Triage → Specialist (Emergency/GeneralHealth) → Reviewer. Uses `prompts/v1_structured.yaml`.
+
+### Agent Config Features
+- **Orchestration modes**: `sequential` (SequentialAgent), `routing` (LLM-driven delegation), `loop` (LoopAgent with `max_iterations`), `parallel` (ParallelAgent for concurrent execution)
+- **Planners**: `PlannerConfig` with `type="builtin"` (Gemini thinking) or `type="plan_react"` (structured plan-action-reasoning)
+- **Callbacks**: Registered by name via `@register_callback`, resolved at build time. Supports `before/after_agent_callback` (all agents), `before/after_model_callback`, `before/after_tool_callback` (LlmAgent only)
+- **Multi-agent control**: `include_contents` (`"default"` or `"none"`), `disallow_transfer_to_parent`, `disallow_transfer_to_peers`, `global_instruction`
 
 ### Evaluation Pipeline (`evaluation/`)
 - `healthbench_adapter.py` — Converts HealthBench conversations ↔ ADK eval format
@@ -379,20 +389,20 @@ See `AGENT_DECISIONS.md` for exhaustive pros/cons and design rationale for each 
 ### Subtask 2.1 — Baseline Agent
 - `prompts/v1_baseline.yaml` — minimal health instruction with version/rationale metadata
 - `agents/baseline_agent/__init__.py` — empty, makes directory a package
-- `agents/baseline_pipeline.py` — `root_agent = Agent(name, model, instruction)` loaded from YAML
+- `agents/baseline_pipeline.py` — `root_agent = LlmAgent(name, model, instruction)` loaded from YAML
 - Tests: verify prompt loading, agent configuration, root_agent export
 
 ### Subtask 2.2 — Medical Tools + Clinical Prompt
 - `prompts/v1_clinical.yaml` — clinically-aware prompt with tool-usage guidance (Jinja2 `{{ conversation }}` template)
-- `agents/tool_agent/__init__.py`
-- `agents/tool_agent/drug_reference.py` — `@register_tool("drug_reference")`, drug lookup function
-- `agents/tool_agent/symptom_checker.py` — `@register_tool("symptom_checker")`, symptom analysis function
-- `agents/tool_agent/emergency_flag.py` — `@register_tool("emergency_flag")`, emergency detection function
-- `agents/tool_agent/tools.py` — imports all tool modules (triggers registration), re-exports
+- `tools/__init__.py`
+- `tools/drug_reference.py` — `@register_tool("drug_reference")`, drug lookup function
+- `tools/symptom_checker.py` — `@register_tool("symptom_checker")`, symptom analysis function
+- `tools/emergency_flag.py` — `@register_tool("emergency_flag")`, emergency detection function
+- `tools/tools.py` — imports all tool modules (triggers registration), re-exports
 - Tests: each tool function returns correct dict shape, edge cases, keyword matching
 
 ### Subtask 2.3 — Tool-Augmented Agent
-- `agents/tool_pipeline.py` — `root_agent = Agent(name, model, instruction, tools=[...])` with v1_clinical prompt
+- `agents/tool_pipeline.py` — `root_agent = LlmAgent(name, model, instruction, tools=[...])` with v1_clinical prompt
 - Tests: agent has tools attached, instruction loaded correctly
 
 ### Subtask 2.4 — Multi-Agent Prompts + Sub-Agents
@@ -408,9 +418,9 @@ See `AGENT_DECISIONS.md` for exhaustive pros/cons and design rationale for each 
 - Tests: routing vs sequential orchestration, condition in description, prompt_path inheritance, unsupported orchestration raises
 
 ### Subtask 2.6 — Golden Datasets
-- `agents/baseline_agent/baseline_agent.test.json` — golden test cases
-- `agents/tool_agent/tool_agent.test.json` — golden test cases with tool trajectories
-- `agents/multi_agent/multi_agent.test.json` — golden test cases with delegation
+- `agent_test_cases/baseline_pipeline.test.json` — golden test cases
+- `agent_test_cases/tool_pipeline.test.json` — golden test cases with tool trajectories
+- `agent_test_cases/multi_pipeline.test.json` — golden test cases with delegation
 - `evaluation/test_config.json` — ADK eval criteria thresholds
 
 ## Phase 3 — Evaluation Framework Subtasks

@@ -38,9 +38,9 @@ Each decision documents all options considered, pros/cons, data-driven rationale
 
 **ADK snippet:**
 ```python
-from google.adk.agents import Agent
+from google.adk.agents import LlmAgent
 
-root_agent = Agent(
+root_agent = LlmAgent(
     name="baseline_agent",
     model="gemini-2.0-flash",
     instruction="...",
@@ -88,7 +88,7 @@ def _load_instruction() -> str:
     with open(_PROMPT_PATH) as f:
         return yaml.safe_load(f)["instruction"]
 
-root_agent = Agent(
+root_agent = LlmAgent(
     name="baseline_agent",
     model="gemini-2.0-flash",
     instruction=_load_instruction(),
@@ -105,7 +105,7 @@ root_agent = Agent(
 
 | | |
 |---|---|
-| **Pros** | True baseline — isolates model-only performance; fast to implement; clear performance floor; any improvement in Architecture B/C is attributable to tools/multi-agent |
+| **Pros** | True baseline — isolates model-only performance; fast to implement; clear performance floor; any improvement in Architecture B/C is attributable to tools/multi-LlmAgent |
 | **Cons** | Will score poorly on `accuracy` (Insight 1 — 7.0-7.8 penalty pts/item); no emergency detection capability; no context seeking guidance; expected to fail ~34% of emergency rubric items |
 
 #### Option B — Baseline with structured output_schema
@@ -119,7 +119,7 @@ root_agent = Agent(
 
 **ADK snippet:**
 ```python
-root_agent = Agent(
+root_agent = LlmAgent(
     name="baseline_agent",
     model="gemini-2.0-flash",
     description="Baseline health assistant with no tools or sub-agents.",
@@ -315,9 +315,9 @@ def symptom_checker(symptoms: str) -> dict:
 
 **ADK snippet:**
 ```python
-from google.adk.agents import Agent, SequentialAgent
+from google.adk.agents import LlmAgent, SequentialAgent
 
-triage_agent = Agent(
+triage_agent = LlmAgent(
     name="triage_agent",
     model="gemini-2.0-flash",
     description="Classifies query urgency, topic, and user expertise level.",
@@ -325,7 +325,7 @@ triage_agent = Agent(
     output_key="triage_classification",
 )
 
-emergency_agent = Agent(
+emergency_agent = LlmAgent(
     name="emergency_agent",
     model="gemini-2.0-flash",
     description="Handles high-urgency medical queries requiring immediate referral.",
@@ -334,7 +334,7 @@ emergency_agent = Agent(
     output_key="specialist_response",
 )
 
-general_health_agent = Agent(
+general_health_agent = LlmAgent(
     name="general_health_agent",
     model="gemini-2.0-flash",
     description="Handles general health queries with medical reference tools.",
@@ -343,7 +343,7 @@ general_health_agent = Agent(
     output_key="specialist_response",
 )
 
-reviewer_agent = Agent(
+reviewer_agent = LlmAgent(
     name="reviewer_agent",
     model="gemini-2.0-flash",
     description="Reviews responses for completeness, safety, and communication quality.",
@@ -352,7 +352,7 @@ reviewer_agent = Agent(
 )
 
 # Root agent delegates to specialists, then always reviews
-root_agent = Agent(
+root_agent = LlmAgent(
     name="multi_agent",
     model="gemini-2.0-flash",
     description="Multi-agent health pipeline: triage → specialist → reviewer.",
@@ -386,7 +386,7 @@ root_agent = Agent(
 
 | | |
 |---|---|
-| **Pros** | Root agent reads triage classification from state and delegates to appropriate specialist; uses ADK's delegation mechanism; description-based routing; all tools available to general health agent |
+| **Pros** | Root agent reads triage classification from state and delegates to appropriate specialist; uses ADK's delegation mechanism; description-based routing; all tools available to general health LlmAgent |
 | **Cons** | Relies on LLM correctly reading state and delegating; adds one more LLM call; delegation may not always work as expected |
 
 **Decision:** **Option A — LLM-driven delegation via `sub_agents`.** The root coordinator agent has both `emergency_agent` and `general_health_agent` as `sub_agents`. Its instruction tells it to read the triage classification from session state and delegate accordingly. This uses ADK's native delegation pattern.
@@ -622,7 +622,7 @@ From SPEC §Phase 1A insights:
 | **P0** | `emergency_flag()` tool | 2.2 | Insight 3: 34% of samples have emergency criteria |
 | **P1** | `prompts/v1_clinical.yaml` | 2.2 | Insight 2: data tasks need conservative strategy |
 | **P1** | `agents/tool_agent/` | 2.3 | Validates tool-augmented improvement hypothesis |
-| **P1** | Reviewer Agent | 2.4-2.5 | Insight 4: critical for hard samples (penalty mass) |
+| **P1** | Reviewer LlmAgent | 2.4-2.5 | Insight 4: critical for hard samples (penalty mass) |
 | **P2** | `symptom_checker()` tool | 2.2 | Completeness axis (39%) but lower penalty density |
 | **P2** | Triage + Specialist routing | 2.4-2.5 | Insight 5: context pass-through is low-risk |
 | **P3** | Golden datasets | 2.6 | Needed for CI gate, but after agents are stable |

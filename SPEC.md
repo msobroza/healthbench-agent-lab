@@ -385,20 +385,24 @@ module rather than on `domain/` or `llm_eval/` directly.
 
 ```
 src/healthbench_agent/agent/
-├── __init__.py            # re-exports AgentPipeline, AgentNodeConfig, RootAgentPipelineConfig,
-│                          # format_conversation, load_instruction, register_tool, etc.
+├── __init__.py            # re-exports AgentPipeline, AgentNodeConfig, PlannerConfig,
+│                          # RootAgentPipelineConfig, register_callback, get_callback,
+│                          # registered_callbacks, register_tool, etc.
 ├── agent_pipeline.py      # AgentPipeline (ABC — async generate response from conversation)
-├── config.py              # AgentNodeConfig (recursive BaseModel, shared agent fields incl. framework),
-│                          # RootAgentPipelineConfig(AgentNodeConfig, BaseSettings) (root config),
+├── config.py              # PlannerConfig (builtin/plan_react), AgentNodeConfig (recursive
+│                          # BaseModel, incl. orchestration, planner, callbacks, control fields),
+│                          # RootAgentPipelineConfig(AgentNodeConfig, BaseSettings) (root config)
 ├── framework_adapter.py   # FrameworkAdapter (ABC — translates config into runnable AgentPipeline)
 ├── factory.py             # create_pipeline() factory (dispatches on config.framework)
 ├── prompt.py              # load_instruction() (Jinja2 template rendering from YAML),
 │                          # format_conversation() (formats MessageList)
 ├── tool_registry.py       # @register_tool decorator, get_tool(), get_tools(), registered_tools()
+├── callback_registry.py   # @register_callback decorator, get_callback(), registered_callbacks()
 └── adapters/
     ├── __init__.py
     └── adk_adapter.py     # ADKFrameworkAdapter, ADKAgentPipeline (shared generate()),
-                           # build_agent_node() (recursive ADK agent tree builder)
+                           # build_agent_node() (sequential/routing/loop/parallel, planners,
+                           # callbacks, multi-agent control)
 ```
 
 ---
@@ -816,14 +820,15 @@ healthbench-agent-lab/
 │       │   ├── judge.py        # JudgeGrader (ABC — grade conversation against rubric)
 │       │   └── experiment.py   # RunParams, RunMetrics (experiment tracking metadata)
 │       │
-│       ├── agent/              # agent infrastructure — pipeline ABC, config, prompts, tool registry, adapters
-│       │   ├── __init__.py     # re-exports AgentPipeline, configs, FrameworkAdapter, create_pipeline, etc.
+│       ├── agent/              # agent infrastructure — pipeline ABC, config, prompts, registries, adapters
+│       │   ├── __init__.py     # re-exports AgentPipeline, configs, registries, create_pipeline, etc.
 │       │   ├── agent_pipeline.py # AgentPipeline (ABC — async generate response)
-│       │   ├── config.py       # AgentNodeConfig (recursive, incl. framework), RootAgentPipelineConfig (root)
+│       │   ├── config.py       # PlannerConfig, AgentNodeConfig (recursive), RootAgentPipelineConfig
 │       │   ├── framework_adapter.py # FrameworkAdapter (ABC — config → AgentPipeline)
 │       │   ├── factory.py      # create_pipeline() factory (dispatches on config.framework)
 │       │   ├── prompt.py       # load_instruction() (Jinja2), format_conversation()
 │       │   ├── tool_registry.py # @register_tool, get_tool(), get_tools(), registered_tools()
+│       │   ├── callback_registry.py # @register_callback, get_callback(), registered_callbacks()
 │       │   └── adapters/       # framework-specific adapter implementations
 │       │       └── adk_adapter.py # ADKFrameworkAdapter, ADKAgentPipeline, build_agent_node()
 │       │
@@ -869,16 +874,24 @@ healthbench-agent-lab/
 │   ├── baseline_agent/         # ADK entry point (re-exports root_agent)
 │   │   ├── __init__.py
 │   │   └── agent.py
-│   ├── tool_agent/             # ADK entry point + medical tool modules
+│   ├── tool_agent/             # ADK entry point (re-exports root_agent)
 │   │   ├── __init__.py
-│   │   ├── agent.py
-│   │   ├── drug_reference.py   # @register_tool("drug_reference")
-│   │   ├── symptom_checker.py  # @register_tool("symptom_checker")
-│   │   ├── emergency_flag.py   # @register_tool("emergency_flag")
-│   │   └── tools.py            # imports tool modules (triggers registration), re-exports
+│   │   └── agent.py
 │   └── multi_agent/            # ADK entry point (re-exports root_agent)
 │       ├── __init__.py
 │       └── agent.py
+│
+├── tools/                      # medical reference tool modules
+│   ├── __init__.py             # triggers @register_tool registration on import
+│   ├── drug_reference.py       # @register_tool("drug_reference")
+│   ├── symptom_checker.py      # @register_tool("symptom_checker")
+│   ├── emergency_flag.py       # @register_tool("emergency_flag")
+│   └── tools.py                # re-exports all tool functions
+│
+├── agent_test_cases/           # golden test cases for ADK eval
+│   ├── baseline_pipeline.test.json
+│   ├── tool_pipeline.test.json
+│   └── multi_pipeline.test.json
 │
 ├── prompts/                    # versioned YAML prompt files with documented rationale
 │   ├── llm_grader/

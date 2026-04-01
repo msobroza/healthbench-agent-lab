@@ -1,0 +1,22 @@
+# Gemini Pro LLM-as-judge configuration
+#
+# Uses Gemini 2.5 Pro for maximum grading accuracy. Pro has stronger
+# reasoning for nuanced rubric criteria (e.g. hedging detection,
+# multi-step clinical logic). Use for final evaluation runs and
+# statistical comparisons — not for iteration.
+#
+# Cost: ~10x gemini-2.5-flash | Latency: ~2-3x flash
+#
+# Usage:
+#   uv run track-experiment \
+#       --agent-config config/agents/baseline_agent.yaml \
+#       --judge-config config/judges/gemini_pro.yaml
+
+provider: gemini
+model: gemini-2.5-pro
+temperature: 0.0
+max_retries: 5
+timeout_seconds: 120
+max_workers: 30
+mode: async
+prompt_path: prompts/llm_grader/v1_llm_grader.yaml

@@ -37,11 +37,10 @@ def _get_adapter(framework: str) -> FrameworkAdapter:
     """
     if framework == "adk":
         from healthbench_agent.agent.adapters.adk_adapter import ADKFrameworkAdapter
+
         return ADKFrameworkAdapter()
 
-    raise ValueError(
-        f"Unsupported framework: {framework!r}. Supported: 'adk'"
-    )
+    raise ValueError(f"Unsupported framework: {framework!r}. Supported: 'adk'")
 
 
 def create_pipeline(config: RootAgentPipelineConfig) -> AgentPipeline:

@@ -10,6 +10,7 @@ adapters.
 Public API:
     - AgentPipeline: ABC for agent pipelines (async generate).
     - AgentNodeConfig: Recursive agent config node (BaseModel).
+    - PlannerConfig: Planner configuration for LlmAgent nodes.
     - RootAgentPipelineConfig: Root config with env/YAML support.
     - FrameworkAdapter: ABC for framework-specific adapters.
     - create_pipeline: Config-driven factory (dispatches on framework).
@@ -17,8 +18,10 @@ Public API:
 """
 
 from .agent_pipeline import AgentPipeline
+from .callback_registry import get_callback, register_callback, registered_callbacks
 from .config import (
     AgentNodeConfig,
+    PlannerConfig,
     RootAgentPipelineConfig,
 )
 from .factory import create_pipeline
@@ -29,11 +32,15 @@ from .tool_registry import get_tool, get_tools, register_tool, registered_tools
 __all__ = [
     "AgentPipeline",
     "AgentNodeConfig",
+    "PlannerConfig",
     "RootAgentPipelineConfig",
     "FrameworkAdapter",
     "create_pipeline",
     "format_conversation",
     "load_instruction",
+    "register_callback",
+    "get_callback",
+    "registered_callbacks",
     "register_tool",
     "get_tool",
     "get_tools",

@@ -300,8 +300,8 @@ def _cli() -> None:
     parser.add_argument(
         "--seed",
         type=int,
-        default=0,
-        help="Random seed for reproducible sampling (default: 0).",
+        default=42,
+        help="Random seed for reproducible sampling (default: 52).",
     )
     args = parser.parse_args()
 

@@ -12,14 +12,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from agents.tool_pipeline import _pipeline, from_config, root_agent
-from agents.tool_agent.drug_reference import _DRUG_DATABASE, drug_reference
-from agents.tool_agent.emergency_flag import (
-    EMERGENCY_KEYWORDS,
-    URGENT_KEYWORDS,
-    emergency_flag,
-)
-from agents.tool_agent.symptom_checker import _SYMPTOM_DATABASE, symptom_checker
+from agents.tool_pipeline import _pipeline, root_agent
 from healthbench_agent.agent import (
     AgentPipeline,
     RootAgentPipelineConfig,
@@ -27,6 +20,14 @@ from healthbench_agent.agent import (
     load_instruction,
     registered_tools,
 )
+from healthbench_agent.agent.adapters.adk_adapter import ADKAgentPipeline
+from tools.drug_reference import _DRUG_DATABASE, drug_reference
+from tools.emergency_flag import (
+    EMERGENCY_KEYWORDS,
+    URGENT_KEYWORDS,
+    emergency_flag,
+)
+from tools.symptom_checker import _SYMPTOM_DATABASE, symptom_checker
 
 _PROMPT_PATH = Path(_pipeline.config.prompt_path)
 
@@ -109,7 +110,9 @@ class TestToolAgentConfig:
 
     def test_config_tools_list(self):
         assert _pipeline.config.tools == [
-            "drug_reference", "symptom_checker", "emergency_flag",
+            "drug_reference",
+            "symptom_checker",
+            "emergency_flag",
         ]
 
 
@@ -128,8 +131,7 @@ class TestToolPipeline:
         assert isinstance(_pipeline.config, RootAgentPipelineConfig)
 
     def test_from_config_creates_pipeline(self):
-        pipeline = from_config()
-        from healthbench_agent.agent.adapters.adk_adapter import ADKAgentPipeline
+        pipeline = ADKAgentPipeline.from_config("config/agents/tool_agent.yaml")
         assert isinstance(pipeline, ADKAgentPipeline)
         assert pipeline.agent.name == "tool_agent"
 
@@ -359,9 +361,7 @@ class TestEmergencyFlag:
     )
     def test_critical_emergencies_detected(self, emergency_scenario):
         result = emergency_flag(emergency_scenario)
-        assert result["urgency"] == "emergency", (
-            f"Failed to detect emergency: {emergency_scenario}"
-        )
+        assert result["urgency"] == "emergency", f"Failed to detect emergency: {emergency_scenario}"
 
     def test_global_health_emergency_detected(self):
         result = emergency_flag("patient with severe bleeding from tropical disease")

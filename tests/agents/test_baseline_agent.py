@@ -10,7 +10,7 @@ from pathlib import Path
 
 import yaml
 
-from agents.baseline_pipeline import _pipeline, from_config, root_agent
+from agents.baseline_pipeline import _pipeline, root_agent
 from healthbench_agent.agent import AgentPipeline, RootAgentPipelineConfig, load_instruction
 from healthbench_agent.agent.adapters.adk_adapter import ADKAgentPipeline
 
@@ -112,7 +112,7 @@ class TestBaselinePipeline:
         assert _pipeline.config.prompt_version == "1.0.0"
 
     def test_from_config_creates_pipeline(self):
-        pipeline = from_config()
+        pipeline = ADKAgentPipeline.from_config("config/agents/baseline_agent.yaml")
         assert isinstance(pipeline, ADKAgentPipeline)
         assert pipeline.agent.name == "baseline_agent"
 

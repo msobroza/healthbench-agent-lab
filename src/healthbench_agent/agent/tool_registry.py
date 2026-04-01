@@ -63,9 +63,7 @@ def get_tool(name: str) -> Callable[..., Any]:
     """
     if name not in _REGISTRY:
         registered = ", ".join(sorted(_REGISTRY)) or "(none)"
-        raise KeyError(
-            f"Tool '{name}' is not registered. Available tools: {registered}"
-        )
+        raise KeyError(f"Tool '{name}' is not registered. Available tools: {registered}")
     return _REGISTRY[name]
 
 
