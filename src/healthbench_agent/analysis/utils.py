@@ -1,8 +1,8 @@
 """Shared utilities for all analysis modules.
 
-Provides stateless helper functions and shared constants used across
-healthbench_agent.analysis.exploration, insights, and visualization.
-Does not import from agents/, evaluation/, or dataset/.
+Provides stateless helper functions, shared constants, and DataFrame builders
+used across healthbench_agent.analysis.exploration, insights, and visualization.
+Does not import from agents/ or evaluation/.
 """
 
 from __future__ import annotations
@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+from ..domain.dataset import HealthBenchDataset, HealthBenchSample
 
 logger = logging.getLogger(__name__)
 
@@ -56,10 +58,134 @@ def series_stats(series: pd.Series, percentiles: list[float] | None = None) -> d
     return result
 
 
+def tag_value(tags: list[str], prefix: str) -> str | None:
+    """Return the value portion of the first tag matching 'prefix:value', or None.
+
+    Args:
+        tags: Flat list of raw tag strings (e.g. 'theme:emergency_referrals').
+        prefix: Prefix to match, e.g. 'theme' or 'axis'.
+
+    Returns:
+        Value after ':', or None if no matching tag is found.
+    """
+    target = prefix + ":"
+    for tag in tags:
+        if tag.startswith(target):
+            return tag[len(target):]
+    return None
+
+
+def total_positive_points(sample: HealthBenchSample) -> float:
+    """Sum of positive rubric points for a sample.
+
+    Args:
+        sample: A HealthBench sample with rubrics.
+
+    Returns:
+        Sum of points for rubric items where points > 0.
+    """
+    return sum(r.points for r in sample.rubrics if r.points > 0)
+
+
+def total_penalty_points(sample: HealthBenchSample) -> float:
+    """Absolute sum of negative rubric points for a sample.
+
+    Args:
+        sample: A HealthBench sample with rubrics.
+
+    Returns:
+        Absolute value of the sum of negative points.
+    """
+    return abs(sum(r.points for r in sample.rubrics if r.points < 0))
+
+
+def total_prompt_chars(sample: HealthBenchSample) -> int:
+    """Total character length across all prompt turns.
+
+    Args:
+        sample: A HealthBench sample with a prompt MessageList.
+
+    Returns:
+        Sum of len(content) across all turns.
+    """
+    return sum(len(str(t.get("content", ""))) for t in sample.prompt)
+
+
+def build_rubric_dataframe(dataset: HealthBenchDataset) -> pd.DataFrame:
+    """Build a flat DataFrame with one row per rubric item, enriched with sample-level tags.
+
+    Columns: prompt_id, theme, axis, points, criterion, criterion_length.
+
+    Args:
+        dataset: A single loaded HealthBench dataset.
+
+    Returns:
+        DataFrame with one row per rubric item. Empty DataFrame with the
+        expected columns when the dataset has no samples.
+    """
+    columns = ["prompt_id", "theme", "axis", "points", "criterion", "criterion_length"]
+    if not dataset.samples:
+        return pd.DataFrame(columns=columns)
+
+    rows = [
+        {
+            "prompt_id": sample.prompt_id,
+            "theme": tag_value(sample.example_tags, "theme") or "_unknown",
+            "axis": tag_value(rubric_item.tags, "axis") or "_unknown",
+            "points": rubric_item.points,
+            "criterion": rubric_item.criterion,
+            "criterion_length": len(rubric_item.criterion),
+        }
+        for sample in dataset.samples
+        for rubric_item in sample.rubrics
+    ]
+    return pd.DataFrame(rows)
+
+
+def build_sample_dataframe(dataset: HealthBenchDataset) -> pd.DataFrame:
+    """Build a flat DataFrame with one row per sample, enriched with computed metrics.
+
+    Columns: prompt_id, theme, rubric_size, total_possible_points,
+    total_penalty_points, penalty_mass_ratio, prompt_char_length,
+    num_turns, num_user_turns.
+
+    Args:
+        dataset: A single loaded HealthBench dataset.
+
+    Returns:
+        DataFrame with one row per sample. Empty DataFrame with the
+        expected columns when the dataset has no samples.
+    """
+    columns = [
+        "prompt_id", "theme", "rubric_size", "total_possible_points",
+        "total_penalty_points", "penalty_mass_ratio", "prompt_char_length",
+        "num_turns", "num_user_turns",
+    ]
+    if not dataset.samples:
+        return pd.DataFrame(columns=columns)
+
+    rows = []
+    for s in dataset.samples:
+        pos = total_positive_points(s)
+        pen = total_penalty_points(s)
+        rows.append({
+            "prompt_id": s.prompt_id,
+            "theme": tag_value(s.example_tags, "theme") or "_unknown",
+            "rubric_size": len(s.rubrics),
+            "total_possible_points": pos,
+            "total_penalty_points": pen,
+            "penalty_mass_ratio": pen / pos if pos > 0 else None,
+            "prompt_char_length": total_prompt_chars(s),
+            "num_turns": len(s.prompt),
+            "num_user_turns": sum(1 for t in s.prompt if t.get("role") == "user"),
+        })
+    return pd.DataFrame(rows)
+
+
 def parse_tag_prefixes(tags: list[str]) -> dict[str, dict[str, int]]:
     """Parse 'key: value' tags and aggregate value_counts per prefix.
 
-    Tags that do not contain ': ' are collected under the special key
+    Tags that do not contain ':' are collected under the special key
     '_no_prefix'.
 
     Args:
@@ -70,8 +196,8 @@ def parse_tag_prefixes(tags: list[str]) -> dict[str, dict[str, int]]:
     """
     prefix_map: dict[str, dict[str, int]] = {}
     for tag in tags:
-        if ": " in tag:
-            prefix, value = tag.split(": ", maxsplit=1)
+        if ":" in tag:
+            prefix, value = tag.split(":", maxsplit=1)
             prefix = prefix.strip()
             value = value.strip()
         else:

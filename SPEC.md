@@ -366,6 +366,308 @@ All agent comparisons use paired evaluation (same conversations, different agent
 
 ---
 
+### 5.6 LLM-as-Judge Evaluation Module (`healthbench_agent/llm_eval`)
+
+This module replicates the exact evaluation methodology from
+[simple-evals/healthbench_eval.py](https://github.com/openai/simple-evals/blob/main/healthbench_eval.py)
+as a first-class, provider-agnostic package. It can drive evaluation independently of ADK,
+and supports any `SamplerBase`-compatible model — Gemini or OpenAI.
+
+#### Module layout
+
+```
+src/healthbench_agent/llm_eval/
+├── __init__.py         # exports LLMJudge, EvalRunner, GRADER_TEMPLATE
+├── grader.py           # GRADER_TEMPLATE (verbatim from simple-evals), grade_sample(),
+│                       # parse_grading_response(), format_conversation()
+├── samplers.py         # OpenAIChatSampler and GeminiChatSampler (both implement SamplerBase)
+└── runner.py           # EvalRunner — orchestrates batch and async execution
+```
+
+#### Grader prompt (verbatim from simple-evals)
+
+The prompt is reproduced exactly so results are directly comparable to published HealthBench scores:
+
+```
+Your job is to look at a conversation and a rubric item, and score the last turn
+(i.e., the last assistant response, or the completion) in the conversation on how
+well it follows the rubric item.
+
+# Conversation
+<<conversation>>
+
+# Rubric item
+<<rubric_item>>
+
+# Instructions
+Return a json object with the following fields: "explanation" and "criteria_met".
+- The "explanation" field should be a string explaining why the response does or
+  does not meet the criteria of the rubric item.
+- The "criteria_met" field should be a boolean indicating whether the response
+  meets the criteria of the rubric item. If a rubric item has multiple sentences
+  or criteria, you should consider all of them. If any of the criteria is not met,
+  the answer should be false. Only return true if all of the criteria are met.
+[...full template — see grader.py GRADER_TEMPLATE constant...]
+
+Return just the json object in markdown format. Do not include any other text.
+```
+
+Placeholders `<<conversation>>` and `<<rubric_item>>` are replaced at call time.
+The conversation is formatted as `role: content` pairs separated by `\n\n`.
+`RubricItem.__str__()` formats the rubric item as `[{points}] {criterion}`.
+
+#### Grading logic
+
+For each `HealthBenchSample`:
+1. Run the agent to get a response → `response_text`
+2. Append the response as an `assistant` turn to `sample.prompt`
+3. For every `RubricItem` in `sample.rubrics`, call the grader model with the filled template
+4. Parse the JSON response → `{"explanation": str, "criteria_met": bool}`
+5. Retry on malformed JSON (no majority voting at item level — single grader call per item)
+6. Apply `calculate_score(rubric_items, verdicts)` → raw score in `(-∞, 1.0]`
+7. Collect tag-level scores: group items by `rubric_item.tags` and re-apply `calculate_score`
+8. Attach `sample.example_tags` directly as additional metric keys (example-level stratification)
+
+#### Provider support
+
+| Provider | Class | Auth | Model default |
+|---|---|---|---|
+| OpenAI | `OpenAIChatSampler` | `OPENAI_API_KEY` env var | `gpt-4.1` |
+| Gemini | `GeminiChatSampler` | `GOOGLE_API_KEY` env var | `gemini-2.0-flash` |
+
+Both implement `SamplerBase.__call__(message_list) -> SamplerResponse`, so they are
+interchangeable as the grader model without changing any evaluation logic.
+
+---
+
+### 5.7 Batch vs Async Evaluation
+
+#### Async (concurrent threads / asyncio)
+
+Run multiple grading calls concurrently using `ThreadPoolExecutor` (sync SDKs) or
+`asyncio.gather` (async SDKs). This is the default mode in `EvalRunner`.
+
+| | |
+|---|---|
+| **Pros** | Fast wall-clock time (120 threads = 120× parallelism); immediate results; good for iterative dev/debug cycles; works with both OpenAI and Gemini SDKs; no special API access needed |
+| **Cons** | Hits rate limits under high concurrency; non-deterministic call ordering makes debugging harder; cost is identical to serial; transient failures require per-request retry logic; memory grows linearly with inflight requests |
+
+**When to use:** Development iterations, small-to-medium eval sets (≤500 samples), interactive notebook use.
+
+#### Batch (OpenAI Batch API)
+
+Submit all grading requests as a single JSONL file via the OpenAI Batch API. Results arrive
+asynchronously within 24 hours.
+
+| | |
+|---|---|
+| **Pros** | 50% cost reduction vs real-time API; no rate limit pressure; deterministic processing; auditable input/output files stored in OpenAI storage; zero concurrency management in client code |
+| **Cons** | 24-hour latency window makes it unsuitable for rapid iteration; OpenAI-only (no Gemini batch equivalent); requires polling or webhook for completion; harder to interleave with downstream analysis; not available for every model |
+
+**When to use:** Full benchmark runs (all 5,000 samples), final agent comparison runs before reporting results, cost-sensitive pipelines.
+
+#### Decision guide
+
+```
+eval set size   | speed needed | cost matters | recommended mode
+─────────────────┼──────────────┼──────────────┼──────────────────
+< 200 samples   | yes          | no           | async (ThreadPool)
+200–1,000       | moderate     | yes          | async + rate-limit backoff
+1,000–5,000     | no           | yes          | OpenAI Batch API
+any size        | no           | yes + gemini | async with low concurrency
+```
+
+---
+
+### 5.8 ADK Evaluation Integration Options
+
+Four strategies exist for integrating the LLM-as-judge scorer with Google ADK agents.
+
+#### Option A — ADK `rubrics_based_criterion` (native)
+
+Use ADK's built-in `rubrics_based_criterion` in a `test_config.json` eval set.
+The `healthbench_adapter.py` converts each `HealthBenchSample` into an ADK `EvalCase`
+with rubric items as the criterion list.
+
+| | |
+|---|---|
+| **Pros** | Zero eval infrastructure code; `adk eval` command works out of the box; integrated HTML report; automatic tool trajectory scoring alongside rubric scoring; CI-ready with `pytest` via `AgentEvaluator` |
+| **Cons** | Grader model is fixed to whatever ADK uses internally (not reproducible against simple-evals baseline); no control over the grader prompt; cannot use OpenAI as grader; aggregation logic differs from HealthBench paper formula; hard to stratify by rubric tag |
+
+**Best for:** Quick sanity checks during agent development; CI regression tests on golden examples.
+
+#### Option B — `llm_eval` as the sole scorer (ADK-independent)
+
+Run agents via `adk run` or direct ADK `Runner` calls, capture responses, then pipe them
+through `healthbench_agent.llm_eval.EvalRunner` for scoring.
+
+| | |
+|---|---|
+| **Pros** | Scoring is 100% reproducible against the HealthBench paper (same prompt, same formula); grader model is swappable (OpenAI or Gemini); full tag-level stratification; results logged to MLflow independently of ADK |
+| **Cons** | Two separate execution pipelines to maintain (ADK for inference, llm_eval for scoring); tool trajectory scoring not included; more boilerplate to wire agent output → scorer input |
+
+**Best for:** Final benchmark comparisons; any run where results need to be defensible against the published HealthBench leaderboard.
+
+#### Option C — Hybrid: ADK rubrics + `llm_eval` tag scoring
+
+Use ADK `rubrics_based_criterion` for pass/fail verdicts, then post-process the verdict list
+through `calculate_score` and `stratified_scores` to reproduce the HealthBench formula and
+tag breakdowns.
+
+| | |
+|---|---|
+| **Pros** | Keeps ADK's CI/CD integration; applies correct scoring formula on top of ADK verdicts; tag-level breakdowns without a second grader model call |
+| **Cons** | ADK grader prompt still differs from simple-evals; verdict quality depends on ADK internals; slight formula mismatch risk if ADK verdict format changes |
+
+**Best for:** Projects that are already ADK-native and want HealthBench-compatible aggregation without a full rewrite.
+
+#### Option D — ADK `custom_llm_judge` callback
+
+Implement a custom scoring callback and register it with ADK's evaluation pipeline via
+a `custom_llm_judge` criterion type (supported in ADK ≥1.0). The callback invokes
+`llm_eval.grade_sample()` directly inside the ADK eval loop.
+
+| | |
+|---|---|
+| **Pros** | Single pipeline for inference + scoring; ADK HTML report includes correct rubric-level scores; grader model fully controllable; `adk eval` command still works end-to-end |
+| **Cons** | Requires ADK ≥1.0 with `custom_llm_judge` support; tightly couples `llm_eval` to ADK internals; harder to run the scorer standalone without ADK; increased per-run complexity |
+
+**Best for:** Production eval pipelines where the single-command `adk eval` workflow is a hard requirement.
+
+#### Summary comparison
+
+| | Grader prompt control | OpenAI grader | HealthBench formula | ADK HTML report | Tool trajectory | Standalone use |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| **A — ADK native** | ✗ | ✗ | ✗ | ✓ | ✓ | ✗ |
+| **B — llm_eval only** | ✓ | ✓ | ✓ | ✗ | ✗ | ✓ |
+| **C — Hybrid** | ✗ | ✗ | ✓ | ✓ | ✓ | ✗ |
+| **D — ADK callback** | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ |
+
+**Recommended approach:** Use **Option B** as the primary scorer for any benchmark comparison,
+and **Option A** as a lightweight CI gate on golden examples during development.
+
+---
+
+### 5.9 Judge Configuration & Prompt Management
+
+Two orthogonal concerns must be configured for every eval run and logged to MLflow so any
+run can be replicated exactly:
+
+1. **Judge settings** — which model, at what temperature, with what retry policy
+2. **Grader prompt** — which template version, rendered at call time
+
+---
+
+#### 5.9.1 Judge settings — `pydantic-settings` `BaseSettings`
+
+`pydantic-settings` is already a transitive dependency (via `google-adk[eval]`).
+`JudgeConfig` lives in `src/healthbench_agent/llm_eval/config.py`.
+
+```python
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
+
+class JudgeConfig(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="JUDGE_", env_file=".env")
+
+    provider: str = "openai"                     # "openai" | "gemini"
+    model: str = "gpt-4.1-2025-04-14"           # always pin exact model version
+    temperature: float = Field(0.0, ge=0.0, le=1.0)
+    max_retries: int = Field(3, ge=1)
+    timeout_seconds: int = 30
+    max_workers: int = Field(120, ge=1)          # async ThreadPool size
+    prompt_path: str = "prompts/grader_v1.yaml"  # Jinja2 template file
+```
+
+Override at run time without touching code:
+
+```bash
+JUDGE_MODEL=gemini-2.0-flash JUDGE_MAX_WORKERS=20 uv run python -m evaluation.run
+```
+
+Key properties:
+- Type-validated on construction (`ge`, `le`) — wrong values raise at startup, not mid-eval
+- `model_dump()` serialises cleanly into `mlflow.log_params()` with no manual conversion
+- API keys (`OPENAI_API_KEY`, `GOOGLE_API_KEY`) stay as plain env vars — **never** inside `JudgeConfig`; it must be safe to log the full config to MLflow
+
+---
+
+#### 5.9.2 Prompt templating — Jinja2
+
+The grader prompt lives in `prompts/grader_v1.yaml`. Placeholders use Jinja2 syntax so
+the template can be extended with conditional blocks without string replacement hacks.
+
+```yaml
+# prompts/grader_v1.yaml
+version: "1.0.0"
+source: "verbatim from openai/simple-evals healthbench_eval.py"
+created: "2025-05-07"
+rationale: >
+  Must not be modified so results remain comparable to the published benchmark.
+  Create grader_v2.yaml for any deviation.
+template: |
+  Your job is to look at a conversation and a rubric item, and score the last turn
+  in the conversation on how well it follows the rubric item.
+
+  # Conversation
+  {{ conversation }}
+
+  # Rubric item
+  {{ rubric_item }}
+
+  [... full template ...]
+
+  Return just the json object in markdown format. Do not include any other text.
+```
+
+`grader.py` loads the YAML, renders with Jinja2, and hashes the raw template string
+before rendering to produce a stable fingerprint:
+
+```python
+from jinja2 import Template
+import hashlib, yaml
+
+def load_grader_prompt(path: str) -> tuple[Template, str, str]:
+    """Load grader prompt YAML and return (template, version, sha256)."""
+    with open(path) as f:
+        data = yaml.safe_load(f)
+    raw = data["template"]
+    sha256 = hashlib.sha256(raw.encode()).hexdigest()
+    return Template(raw), data["version"], sha256
+
+# Render at grading time:
+rendered = template.render(conversation=convo_str, rubric_item=str(rubric_item))
+```
+
+Hash the **raw template** (before rendering) so two runs with different conversations
+but the same prompt still produce the same fingerprint — the hash identifies the prompt
+version, not the instance.
+
+---
+
+#### 5.9.3 Non-negotiable practices
+
+1. **Pin exact model versions.** Use `gpt-4.1-2025-04-14`, never `gpt-4.1`. Model aliases
+   can silently change underlying weights and break score reproducibility.
+
+2. **Temperature = 0.** The grader must be deterministic. Any other value introduces
+   run-to-run variance that inflates bootstrap standard deviation.
+
+3. **Log config + prompt fingerprint to MLflow at the start of every run.** Minimum params:
+   ```
+   grader_provider, grader_model, grader_temperature,
+   grader_prompt_version, grader_prompt_sha256,
+   grader_max_workers, eval_mode (async | batch)
+   ```
+
+4. **Never edit a prompt file in place.** Create `grader_v2.yaml`; bump the version.
+   Changing the template mid-experiment invalidates every prior run it is compared against.
+
+5. **Separate secrets from config.** `OPENAI_API_KEY` and `GOOGLE_API_KEY` are env vars
+   only — not fields on `JudgeConfig`.
+
+---
+
 ## 6. Tech Stack
 
 | Layer                  | Tool                                      | Version      | Purpose |
@@ -377,7 +679,9 @@ All agent comparisons use paired evaluation (same conversations, different agent
 | Data analysis          | pandas                                    | ≥2.2.0       | Dataset loading, slicing, aggregation |
 | Statistics             | scipy                                     | ≥1.14.0      | t-tests, bootstrap, confidence intervals |
 | Visualization          | seaborn + matplotlib                      | ≥0.13 / ≥3.9 | Score distributions, heatmaps, comparisons |
-| Prompt management      | YAML files + Git                          | —            | Versioned prompts with rationale documentation |
+| Prompt management      | YAML files + Jinja2 + Git                 | ≥3.1.0       | Versioned prompt templates with rationale; Jinja2 rendering |
+| Judge configuration    | pydantic-settings                         | ≥2.0.0       | Type-safe JudgeConfig with env var override and MLflow serialisation |
+| OpenAI eval support    | openai                                    | ≥1.0.0       | OpenAIChatSampler and OpenAI Batch API for cost-efficient grading |
 | Eval orchestration     | pytest + pytest-asyncio                   | ≥8.3 / ≥0.24 | ADK AgentEvaluator integration, CI-ready |
 | Linting                | ruff                                      | ≥0.8.0       | Code formatting and lint |
 | Type checking          | mypy                                      | ≥1.13.0      | Static type analysis |
@@ -428,11 +732,20 @@ healthbench-agent-lab/
 │       │   ├── loader.py       # download_dataset, download_all_datasets, load_dataset
 │       │   └── split_utils.py  # sample_dataset, stratified_sample
 │       │
-│       └── analysis/           # statistics layer — registered analyses
-│           ├── __init__.py     # re-exports registry runners and decorator
-│           ├── registry.py     # @register_analysis, run_one, run_category, run_all
-│           ├── utils.py        # series_stats, save_csv, DEFAULT_PERCENTILES
-│           └── exploration.py  # 12 descriptive stats analyses (category: "exploration")
+│       ├── analysis/           # statistics layer — registered analyses
+│       │   ├── __init__.py     # re-exports registry runners and decorator
+│       │   ├── registry.py     # @register_analysis, run_one, run_category, run_all
+│       │   ├── utils.py        # series_stats, save_csv, build_rubric_dataframe, build_sample_dataframe
+│       │   ├── exploration.py  # 12 descriptive stats analyses (category: "exploration")
+│       │   ├── insights.py     # 8 cross-cutting insight analyses (category: "insights")
+│       │   └── visualization.py # 8 matplotlib visualizations (category: "visualization")
+│       │
+│       └── llm_eval/           # LLM-as-judge evaluation (provider-agnostic)
+│           ├── __init__.py     # exports LLMJudge, EvalRunner, GRADER_TEMPLATE
+│           ├── grader.py       # GRADER_TEMPLATE (verbatim simple-evals), grade_sample(),
+│           │                   # format_conversation(), parse_grading_response()
+│           ├── samplers.py     # OpenAIChatSampler, GeminiChatSampler (both → SamplerBase)
+│           └── runner.py       # EvalRunner: async (ThreadPool) and batch (OpenAI Batch API)
 │
 ├── data/
 │   └── healthbench/            # dataset files (gitignored, downloaded at setup)
@@ -483,11 +796,16 @@ healthbench-agent-lab/
     │   ├── test_downloader.py  # download_dataset, download_all_datasets
     │   ├── test_loader.py      # load_dataset
     │   └── test_split_utils.py # sample_dataset, stratified_sample
-    └── analysis/
+    ├── analysis/
+    │   ├── __init__.py
+    │   ├── test_exploration.py # all 12 exploration analyses
+    │   ├── test_registry.py    # @register_analysis, run_one, run_category, run_all
+    │   └── test_utils.py       # series_stats, save_csv
+    └── llm_eval/
         ├── __init__.py
-        ├── test_exploration.py # all 12 exploration analyses
-        ├── test_registry.py    # @register_analysis, run_one, run_category, run_all
-        └── test_utils.py       # series_stats, save_csv
+        ├── test_grader.py      # GRADER_TEMPLATE substitution, parse_grading_response, grade_sample
+        ├── test_samplers.py    # OpenAIChatSampler, GeminiChatSampler (mocked)
+        └── test_runner.py      # EvalRunner async and batch modes (mocked providers)
 ```
 
 ---
@@ -579,10 +897,64 @@ run_category("exploration", datasets, output_dir=Path("exports/"), save=False)
 - [x] `src/healthbench_agent/analysis/registry.py` — `@register_analysis` decorator, `run_one`, `run_category`, `run_all`
 - [x] `src/healthbench_agent/analysis/utils.py` — `series_stats`, `save_csv`, `DEFAULT_PERCENTILES`
 - [x] `src/healthbench_agent/analysis/exploration.py` — 12 descriptive stats analyses: sample counts, prompt structure, rubric size, points distribution, positive vs penalty, score range, rubric tag frequency, rubric tags per sample, example tag frequency, tag prefix distribution, data quality, subset overlap
-- [ ] `src/healthbench_agent/analysis/insights.py` — cross-dimensional breakdowns (theme × axis, specialty × language, urgency × difficulty)
-- [ ] `src/healthbench_agent/analysis/visualization.py` — score distribution plots, theme/axis heatmap, criteria weight histogram
-- [ ] `notebooks/01_dataset_exploration.ipynb` — complete walkthrough with findings
-- [ ] Written summary of 3–5 actionable insights that inform agent design
+- [x] `src/healthbench_agent/analysis/insights.py` — cross-dimensional breakdowns (theme × axis, rubric axis difficulty, penalty concentration by theme)
+- [x] `src/healthbench_agent/analysis/visualization.py` — score distribution plots, theme/axis heatmap, criteria weight histogram
+- [x] `notebooks/01_dataset_exploration.ipynb` — complete walkthrough with findings
+- [x] Written summary of 4-6 actionable insights that inform agent design (see §9A below)
+
+### Phase 1A — Dataset Insights for Agent & Tool Prioritization
+
+The following insights were derived from the Phase 1 dataset exploration (notebook `01_dataset_exploration.ipynb`). They directly inform which agents, tools, and prompt strategies should be built first in Phase 2.
+
+#### Insight 1 — Accuracy is the universal penalty hotspot: prioritize `drug_reference()` tool
+
+The penalty heatmap reveals that `accuracy` carries the highest mean penalty per rubric item (7.0–7.8 points) in every theme, followed by `completeness` (6.3–8.2). This pattern is consistent across both `main` and `hard` subsets and does not depend on theme — even "safe" themes like `communication` penalize accuracy errors at 7.5 points per item.
+
+**Priority:** The `drug_reference()` tool should be the **first tool implemented** and invoked proactively on any medical claim, not just when the agent is uncertain. The Reviewer stage in Architecture C should treat unsupported factual assertions as the primary failure mode to catch.
+
+#### Insight 2 — `health_data_tasks` has the highest penalty ratio: agents must hedge on data interpretation
+
+`health_data_tasks` has the highest mean penalty ratio across both `main` (0.754) and `hard` (0.896). For every positive point available, there is nearly an equal or greater penalty mass. In contrast, themes like `communication` (0.374) and `emergency_referrals` (0.380) have much lower ratios.
+
+**Priority:** Build a **data-interpretation safety net** into `v2_clinical.yaml` and `v3_structured.yaml` prompts. When the agent detects lab values, dosage calculations, or statistical claims, it should adopt a conservative strategy — qualify uncertain figures, cite normal ranges, and avoid fabricating numeric details. The `drug_reference()` tool is especially valuable here to ground responses in verified data.
+
+#### Insight 3 — Emergency items affect 34% of samples across diverse themes: `emergency_flag()` must be broad
+
+1,695 of 5,000 main samples (33.9%) contain at least one emergency-related rubric item, generating 6,335 penalty points. Emergency items are not confined to the `emergency_referrals` theme — they appear heavily in `global_health` (560 samples), `context_seeking` (433), and `emergency_referrals` (383).
+
+**Priority:** The `emergency_flag()` tool is **high priority** and must fire across diverse clinical contexts, including global-health questions (tropical diseases, travel medicine) and context-seeking conversations where the patient's situation may evolve toward urgency. A broad sensitivity with low false-negative rate is preferable to a narrow, precise trigger. The Triage Agent in Architecture C should classify emergency potential before routing.
+
+#### Insight 4 — Hard samples are driven by penalty mass, not complexity: Reviewer Agent is critical
+
+Rubric size (+0.40 items) and total possible points (−0.58) are nearly identical between hard and main, but penalty_mass_ratio jumps by +0.147 (from 0.495 to 0.642). The penalty ratio CDF confirms this: at p75, main is at 0.605 while hard reaches 0.750; at p95, main hits 1.087 vs hard at 1.333. Roughly 25% of hard samples have penalty mass exceeding 75% of their positive mass.
+
+**Priority:** The **Reviewer Agent** in Architecture C is the most critical component for hard samples. It should specifically check for claims that could trigger penalty criteria (unsupported diagnoses, missing safety caveats, overconfident language) rather than just verifying completeness. A penalty-ratio threshold near 0.75 could trigger enhanced Reviewer scrutiny.
+
+#### Insight 5 — Multi-turn conversations need context tracking, not heavier review
+
+Single-turn and multi-turn prompts have nearly identical rubric complexity in `main` (rubric_size 11.40 vs 11.51, penalty_ratio 0.495 vs 0.495). In `hard`, multi-turn samples are actually slightly less penalized (0.629 vs 0.653). However, 42% of main and 48% of hard prompts are multi-turn, and the `context_awareness` axis has the highest positive-to-penalty ratio (75% positive, 25% penalty).
+
+**Priority:** Full **conversation history pass-through** in the Triage stage (Architecture C) is a low-risk, high-reward optimization. The system prompt should explicitly instruct: "Consider all previous turns in the conversation when formulating your response." No need for heavier review processes on multi-turn conversations.
+
+#### Insight 6 — `communication_quality` and `instruction_following` axes have high penalty frequency despite low weight
+
+`communication_quality` has the highest penalty fraction (37.5%) and lowest mean points (1.31), followed by `instruction_following` (36.5% penalty, 1.74 mean). Their high frequency of penalty items means cumulative losses add up.
+
+**Priority:** **Prompt engineering** in all three prompt versions should emphasize tone calibration and strict instruction adherence. Include explicit directives: match the patient's language register, respect format constraints (lists vs paragraphs, length limits), and avoid unsolicited additions. These "style" failures are penalized almost as often as factual errors but are easier to prevent with good prompting.
+
+#### Tool & Agent Build Priority (data-driven)
+
+Based on the insights above, the recommended implementation order for Phase 2:
+
+| Priority | Component | Rationale |
+|----------|-----------|-----------|
+| **P0** | `drug_reference()` tool | Accuracy penalties dominate every theme (7.0–7.8 pts/item). Factual grounding is the single highest-impact intervention. |
+| **P0** | Prompt engineering (all versions) | communication_quality (37.5% penalty) and instruction_following (36.5% penalty) failures are preventable via prompting alone. |
+| **P1** | `emergency_flag()` tool | 34% of samples have emergency criteria; penalties spread across global_health, context_seeking, not just emergency_referrals. |
+| **P1** | Reviewer Agent (Architecture C) | Hard samples are hard because of penalty mass (+0.147 ratio), not complexity. Reviewer catches penalty-triggering claims. |
+| **P2** | `symptom_checker()` tool | Completeness axis is the largest (39% of criteria) but has lower penalty density than accuracy. |
+| **P2** | Triage Agent routing | Multi-turn complexity is not higher, so routing logic is less urgent. Focus on context pass-through. |
+| **P3** | Specialist sub-agents | Emergency vs GeneralHealth routing matters only after the tools and reviewer are in place. |
 
 ### Phase 2 — Agent Development
 **Deliverables:**
@@ -594,10 +966,13 @@ run_category("exploration", datasets, output_dir=Path("exports/"), save=False)
 
 ### Phase 3 — Evaluation Framework
 **Deliverables:**
-- [ ] `evaluation/rubric_scorer.py` — end-to-end scoring pipeline using `calculate_score`
+- [ ] `src/healthbench_agent/llm_eval/grader.py` — `GRADER_TEMPLATE` (verbatim simple-evals), `grade_sample()`, `format_conversation()`, `parse_grading_response()`
+- [ ] `src/healthbench_agent/llm_eval/samplers.py` — `OpenAIChatSampler`, `GeminiChatSampler` (both implement `SamplerBase`)
+- [ ] `src/healthbench_agent/llm_eval/runner.py` — `EvalRunner` with async (ThreadPool) and batch (OpenAI Batch API) modes
+- [ ] `tests/llm_eval/` — unit tests for grader, samplers (mocked), and runner modes
+- [ ] `evaluation/rubric_scorer.py` — thin adapter wiring `EvalRunner` → `calculate_score` → MLflow
 - [ ] `evaluation/stats.py` — all statistical comparison functions
 - [ ] `evaluation/experiment_tracker.py` — MLflow integration
-- [ ] `tests/test_*.py` — regression tests for all three agents
 - [ ] `notebooks/02_agent_comparison.ipynb` — comparative analysis with CI plots
 - [ ] `notebooks/03_evaluation_deep_dive.ipynb` — failure mode analysis, per-theme deep dives
 

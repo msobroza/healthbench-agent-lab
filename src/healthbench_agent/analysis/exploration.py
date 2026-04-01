@@ -17,9 +17,16 @@ from typing import Any
 
 import pandas as pd
 
-from .registry import register_analysis
-from .utils import DEFAULT_PERCENTILES, parse_tag_prefixes, save_csv, series_stats
 from ..domain.dataset import HealthBenchDataset
+from .registry import register_analysis
+from .utils import (
+    DEFAULT_PERCENTILES,
+    build_sample_dataframe,
+    parse_tag_prefixes,
+    save_csv,
+    series_stats,
+    total_positive_points,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -176,49 +183,45 @@ def compute_prompt_structure(
             results[subset] = {}
             continue
 
-        rows = []
-        for sample in dataset.samples:
-            num_turns = len(sample.prompt)
-            total_chars = sum(
-                len(str(turn.get("content", ""))) for turn in sample.prompt
-            )
-            last_user_chars = 0
-            for turn in reversed(sample.prompt):
-                if turn.get("role") == "user":
-                    last_user_chars = len(str(turn.get("content", "")))
-                    break
-            rows.append(
-                {
-                    "num_turns": num_turns,
-                    "total_char_length": total_chars,
-                    "last_user_turn_char_length": last_user_chars,
-                }
-            )
+        df = build_sample_dataframe(dataset)
 
-        dataframe = pd.DataFrame(rows)
+        # Add last_user_turn_char_length (not in the standard builder)
+        last_user_lengths = []
+        for sample in dataset.samples:
+            last_user = next(
+                (t for t in reversed(sample.prompt) if t.get("role") == "user"),
+                None,
+            )
+            last_user_lengths.append(
+                len(str(last_user.get("content", ""))) if last_user else 0
+            )
+        df["last_user_turn_char_length"] = last_user_lengths
 
         subset_result: dict[str, Any] = {
             "num_turns_stats": series_stats(
-                dataframe["num_turns"], percentiles=DEFAULT_PERCENTILES
+                df["num_turns"], percentiles=DEFAULT_PERCENTILES
             ),
             "total_char_length_stats": series_stats(
-                dataframe["total_char_length"], percentiles=DEFAULT_PERCENTILES
+                df["prompt_char_length"], percentiles=DEFAULT_PERCENTILES
             ),
             "last_user_turn_char_length_stats": series_stats(
-                dataframe["last_user_turn_char_length"], percentiles=DEFAULT_PERCENTILES
+                df["last_user_turn_char_length"], percentiles=DEFAULT_PERCENTILES
             ),
-            "single_turn_count": int((dataframe["num_turns"] == 1).sum()),
-            "multi_turn_count": int((dataframe["num_turns"] > 1).sum()),
+            "single_turn_count": int((df["num_turns"] == 1).sum()),
+            "multi_turn_count": int((df["num_turns"] > 1).sum()),
         }
 
         if save:
-            save_csv(dataframe, output_dir / f"compute_prompt_structure_{subset}.csv")
+            save_csv(
+                df[["num_turns", "prompt_char_length", "last_user_turn_char_length"]],
+                output_dir / f"compute_prompt_structure_{subset}.csv",
+            )
 
         results[subset] = subset_result
         logger.info(
             "Subset %s: %s samples analysed for prompt structure",
             subset,
-            len(dataframe),
+            len(df),
         )
 
     return results
@@ -439,54 +442,26 @@ def compute_positive_vs_penalty_stats(
             results[subset] = {}
             continue
 
-        rows = []
-        for sample in dataset.samples:
-            total_possible = sum(
-                rubric_item.points
-                for rubric_item in sample.rubrics
-                if rubric_item.points > 0
-            )
-            total_penalty = abs(
-                sum(
-                    rubric_item.points
-                    for rubric_item in sample.rubrics
-                    if rubric_item.points < 0
-                )
-            )
-            penalty_mass_ratio = (
-                total_penalty / total_possible if total_possible > 0 else None
-            )
-            rows.append(
-                {
-                    "total_possible_points": total_possible,
-                    "total_penalty_points": total_penalty,
-                    "penalty_mass_ratio": penalty_mass_ratio,
-                }
-            )
-
-        dataframe = pd.DataFrame(rows)
+        df = build_sample_dataframe(dataset)
 
         subset_result: dict[str, Any] = {
             "total_possible_points_stats": series_stats(
-                dataframe["total_possible_points"],
-                percentiles=DEFAULT_PERCENTILES,
+                df["total_possible_points"], percentiles=DEFAULT_PERCENTILES,
             ),
             "total_penalty_points_stats": series_stats(
-                dataframe["total_penalty_points"],
-                percentiles=DEFAULT_PERCENTILES,
+                df["total_penalty_points"], percentiles=DEFAULT_PERCENTILES,
             ),
             "penalty_mass_ratio_stats": series_stats(
-                dataframe["penalty_mass_ratio"].dropna(),
-                percentiles=DEFAULT_PERCENTILES,
+                df["penalty_mass_ratio"].dropna(), percentiles=DEFAULT_PERCENTILES,
             ),
             "samples_with_zero_possible_points": int(
-                (dataframe["total_possible_points"] == 0).sum()
+                (df["total_possible_points"] == 0).sum()
             ),
         }
 
         if save:
             save_csv(
-                dataframe,
+                df[["total_possible_points", "total_penalty_points", "penalty_mass_ratio"]],
                 output_dir / f"compute_positive_vs_penalty_stats_{subset}.csv",
             )
 
@@ -494,7 +469,7 @@ def compute_positive_vs_penalty_stats(
         logger.info(
             "Subset %s: positive vs penalty stats computed for %s samples",
             subset,
-            len(dataframe),
+            len(df),
         )
 
     return results
@@ -548,40 +523,25 @@ def compute_score_range_stats(
             results[subset] = {}
             continue
 
-        rows = []
-        for sample in dataset.samples:
-            points = [rubric_item.points for rubric_item in sample.rubrics]
-            max_possible = sum(max(0.0, p) for p in points)
-            min_possible = sum(p for p in points if p < 0)
-            score_range_width = max_possible - min_possible
-            rows.append(
-                {
-                    "max_possible_score": max_possible,
-                    "min_possible_score": min_possible,
-                    "score_range_width": score_range_width,
-                }
-            )
-
-        dataframe = pd.DataFrame(rows)
+        df = build_sample_dataframe(dataset)
+        df["min_possible_score"] = -df["total_penalty_points"]
+        df["score_range_width"] = df["total_possible_points"] + df["total_penalty_points"]
 
         subset_result: dict[str, Any] = {
             "max_possible_score_stats": series_stats(
-                dataframe["max_possible_score"],
-                percentiles=DEFAULT_PERCENTILES,
+                df["total_possible_points"], percentiles=DEFAULT_PERCENTILES,
             ),
             "min_possible_score_stats": series_stats(
-                dataframe["min_possible_score"],
-                percentiles=DEFAULT_PERCENTILES,
+                df["min_possible_score"], percentiles=DEFAULT_PERCENTILES,
             ),
             "score_range_width_stats": series_stats(
-                dataframe["score_range_width"],
-                percentiles=DEFAULT_PERCENTILES,
+                df["score_range_width"], percentiles=DEFAULT_PERCENTILES,
             ),
         }
 
         if save:
             save_csv(
-                dataframe,
+                df[["total_possible_points", "min_possible_score", "score_range_width"]],
                 output_dir / f"compute_score_range_stats_{subset}.csv",
             )
 
@@ -589,7 +549,7 @@ def compute_score_range_stats(
         logger.info(
             "Subset %s: score range stats computed for %s samples",
             subset,
-            len(dataframe),
+            len(df),
         )
 
     return results
@@ -642,16 +602,10 @@ def compute_rubric_tag_frequency(
             results[subset] = {}
             continue
 
-        all_tags: list[str] = []
-        total_rubric_items = 0
-        items_with_tag = 0
-
-        for sample in dataset.samples:
-            for rubric_item in sample.rubrics:
-                total_rubric_items += 1
-                if rubric_item.tags:
-                    items_with_tag += 1
-                all_tags.extend(rubric_item.tags)
+        all_items = [r for s in dataset.samples for r in s.rubrics]
+        all_tags = [tag for item in all_items for tag in item.tags]
+        total_rubric_items = len(all_items)
+        items_with_tag = sum(1 for item in all_items if item.tags)
 
         tag_series = pd.Series(all_tags, name="tag")
         tag_counts = tag_series.value_counts()
@@ -818,16 +772,9 @@ def compute_example_tag_frequency(
             results[subset] = {}
             continue
 
-        all_tags: list[str] = []
-        per_sample_counts: list[int] = []
-        samples_with_zero = 0
-
-        for sample in dataset.samples:
-            tag_count = len(sample.example_tags)
-            per_sample_counts.append(tag_count)
-            if tag_count == 0:
-                samples_with_zero += 1
-            all_tags.extend(sample.example_tags)
+        all_tags = [tag for s in dataset.samples for tag in s.example_tags]
+        per_sample_counts = [len(s.example_tags) for s in dataset.samples]
+        samples_with_zero = sum(1 for c in per_sample_counts if c == 0)
 
         tag_series = pd.Series(all_tags, name="example_tag")
         count_series = pd.Series(per_sample_counts, name="example_tags_per_sample")
@@ -1003,67 +950,36 @@ def compute_data_quality(
             results[subset] = {}
             continue
 
-        total_samples = len(dataset.samples)
-        prompt_ids = [sample.prompt_id for sample in dataset.samples]
-        duplicate_prompt_id_count = int(
-            pd.Series(prompt_ids).duplicated().sum()
-        )
+        samples = dataset.samples
+        all_items = [r for s in samples for r in s.rubrics]
+        n_samples = len(samples)
+        n_items = len(all_items)
 
-        empty_rubrics_count = 0
-        zero_points_rubric_items_count = 0
-        zero_possible_points_samples_count = 0
-        empty_rubric_tags_count = 0
-        empty_example_tags_count = 0
-        total_rubric_items = 0
+        empty_rubrics = sum(1 for s in samples if not s.rubrics)
+        empty_example_tags = sum(1 for s in samples if not s.example_tags)
+        zero_possible = sum(1 for s in samples if total_positive_points(s) == 0.0)
+        zero_points_items = sum(1 for r in all_items if r.points == 0)
+        empty_rubric_tags = sum(1 for r in all_items if not r.tags)
+        duplicate_ids = int(pd.Series([s.prompt_id for s in samples]).duplicated().sum())
 
-        for sample in dataset.samples:
-            if not sample.rubrics:
-                empty_rubrics_count += 1
-
-            if not sample.example_tags:
-                empty_example_tags_count += 1
-
-            total_possible = 0.0
-            for rubric_item in sample.rubrics:
-                total_rubric_items += 1
-                if rubric_item.points == 0:
-                    zero_points_rubric_items_count += 1
-                if not rubric_item.tags:
-                    empty_rubric_tags_count += 1
-                if rubric_item.points > 0:
-                    total_possible += rubric_item.points
-
-            if total_possible == 0.0:
-                zero_possible_points_samples_count += 1
-
-        def _fraction(count: int, total: int) -> float:
+        def _frac(count: int, total: int) -> float:
             return count / total if total else 0.0
 
         subset_result: dict[str, Any] = {
-            "total_samples": total_samples,
-            "total_rubric_items": total_rubric_items,
-            "empty_rubrics_count": empty_rubrics_count,
-            "empty_rubrics_fraction": _fraction(empty_rubrics_count, total_samples),
-            "zero_points_rubric_items_count": zero_points_rubric_items_count,
-            "zero_points_rubric_items_fraction": _fraction(
-                zero_points_rubric_items_count, total_rubric_items
-            ),
-            "duplicate_prompt_id_count": duplicate_prompt_id_count,
-            "duplicate_prompt_id_fraction": _fraction(
-                duplicate_prompt_id_count, total_samples
-            ),
-            "zero_possible_points_samples_count": zero_possible_points_samples_count,
-            "zero_possible_points_samples_fraction": _fraction(
-                zero_possible_points_samples_count, total_samples
-            ),
-            "empty_rubric_tags_count": empty_rubric_tags_count,
-            "empty_rubric_tags_fraction": _fraction(
-                empty_rubric_tags_count, total_rubric_items
-            ),
-            "empty_example_tags_count": empty_example_tags_count,
-            "empty_example_tags_fraction": _fraction(
-                empty_example_tags_count, total_samples
-            ),
+            "total_samples": n_samples,
+            "total_rubric_items": n_items,
+            "empty_rubrics_count": empty_rubrics,
+            "empty_rubrics_fraction": _frac(empty_rubrics, n_samples),
+            "zero_points_rubric_items_count": zero_points_items,
+            "zero_points_rubric_items_fraction": _frac(zero_points_items, n_items),
+            "duplicate_prompt_id_count": duplicate_ids,
+            "duplicate_prompt_id_fraction": _frac(duplicate_ids, n_samples),
+            "zero_possible_points_samples_count": zero_possible,
+            "zero_possible_points_samples_fraction": _frac(zero_possible, n_samples),
+            "empty_rubric_tags_count": empty_rubric_tags,
+            "empty_rubric_tags_fraction": _frac(empty_rubric_tags, n_items),
+            "empty_example_tags_count": empty_example_tags,
+            "empty_example_tags_fraction": _frac(empty_example_tags, n_samples),
         }
 
         if save:
@@ -1079,8 +995,8 @@ def compute_data_quality(
         logger.info(
             "Subset %s: data quality audited (%s samples, %s rubric items)",
             subset,
-            total_samples,
-            total_rubric_items,
+            n_samples,
+            n_items,
         )
 
     return results

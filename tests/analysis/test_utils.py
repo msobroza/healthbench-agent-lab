@@ -110,12 +110,12 @@ def test_parse_tag_prefixes_empty_list_returns_empty_dict():
 
 
 def test_parse_tag_prefixes_single_prefixed_tag():
-    result = parse_tag_prefixes(["theme: cardiology"])
+    result = parse_tag_prefixes(["theme:cardiology"])
     assert result == {"theme": {"cardiology": 1}}
 
 
 def test_parse_tag_prefixes_counts_repeated_values():
-    result = parse_tag_prefixes(["theme: cardiology", "theme: cardiology", "theme: oncology"])
+    result = parse_tag_prefixes(["theme:cardiology", "theme:cardiology", "theme:oncology"])
     assert result["theme"]["cardiology"] == 2
     assert result["theme"]["oncology"] == 1
 
@@ -127,7 +127,7 @@ def test_parse_tag_prefixes_tag_without_prefix_goes_to_no_prefix():
 
 
 def test_parse_tag_prefixes_mixed_tags():
-    tags = ["theme: cardiology", "plain_tag", "axis: accuracy"]
+    tags = ["theme:cardiology", "plain_tag", "axis:accuracy"]
     result = parse_tag_prefixes(tags)
     assert "theme" in result
     assert "axis" in result
@@ -135,7 +135,7 @@ def test_parse_tag_prefixes_mixed_tags():
 
 
 def test_parse_tag_prefixes_multiple_prefixes_stay_separate():
-    tags = ["theme: cardiology", "axis: accuracy", "theme: oncology"]
+    tags = ["theme:cardiology", "axis:accuracy", "theme:oncology"]
     result = parse_tag_prefixes(tags)
     assert set(result) == {"theme", "axis"}
     assert result["theme"] == {"cardiology": 1, "oncology": 1}
@@ -143,7 +143,7 @@ def test_parse_tag_prefixes_multiple_prefixes_stay_separate():
 
 
 def test_parse_tag_prefixes_value_with_colon_space_only_splits_on_first():
-    result = parse_tag_prefixes(["key: value: extra"])
+    result = parse_tag_prefixes(["key:value: extra"])
     assert result == {"key": {"value: extra": 1}}
 
 

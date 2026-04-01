@@ -67,7 +67,7 @@ class AnalysisEntry:
 # Module-level registry
 # ---------------------------------------------------------------------------
 
-_REGISTRY: dict[str, AnalysisEntry] = {}
+_analysis_registry: dict[str, AnalysisEntry] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -82,13 +82,13 @@ def register_analysis(
 ) -> Callable[[AnalysisFunction], AnalysisFunction]:
     """Decorator that registers an analysis function in the module-level registry.
 
-    The decorated function is stored under *name* in ``_REGISTRY``.
+    The decorated function is stored under *name* in ``_analysis_registry``.
     Calling the decorator a second time with the same name overwrites the
     previous entry and logs a warning.
 
     Args:
         name: Unique identifier for the analysis.  Used as the key in
-            ``_REGISTRY`` and passed to ``run_one``.
+            ``_analysis_registry`` and passed to ``run_one``.
         category: Logical grouping — one of 'exploration', 'insights', or
             'visualization'.
         datasets: List of dataset subset labels the analysis supports.
@@ -111,13 +111,13 @@ def register_analysis(
     """
 
     def decorator(function: AnalysisFunction) -> AnalysisFunction:
-        if name in _REGISTRY:
+        if name in _analysis_registry:
             logger.warning(
                 "Analysis %r is already registered; overwriting with %s",
                 name,
                 function.__qualname__,
             )
-        _REGISTRY[name] = AnalysisEntry(
+        _analysis_registry[name] = AnalysisEntry(
             name=name,
             category=category,
             datasets=list(datasets),
@@ -158,15 +158,15 @@ def run_one(
         Dict mapping *name* to the result returned by the analysis function.
 
     Raises:
-        ValueError: If *name* is not present in ``_REGISTRY``.
+        ValueError: If *name* is not present in ``_analysis_registry``.
     """
-    if name not in _REGISTRY:
+    if name not in _analysis_registry:
         raise ValueError(
             f"Analysis {name!r} is not registered. "
-            f"Available analyses: {sorted(_REGISTRY)}"
+            f"Available analyses: {sorted(_analysis_registry)}"
         )
 
-    entry = _REGISTRY[name]
+    entry = _analysis_registry[name]
     filtered_datasets = [d for d in datasets if d.subset in entry.datasets]
 
     logger.info(
@@ -204,7 +204,7 @@ def run_category(
         that analysis function.
     """
     matching_entries = [
-        entry for entry in _REGISTRY.values() if entry.category == category
+        entry for entry in _analysis_registry.values() if entry.category == category
     ]
 
     logger.info(
@@ -246,10 +246,10 @@ def run_all(
         Dict mapping every registered analysis name to the result returned
         by that analysis function.
     """
-    logger.info("Running all %s registered analyses", len(_REGISTRY))
+    logger.info("Running all %s registered analyses", len(_analysis_registry))
 
     results: dict[str, Any] = {}
-    for entry in _REGISTRY.values():
+    for entry in _analysis_registry.values():
         filtered_datasets = [d for d in datasets if d.subset in entry.datasets]
         logger.info(
             "Running analysis %r (category=%s, subsets=%s)",

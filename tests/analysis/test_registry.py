@@ -1,7 +1,7 @@
 """Tests for healthbench_agent.analysis.registry.
 
 Covers register_analysis, run_one, run_category, run_all, and AnalysisEntry
-using the ZOMBIES heuristic. Each test patches _REGISTRY to avoid polluting
+using the ZOMBIES heuristic. Each test patches _analysis_registry to avoid polluting
 the module-level state used by exploration.py.
 """
 
@@ -15,7 +15,7 @@ import pytest
 
 from healthbench_agent.analysis.registry import (
     AnalysisEntry,
-    _REGISTRY,
+    _analysis_registry,
     register_analysis,
     run_all,
     run_category,
@@ -31,9 +31,9 @@ from healthbench_agent.domain import HealthBenchDataset
 
 @pytest.fixture
 def isolated_registry(monkeypatch):
-    """Replace _REGISTRY with an empty dict for the duration of the test."""
+    """Replace _analysis_registry with an empty dict for the duration of the test."""
     fresh: dict = {}
-    monkeypatch.setattr("healthbench_agent.analysis.registry._REGISTRY", fresh)
+    monkeypatch.setattr("healthbench_agent.analysis.registry._analysis_registry", fresh)
     return fresh
 
 

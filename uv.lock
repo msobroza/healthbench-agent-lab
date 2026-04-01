@@ -2024,9 +2024,12 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "google-adk", extra = ["eval"] },
+    { name = "jinja2" },
     { name = "matplotlib" },
     { name = "mlflow" },
+    { name = "openai" },
     { name = "pandas" },
+    { name = "pydantic-settings" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "scikit-learn" },
@@ -2062,11 +2065,14 @@ dev = [
 requires-dist = [
     { name = "google-adk", extras = ["eval"], specifier = ">=1.0.0" },
     { name = "ipywidgets", marker = "extra == 'notebooks'", specifier = ">=8.1.0" },
+    { name = "jinja2", specifier = ">=3.1.0" },
     { name = "jupyterlab", marker = "extra == 'notebooks'", specifier = ">=4.3.0" },
     { name = "matplotlib", specifier = ">=3.9.0" },
     { name = "mlflow", specifier = ">=2.18.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13.0" },
+    { name = "openai", specifier = ">=1.0.0" },
     { name = "pandas", specifier = ">=2.2.0" },
+    { name = "pydantic-settings", specifier = ">=2.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },

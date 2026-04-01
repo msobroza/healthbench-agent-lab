@@ -39,7 +39,7 @@ def _make_sample(
     if rubric_points is None:
         rubric_points = [1.0, -0.5]
     if tags is None:
-        tags = ["theme: cardiology", "axis: accuracy"]
+        tags = ["theme:cardiology", "axis:accuracy"]
     rubrics = [
         {"criterion": f"criterion_{i}", "points": p, "tags": tags}
         for i, p in enumerate(rubric_points)

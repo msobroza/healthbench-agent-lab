@@ -19,8 +19,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
     - `dataset_loader.py` — disk deserialization (`load_dataset`)
   - `analysis/` — statistics layer (→ domain)
     - `registry.py` — `@register_analysis` decorator, `run_one`, `run_category`, `run_all`
-    - `utils.py` — shared helpers (`series_stats`, `save_csv`, `DEFAULT_PERCENTILES`)
+    - `utils.py` — shared helpers (`series_stats`, `save_csv`, `DEFAULT_PERCENTILES`, `build_rubric_dataframe`, `build_sample_dataframe`)
     - `exploration.py` — 12 descriptive stats analyses (registered under `"exploration"`)
+    - `insights.py` — 8 cross-cutting insight analyses (registered under `"insights"`)
+    - `visualization.py` — 8 matplotlib visualizations (registered under `"visualization"`)
 - **Working directories** (not installed, accessed via PYTHONPATH when using `uv run`):
   - `agents/` — ADK agent definitions
   - `evaluation/` — scoring, stats, experiment tracking
@@ -205,6 +207,33 @@ run_category("exploration", datasets, output_dir=Path("exports/"), save=False)
 - Never mutate a dataset inside an analysis function.
 - Analyses are order-independent; do not call one analysis from another.
 - Keep each function focused: if a function produces more than one unrelated artefact type, split it.
+
+### DataFrame-first methodology
+
+Analysis functions must convert domain objects to pandas DataFrames as early as possible, then express all logic as DataFrame operations (groupby, pivot_table, agg, filter). Two shared builders in `analysis/utils.py` handle the conversion:
+
+- **`build_rubric_dataframe(dataset)`** — one row per rubric item. Columns: `prompt_id`, `theme`, `axis`, `points`, `criterion`, `criterion_length`. Use for any analysis that operates at the rubric-item level (axis breakdowns, point distributions, penalty heatmaps).
+- **`build_sample_dataframe(dataset)`** — one row per sample. Columns: `prompt_id`, `theme`, `rubric_size`, `total_possible_points`, `total_penalty_points`, `penalty_mass_ratio`, `prompt_char_length`, `num_turns`, `num_user_turns`. Use for any analysis at the sample level (theme counts, complexity comparisons, score ceilings).
+
+Rules:
+- Call the builder once per dataset, at the top of the analysis function. Do not iterate over `dataset.samples` manually to build rows — that logic belongs in the builder.
+- Derive additional columns from existing builder columns using vectorised pandas operations rather than Python loops: `df["turn_type"] = np.where(df["num_turns"] > 2, "multi", "single")`.
+- Tag extraction (theme, axis) is handled inside the builders via `tag_value()`. Analysis functions should never call `tag_value()` directly.
+- For analyses that need columns not provided by either builder, add the column to the builder if it is reusable, or derive it inline from existing columns if it is one-off.
+
+```python
+from healthbench_agent.analysis.utils import build_rubric_dataframe, build_sample_dataframe
+
+# Rubric-level analysis: positive share by axis
+df = build_rubric_dataframe(dataset)
+pos_by_axis = df[df["points"] > 0].groupby("axis")["points"].sum()
+total_by_axis = df["points"].abs().groupby(df["axis"]).sum()
+positive_share = (pos_by_axis / total_by_axis).sort_values()
+
+# Sample-level analysis: penalty ratio by theme
+df = build_sample_dataframe(dataset)
+theme_stats = df.groupby("theme")["penalty_mass_ratio"].agg(["mean", "median"])
+```
 
 ## Testing Convention (pytest)
 
