@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -231,8 +232,8 @@ class LLMJudgeGrader(JudgeGrader):
     ) -> list[CriterionVerdict]:
         """Grade a conversation against all rubric items using the LLM judge.
 
-        For each rubric item, renders the grader prompt with the conversation
-        and rubric item, calls the sampler, and parses the response.
+        Rubric items are graded concurrently via a ThreadPoolExecutor to
+        avoid sequential latency when a sample has many criteria.
 
         Args:
             conversation: Full conversation including the agent's response
@@ -243,34 +244,33 @@ class LLMJudgeGrader(JudgeGrader):
             List of CriterionVerdict, one per rubric item in the same order.
         """
         conversation_str = format_conversation(conversation)
-        verdicts: list[CriterionVerdict] = []
 
-        for item in rubric_items:
+        def _grade_item(item: RubricItem) -> CriterionVerdict:
             prompt_text = self.template.render(
                 conversation=conversation_str,
                 rubric_item=str(item),
             )
-
             message_list: MessageList = [{"role": "user", "content": prompt_text}]
             response = self.sampler(message_list)
-
             try:
                 parsed = parse_grading_response(response.response_text)
-                verdicts.append(
-                    CriterionVerdict(
-                        criterion=item.criterion,
-                        criteria_met=parsed["criteria_met"],
-                        explanation=parsed["explanation"],
-                    )
+                return CriterionVerdict(
+                    criterion=item.criterion,
+                    criteria_met=parsed["criteria_met"],
+                    explanation=parsed["explanation"],
                 )
             except ValueError:
-                verdicts.append(
-                    CriterionVerdict(
-                        criterion=item.criterion,
-                        criteria_met=False,
-                        explanation="Failed to parse grader response.",
-                    )
+                return CriterionVerdict(
+                    criterion=item.criterion,
+                    criteria_met=False,
+                    explanation="Failed to parse grader response.",
                 )
+
+        if not rubric_items:
+            return []
+
+        with ThreadPoolExecutor(max_workers=len(rubric_items)) as executor:
+            verdicts = list(executor.map(_grade_item, rubric_items))
 
         return verdicts
 

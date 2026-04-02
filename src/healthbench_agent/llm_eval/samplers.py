@@ -98,14 +98,14 @@ class GeminiChatSampler(SamplerBase):
     ``GOOGLE_API_KEY`` environment variable.
 
     Attributes:
-        model: Gemini model identifier (e.g. 'gemini-2.0-flash').
+        model: Gemini model identifier (e.g. 'gemini-2.5-flash').
         temperature: Sampling temperature. 0.0 for deterministic grading.
         max_retries: Number of retries on transient failures.
     """
 
     def __init__(
         self,
-        model: str = "gemini-2.0-flash",
+        model: str = "gemini-2.5-flash",
         temperature: float = 0.0,
         max_retries: int = 3,
         api_key: str | None = None,

@@ -100,7 +100,7 @@ class TestToolAgentConfig:
         assert root_agent.name == "tool_agent"
 
     def test_root_agent_model(self):
-        assert root_agent.model == "gemini-2.0-flash"
+        assert root_agent.model == "gemini-2.5-flash"
 
     def test_root_agent_has_three_tools(self):
         assert len(root_agent.tools) == 3

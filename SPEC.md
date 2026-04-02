@@ -156,7 +156,7 @@ HealthBench uses GPT-4.1 as the default model-based grader. Its reliability was 
            ▼
 ┌──────────────────────┐
 │   Baseline Agent     │
-│   (gemini-2.0-flash) │
+│   (gemini-2.5-flash) │
 │   Minimal prompt     │
 │   No tools           │
 └──────────┬───────────┘
@@ -170,7 +170,7 @@ HealthBench uses GPT-4.1 as the default model-based grader. Its reliability was 
 **ADK Implementation:**
 - Single `Agent()` with basic health instruction
 - Prompt version: `v1_baseline.yaml`
-- Model: `gemini-2.0-flash`
+- Model: `gemini-2.5-flash`
 - No tools, no sub-agents
 
 **Expected strengths:** Reasonable accuracy and communication on straightforward questions.
@@ -188,7 +188,7 @@ HealthBench uses GPT-4.1 as the default model-based grader. Its reliability was 
            ▼
 ┌──────────────────────┐
 │   Tool Agent         │
-│   (gemini-2.0-flash) │
+│   (gemini-2.5-flash) │
 │   Clinical prompt    │
 │                      │
 │   Tools:             │
@@ -210,7 +210,7 @@ HealthBench uses GPT-4.1 as the default model-based grader. Its reliability was 
   - `drug_reference(drug_name)` → dosage, interactions, contraindications
   - `symptom_checker(symptoms)` → possible conditions with urgency level
   - `emergency_flag(description)` → binary urgent/non-urgent classification
-- Model: `gemini-2.0-flash`
+- Model: `gemini-2.5-flash`
 
 **Expected strengths:** Better accuracy on drug/treatment questions, improved emergency detection via tool use.
 **Expected weaknesses:** May over-rely on tools, potentially slower, tool trajectory needs validation.
@@ -262,7 +262,7 @@ HealthBench uses GPT-4.1 as the default model-based grader. Its reliability was 
 - `SequentialAgent` wraps the pipeline: triage → specialist → reviewer
 - Reviewer agent applies a self-check rubric before emitting the final response
 - Prompt version: `v1_structured.yaml`
-- Model: `gemini-2.0-flash` (or `gemini-2.5-pro` for reviewer)
+- Model: `gemini-2.5-flash` (or `gemini-2.5-pro` for reviewer)
 
 **Expected strengths:** Best emergency detection, context seeking via reviewer, expertise-tailored communication via triage classification.
 **Expected weaknesses:** Higher latency, more complex to debug, potential for delegation errors.
@@ -491,7 +491,7 @@ For each `HealthBenchSample`:
 | Provider | Class | Auth | Model default |
 |---|---|---|---|
 | OpenAI | `OpenAIChatSampler` | `OPENAI_API_KEY` env var | `gpt-4.1` |
-| Gemini | `GeminiChatSampler` | `GOOGLE_API_KEY` env var | `gemini-2.0-flash` |
+| Gemini | `GeminiChatSampler` | `GOOGLE_API_KEY` env var | `gemini-2.5-flash` |
 
 Both implement `SamplerBase.__call__(message_list) -> SamplerResponse`, so they are
 interchangeable as the grader model without changing any evaluation logic.
@@ -655,7 +655,7 @@ class JudgeConfig(BaseSettings):
 Override at run time without touching code:
 
 ```bash
-JUDGE_MODEL=gemini-2.0-flash JUDGE_MAX_WORKERS=20 uv run python -m evaluation.run
+JUDGE_MODEL=gemini-2.5-flash JUDGE_MAX_WORKERS=20 uv run python -m evaluation.run
 ```
 
 Load non-secret settings from a YAML file:

@@ -69,10 +69,6 @@ cd healthbench-agent-lab
 # Install all dependencies
 uv sync
 
-# Set up environment variables
-cp .env.example .env
-# Edit .env → set GOOGLE_API_KEY=your-key-here
-
 # Download HealthBench datasets
 uv run download-healthbench                           # all subsets
 uv run download-healthbench --subset hard --force     # single subset
@@ -82,10 +78,10 @@ uv run download-healthbench --subset hard --force     # single subset
 
 ```bash
 # Web UI (interactive chat)
-uv run adk web agents/baseline_agent
+uv run adk web agents
 
 # Terminal mode
-uv run adk run agents/baseline_agent
+uv run adk run agents
 ```
 
 ### 🧪 Run Evaluation

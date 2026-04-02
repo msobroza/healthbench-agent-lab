@@ -66,7 +66,7 @@ class TestBaselineAgentConfig:
         assert root_agent.name == "baseline_agent"
 
     def test_root_agent_model(self):
-        assert root_agent.model == "gemini-2.0-flash"
+        assert root_agent.model == "gemini-2.5-flash"
 
     def test_root_agent_has_description(self):
         assert root_agent.description is not None
@@ -108,7 +108,7 @@ class TestBaselinePipeline:
 
     def test_config_matches_yaml(self):
         assert _pipeline.config.name == "baseline_agent"
-        assert _pipeline.config.model == "gemini-2.0-flash"
+        assert _pipeline.config.model == "gemini-2.5-flash"
         assert _pipeline.config.prompt_version == "1.0.0"
 
     def test_from_config_creates_pipeline(self):

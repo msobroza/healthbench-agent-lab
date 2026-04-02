@@ -41,7 +41,7 @@ def sample_params():
     return RunParams(
         agent_name="baseline_agent",
         prompt_version="1.0.0",
-        model="gemini-2.0-flash",
+        model="gemini-2.5-flash",
         sample_size=50,
     )
 
@@ -68,7 +68,7 @@ class TestRunParams:
         d = sample_params.to_dict()
         assert d["agent_name"] == "baseline_agent"
         assert d["prompt_version"] == "1.0.0"
-        assert d["model"] == "gemini-2.0-flash"
+        assert d["model"] == "gemini-2.5-flash"
         assert d["sample_size"] == 50
         assert "timestamp" in d
 
@@ -93,7 +93,7 @@ class TestRunParams:
             model="gemini-2.5-pro",
             sample_size=100,
             grader_provider="gemini",
-            grader_model="gemini-2.0-flash",
+            grader_model="gemini-2.5-flash",
             grader_temperature=0.0,
             eval_mode="batch",
         )
@@ -164,7 +164,7 @@ class TestLogEvaluationRun:
         run_id = log_evaluation_run(sample_params, sample_metrics)
         run = mlflow.get_run(run_id)
         assert run.data.params["agent_name"] == "baseline_agent"
-        assert run.data.params["model"] == "gemini-2.0-flash"
+        assert run.data.params["model"] == "gemini-2.5-flash"
 
     def test_metrics_logged_to_mlflow(
         self, tmp_mlflow, sample_params, sample_metrics
@@ -311,17 +311,17 @@ class TestBuildRunParams:
     def _agent(self, **overrides) -> RootAgentPipelineConfig:
         defaults = {
             "name": "baseline",
-            "model": "gemini-2.0-flash",
+            "model": "gemini-2.5-flash",
             "prompt_version": "1.0.0",
         }
         defaults.update(overrides)
         return RootAgentPipelineConfig(**defaults)
 
     def test_extracts_grader_provider_from_judge_config(self):
-        judge = JudgeConfig(provider="gemini", model="gemini-2.0-flash")
+        judge = JudgeConfig(provider="gemini", model="gemini-2.5-flash")
         params = build_run_params(judge, self._agent(), sample_size=50)
         assert params.grader_provider == "gemini"
-        assert params.grader_model == "gemini-2.0-flash"
+        assert params.grader_model == "gemini-2.5-flash"
 
     def test_extracts_agent_fields_from_agent_config(self):
         agent = self._agent(
@@ -448,7 +448,7 @@ class TestRootAgentPipelineConfig:
     def test_default_values(self):
         config = RootAgentPipelineConfig()
         assert config.name == "baseline_agent"
-        assert config.model == "gemini-2.0-flash"
+        assert config.model == "gemini-2.5-flash"
         assert config.prompt_version == "1.0.0"
 
     def test_from_yaml_loads_agent_config(self):

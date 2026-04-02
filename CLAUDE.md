@@ -89,7 +89,7 @@ uv run jupyter lab
 
 Three agent architectures are built and compared against HealthBench:
 
-1. **Baseline Agent** (`agents/baseline_pipeline.py`) — Single ADK agent (gemini-2.0-flash), no tools, minimal prompt (`prompts/v1_baseline.yaml`). Establishes performance floor.
+1. **Baseline Agent** (`agents/baseline_pipeline.py`) — Single ADK agent (gemini-2.5-flash), no tools, minimal prompt (`prompts/v1_baseline.yaml`). Establishes performance floor.
 
 2. **Tool-Augmented Agent** (`agents/tool_pipeline.py`) — Single ADK agent + custom tools (`tools/`): `drug_reference()`, `symptom_checker()`, `emergency_flag()`. Uses `prompts/v1_clinical.yaml`.
 

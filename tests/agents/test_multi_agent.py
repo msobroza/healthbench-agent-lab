@@ -62,7 +62,7 @@ class TestAgentNodeConfig:
     def test_minimal_config(self):
         config = AgentNodeConfig(name="test_agent")
         assert config.name == "test_agent"
-        assert config.model == "gemini-2.0-flash"
+        assert config.model == "gemini-2.5-flash"
         assert config.tools == []
         assert config.sub_agents == []
         assert config.output_key is None
@@ -177,7 +177,7 @@ class TestRoutingConfig:
     def test_model_uses_default_for_sub_agents(self):
         """Sub-agents without explicit model get the default."""
         for sa in _pipeline.config.sub_agents:
-            assert sa.model == "gemini-2.0-flash"
+            assert sa.model == "gemini-2.5-flash"
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +239,7 @@ class TestTriageAgent:
         assert _triage.name == "triage_agent"
 
     def test_model(self):
-        assert _triage.model == "gemini-2.0-flash"
+        assert _triage.model == "gemini-2.5-flash"
 
     def test_output_key_set(self):
         assert _triage.output_key == "triage_classification"
@@ -279,7 +279,7 @@ class TestEmergencyAgent:
         assert _emergency.name == "emergency_agent"
 
     def test_model(self):
-        assert _emergency.model == "gemini-2.0-flash"
+        assert _emergency.model == "gemini-2.5-flash"
 
     def test_output_key_set(self):
         assert _emergency.output_key == "specialist_response"
@@ -312,7 +312,7 @@ class TestGeneralHealthAgent:
         assert _general_health.name == "general_health_agent"
 
     def test_model(self):
-        assert _general_health.model == "gemini-2.0-flash"
+        assert _general_health.model == "gemini-2.5-flash"
 
     def test_output_key_set(self):
         assert _general_health.output_key == "specialist_response"
@@ -350,7 +350,7 @@ class TestReviewerAgent:
         assert _reviewer.name == "reviewer_agent"
 
     def test_model(self):
-        assert _reviewer.model == "gemini-2.0-flash"
+        assert _reviewer.model == "gemini-2.5-flash"
 
     def test_output_key_set(self):
         assert _reviewer.output_key == "final_response"
@@ -396,7 +396,7 @@ class TestCoordinatorAgent:
         assert _coordinator.name == "coordinator_agent"
 
     def test_model(self):
-        assert _coordinator.model == "gemini-2.0-flash"
+        assert _coordinator.model == "gemini-2.5-flash"
 
     def test_output_key_set(self):
         assert _coordinator.output_key == "specialist_response"
@@ -583,10 +583,10 @@ class TestPipelineStructure:
         assert _emergency.output_key == _general_health.output_key
 
     def test_all_sub_agents_use_same_model(self):
-        """All sub-agents use gemini-2.0-flash for fair architecture comparison."""
+        """All sub-agents use gemini-2.5-flash for fair architecture comparison."""
         agents = [_triage, _emergency, _general_health, _reviewer]
         models = {a.model for a in agents}
-        assert models == {"gemini-2.0-flash"}
+        assert models == {"gemini-2.5-flash"}
 
     def test_emergency_agent_has_emergency_flag_tool(self):
         from tools.emergency_flag import emergency_flag

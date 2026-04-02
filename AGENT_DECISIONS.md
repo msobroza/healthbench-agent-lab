@@ -11,9 +11,9 @@ Each decision documents all options considered, pros/cons, data-driven rationale
 
 ### Decision 1: LLM Model Selection
 
-**Context:** All three agent architectures need a model. The SPEC specifies `gemini-2.0-flash` as the default, with `gemini-2.5-pro` as an option for the reviewer.
+**Context:** All three agent architectures need a model. The SPEC specifies `gemini-2.5-flash` as the default, with `gemini-2.5-pro` as an option for the reviewer.
 
-#### Option A — `gemini-2.0-flash` for all agents
+#### Option A — `gemini-2.5-flash` for all agents
 
 | | |
 |---|---|
@@ -27,14 +27,14 @@ Each decision documents all options considered, pros/cons, data-driven rationale
 | **Pros** | Better reasoning than 2.0-flash; native thinking support via `BuiltInPlanner`; improved instruction following (addresses Insight 6 — 36.5% penalty on `instruction_following`); better multi-turn context handling; still fast enough for interactive use |
 | **Cons** | Higher cost than 2.0-flash; slightly higher latency; may not be available in all regions; newer model with potentially less stable API |
 
-#### Option C — `gemini-2.0-flash` for baseline/tool, `gemini-2.5-pro` for reviewer
+#### Option C — `gemini-2.5-flash` for baseline/tool, `gemini-2.5-pro` for reviewer
 
 | | |
 |---|---|
 | **Pros** | Puts strongest model where it matters most (Insight 4 — reviewer is critical for hard samples); keeps inference cost low for bulk agents; reviewer checks are infrequent relative to main generation; optimal cost/quality tradeoff |
 | **Cons** | Mixed models complicate latency analysis; harder to attribute improvements to architecture vs model quality; `2.5-pro` is significantly more expensive; comparison is no longer purely architecture-driven |
 
-**Decision:** Use **`gemini-2.0-flash`** for baseline and tool agents, and **`gemini-2.0-flash`** for the multi-agent pipeline initially. This keeps comparisons fair — the improvement signal comes from architecture, not model quality. The reviewer can be upgraded to `gemini-2.5-flash` or `gemini-2.5-pro` in Phase 4 iteration runs, with the model logged as an MLflow parameter.
+**Decision:** Use **`gemini-2.5-flash`** for baseline and tool agents, and **`gemini-2.5-flash`** for the multi-agent pipeline initially. This keeps comparisons fair — the improvement signal comes from architecture, not model quality. The reviewer can be upgraded to `gemini-2.5-flash` or `gemini-2.5-pro` in Phase 4 iteration runs, with the model logged as an MLflow parameter.
 
 **ADK snippet:**
 ```python
@@ -42,7 +42,7 @@ from google.adk.agents import LlmAgent
 
 root_agent = LlmAgent(
     name="baseline_agent",
-    model="gemini-2.0-flash",
+    model="gemini-2.5-flash",
     instruction="...",
 )
 ```
@@ -90,7 +90,7 @@ def _load_instruction() -> str:
 
 root_agent = LlmAgent(
     name="baseline_agent",
-    model="gemini-2.0-flash",
+    model="gemini-2.5-flash",
     instruction=_load_instruction(),
 )
 ```
@@ -121,7 +121,7 @@ root_agent = LlmAgent(
 ```python
 root_agent = LlmAgent(
     name="baseline_agent",
-    model="gemini-2.0-flash",
+    model="gemini-2.5-flash",
     description="Baseline health assistant with no tools or sub-agents.",
     instruction=_load_instruction(),  # from prompts/v1_baseline.yaml
 )
@@ -319,7 +319,7 @@ from google.adk.agents import LlmAgent, SequentialAgent
 
 triage_agent = LlmAgent(
     name="triage_agent",
-    model="gemini-2.0-flash",
+    model="gemini-2.5-flash",
     description="Classifies query urgency, topic, and user expertise level.",
     instruction=_load_triage_instruction(),
     output_key="triage_classification",
@@ -327,7 +327,7 @@ triage_agent = LlmAgent(
 
 emergency_agent = LlmAgent(
     name="emergency_agent",
-    model="gemini-2.0-flash",
+    model="gemini-2.5-flash",
     description="Handles high-urgency medical queries requiring immediate referral.",
     instruction=_load_emergency_instruction(),
     tools=[emergency_flag],
@@ -336,7 +336,7 @@ emergency_agent = LlmAgent(
 
 general_health_agent = LlmAgent(
     name="general_health_agent",
-    model="gemini-2.0-flash",
+    model="gemini-2.5-flash",
     description="Handles general health queries with medical reference tools.",
     instruction=_load_general_instruction(),
     tools=[drug_reference, symptom_checker, emergency_flag],
@@ -345,7 +345,7 @@ general_health_agent = LlmAgent(
 
 reviewer_agent = LlmAgent(
     name="reviewer_agent",
-    model="gemini-2.0-flash",
+    model="gemini-2.5-flash",
     description="Reviews responses for completeness, safety, and communication quality.",
     instruction=_load_reviewer_instruction(),
     output_key="final_response",
@@ -354,7 +354,7 @@ reviewer_agent = LlmAgent(
 # Root agent delegates to specialists, then always reviews
 root_agent = LlmAgent(
     name="multi_agent",
-    model="gemini-2.0-flash",
+    model="gemini-2.5-flash",
     description="Multi-agent health pipeline: triage → specialist → reviewer.",
     instruction=_load_coordinator_instruction(),
     sub_agents=[emergency_agent, general_health_agent],

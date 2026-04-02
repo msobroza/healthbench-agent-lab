@@ -40,7 +40,7 @@ class JudgeConfig(BaseSettings):
 
     Override at run time via env vars::
 
-        JUDGE_MODEL=gemini-2.0-flash JUDGE_MAX_WORKERS=20 uv run ...
+        JUDGE_MODEL=gemini-2.5-flash JUDGE_MAX_WORKERS=20 uv run ...
 
     Attributes:
         provider: Model provider — ``"openai"`` or ``"gemini"``.

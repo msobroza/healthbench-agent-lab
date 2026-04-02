@@ -119,7 +119,7 @@ class AgentNodeConfig(BaseModel):
     """
 
     name: str = "agent"
-    model: str = "gemini-2.0-flash"
+    model: str = "gemini-2.5-flash"
     description: str = ""
     prompt_path: str = ""
     prompt_key: str = "instruction"

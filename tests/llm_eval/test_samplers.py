@@ -85,7 +85,7 @@ class TestGeminiChatSampler:
 
     def test_default_model(self):
         sampler = GeminiChatSampler()
-        assert sampler.model == "gemini-2.0-flash"
+        assert sampler.model == "gemini-2.5-flash"
 
     def test_custom_model(self):
         sampler = GeminiChatSampler(model="gemini-2.5-pro")
@@ -117,7 +117,7 @@ class TestGeminiChatSampler:
         result = sampler([{"role": "user", "content": "Hello"}])
 
         assert result.response_text == "Gemini response"
-        assert result.response_metadata["model"] == "gemini-2.0-flash"
+        assert result.response_metadata["model"] == "gemini-2.5-flash"
 
 
 # ---------------------------------------------------------------------------
@@ -138,10 +138,10 @@ class TestJudgeConfig:
         assert config.mode == EvalMode.ASYNC
         assert config.prompt_path == "prompts/llm_grader/v1_llm_grader.yaml"
 
-    @patch.dict("os.environ", {"JUDGE_MODEL": "gemini-2.0-flash"})
+    @patch.dict("os.environ", {"JUDGE_MODEL": "gemini-2.5-flash"})
     def test_env_var_override(self):
         config = JudgeConfig()
-        assert config.model == "gemini-2.0-flash"
+        assert config.model == "gemini-2.5-flash"
 
     @patch.dict("os.environ", {"JUDGE_PROVIDER": "gemini"})
     def test_provider_override(self):
@@ -219,10 +219,10 @@ class TestCreateSampler:
         assert sampler.temperature == config.temperature
 
     def test_creates_gemini_sampler(self):
-        config = JudgeConfig(provider="gemini", model="gemini-2.0-flash")
+        config = JudgeConfig(provider="gemini", model="gemini-2.5-flash")
         sampler = create_sampler(config)
         assert isinstance(sampler, GeminiChatSampler)
-        assert sampler.model == "gemini-2.0-flash"
+        assert sampler.model == "gemini-2.5-flash"
 
     @patch.dict("os.environ", {"OPENAI_API_KEY": "sk-from-config"})
     def test_passes_api_key_from_config(self):
