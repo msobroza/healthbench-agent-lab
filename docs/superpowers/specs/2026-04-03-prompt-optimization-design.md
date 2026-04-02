@@ -12,6 +12,13 @@ Add support for automatic prompt engineering to optimize agent system prompts
 Three optimization backends behind a common abstraction: DSPy, TextGrad, and a
 custom critique-refine algorithm (inspired by PromptWizard).
 
+## Design Principles
+
+- **Extensibility**: Adding a new optimizer requires only a new adapter file with
+  `@register_prompt_optimizer`. No changes to the ABC, registry, metric, config base
+  class, or CLI. Third-party or custom optimizers (OPRO, EvoPrompt, AdalFlow, etc.)
+  can be added without modifying existing code (Open/Closed).
+
 ## Non-Goals
 
 - Optimizing the LLM judge grading prompt (kept verbatim from simple-evals for comparability).
