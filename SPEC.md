@@ -9,8 +9,6 @@
 **GitLab Description:**
 > Hands-on exploration of agentic system design and evaluation methodology. Covers HealthBench dataset analysis, multiple Google ADK agent architectures (single-agent, tool-augmented, multi-agent), and a rigorous evaluation framework with rubric-based LLM-as-judge scoring, experiment tracking via MLflow, and statistical comparison. Managed with uv.
 
-**Context:** This project serves as preparation for a 75-minute technical interview focused on agentic AI systems for health, covering dataset exploration, agent development with Google ADK, evaluation framework expansion, and conceptual discussion on robust evaluation design.
-
 ---
 
 ## 2. Objectives
