@@ -1,0 +1,22 @@
+# Gemini Flash Lite LLM-as-judge configuration
+#
+# Cheapest and fastest Gemini option. Uses gemini-2.0-flash-lite
+# for rapid iteration during development. Accuracy is lower than
+# Flash or Pro — use for smoke tests and prompt iteration, not
+# final benchmarks.
+#
+# Cost: ~5x cheaper than Flash | Latency: fastest
+#
+# Usage:
+#   uv run track-experiment \
+#       --agent-config config/agents/baseline_agent.yaml \
+#       --judge-config config/judges/gemini_flash_lite.yaml
+
+provider: gemini
+model: gemini-2.5-flash-lite
+temperature: 0.0
+max_retries: 3
+timeout_seconds: 30
+max_workers: 10
+mode: async
+prompt_path: prompts/llm_grader/v1_llm_grader.yaml

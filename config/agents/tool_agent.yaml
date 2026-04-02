@@ -1,7 +1,7 @@
 # Tool-augmented agent configuration — clinical prompt + medical tools.
 name: tool_agent
 description: Clinical health assistant with medical reference tools.
-model: gemini-2.0-flash
+model: gemini-2.5-flash
 prompt_version: "2.0.0"
 prompt_path: prompts/tool_agent/v1_clinical.yaml
 tools:

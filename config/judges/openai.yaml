@@ -1,0 +1,20 @@
+# OpenAI GPT-4.1-mini LLM-as-judge configuration
+#
+# Uses GPT-4.1-mini for grading. Good balance of cost and accuracy
+# as an alternative to Gemini. Requires OPENAI_API_KEY in .env.
+#
+# Cost: ~$0.40/1M input, $1.60/1M output | Latency: moderate
+#
+# Usage:
+#   uv run track-experiment \
+#       --agent-config config/agents/baseline_agent.yaml \
+#       --judge-config config/judges/openai.yaml
+
+provider: openai
+model: gpt-4.1-mini
+temperature: 0.0
+max_retries: 5
+timeout_seconds: 60
+max_workers: 50
+mode: async
+prompt_path: prompts/llm_grader/v1_llm_grader.yaml

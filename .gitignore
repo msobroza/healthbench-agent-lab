@@ -147,6 +147,7 @@ venv.bak/
 # Spyder project settings
 .spyderproject
 .spyproject
+*mlruns/*
 
 # Rope project settings
 .ropeproject

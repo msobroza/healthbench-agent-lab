@@ -255,7 +255,13 @@ def _cli() -> None:
             --sample-size 100 --seed 42
     """
     import argparse
+    import asyncio
 
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
+    from healthbench_agent.agent import create_pipeline
     from healthbench_agent.dataset.loader import load_dataset
     from healthbench_agent.dataset.split_utils import stratified_sample
     from healthbench_agent.llm_eval.runner import EvalRunner
@@ -340,12 +346,17 @@ def _cli() -> None:
         args.seed,
     )
 
-    # Build runner and evaluate
+    # Import tool modules so @register_tool decorators fire before pipeline creation.
+    # tools/ is a working directory — importing tools.tools triggers all registrations.
+    import tools.tools  # noqa: F401
+
+    # Build agent pipeline and runner
+    pipeline = create_pipeline(agent_config)
     runner = EvalRunner.from_config(judge_config)
-    responses = [
-        "I cannot provide a response without proper clinical context."
-    ] * len(sampled)
-    results = runner.run(list(sampled.samples), responses)
+    logger.info("Generating agent responses and evaluating...")
+    results = asyncio.run(
+        runner.evaluate_pipeline(pipeline, list(sampled.samples))
+    )
     logger.info("Evaluated %d samples", len(results))
 
     # Build params and metrics
