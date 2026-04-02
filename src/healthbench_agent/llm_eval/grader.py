@@ -215,15 +215,18 @@ class LLMJudgeGrader(JudgeGrader):
     Attributes:
         sampler: Model sampler implementing SamplerBase.
         template: Jinja2 grader prompt template (``<<...>>`` delimiters).
+        max_workers: Upper bound on concurrent threads for rubric grading.
     """
 
     def __init__(
         self,
         sampler: SamplerBase,
         template: Any | None = None,
+        max_workers: int = 8,
     ) -> None:
         self.sampler = sampler
         self.template = template or _make_template(GRADER_TEMPLATE)
+        self.max_workers = max_workers
 
     def grade(
         self,
@@ -269,7 +272,7 @@ class LLMJudgeGrader(JudgeGrader):
         if not rubric_items:
             return []
 
-        with ThreadPoolExecutor(max_workers=len(rubric_items)) as executor:
+        with ThreadPoolExecutor(max_workers=min(len(rubric_items), self.max_workers)) as executor:
             verdicts = list(executor.map(_grade_item, rubric_items))
 
         return verdicts
@@ -295,7 +298,11 @@ def create_judge(config: JudgeConfig) -> LLMJudgeGrader:
     """
     sampler = create_sampler(config)
     template = load_grader_prompt(config.prompt_path)[0]
-    return LLMJudgeGrader(sampler=sampler, template=template)
+    return LLMJudgeGrader(
+        sampler=sampler,
+        template=template,
+        max_workers=config.grader_max_workers,
+    )
 
 
 # ---------------------------------------------------------------------------

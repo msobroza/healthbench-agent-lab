@@ -135,6 +135,7 @@ class TestJudgeConfig:
         assert config.temperature == 0.0
         assert config.max_retries == 3
         assert config.max_workers == 120
+        assert config.grader_max_workers == 8
         assert config.mode == EvalMode.ASYNC
         assert config.prompt_path == "prompts/llm_grader/v1_llm_grader.yaml"
 

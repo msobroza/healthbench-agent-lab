@@ -49,6 +49,9 @@ class JudgeConfig(BaseSettings):
         max_retries: Number of retries on transient API failures.
         timeout_seconds: Per-request timeout in seconds.
         max_workers: ThreadPool size for async evaluation mode.
+        grader_max_workers: ThreadPool size for concurrent rubric-item grading
+            within a single sample. Kept separate from ``max_workers`` to
+            avoid thread explosion when the two pools are nested.
         mode: Execution mode — async (ThreadPool) or batch (OpenAI Batch API).
         prompt_path: Path to the Jinja2 grader prompt YAML file.
         openai_api_key: OpenAI API key. Read from ``OPENAI_API_KEY`` or
@@ -65,6 +68,7 @@ class JudgeConfig(BaseSettings):
     max_retries: int = Field(3, ge=1)
     timeout_seconds: int = 30
     max_workers: int = Field(120, ge=1)
+    grader_max_workers: int = Field(8, ge=1)
     mode: EvalMode = EvalMode.ASYNC
     prompt_path: str = "prompts/llm_grader/v1_llm_grader.yaml"
 

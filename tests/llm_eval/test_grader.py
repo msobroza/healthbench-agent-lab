@@ -354,3 +354,13 @@ class TestCreateJudge:
         )
         assert "test convo" in rendered
         assert "test item" in rendered
+
+    def test_grader_max_workers_passed_through(self):
+        from healthbench_agent.llm_eval.config_grader import JudgeConfig
+
+        config = JudgeConfig(
+            prompt_path="prompts/llm_grader/v1_llm_grader.yaml",
+            grader_max_workers=4,
+        )
+        judge = create_judge(config)
+        assert judge.max_workers == 4
