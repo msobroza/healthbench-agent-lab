@@ -40,10 +40,15 @@ dev = [
     "ruff>=0.8.0",
     "mypy>=1.13.0",
 ]
+optimization = [
+    "dspy>=2.5.0",
+    "textgrad>=0.1.4",
+]
 
 [project.scripts]
 download-healthbench = "healthbench_agent.dataset.loader:_cli"
 track-experiment = "healthbench_agent.llm_eval.cli:main"
+optimize-prompt = "healthbench_agent.prompt_optimization.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.5.15"]

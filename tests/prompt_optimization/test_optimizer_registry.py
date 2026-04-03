@@ -6,7 +6,6 @@ import pytest
 
 from healthbench_agent.prompt_optimization.config import (
     BaseOptimizationConfig,
-    DSPyConfig,
 )
 from healthbench_agent.prompt_optimization.optimizer import (
     OptimizationResult,
@@ -49,14 +48,13 @@ class TestRegisterPromptOptimizer:
     def test_duplicate_registration_raises(self):
         @register_prompt_optimizer("dup_test", _StubConfig)
         class First(PromptOptimizer):
-            def optimize(self, current_prompt, samples, metric):
-                ...
+            def optimize(self, current_prompt, samples, metric): ...
 
         with pytest.raises(ValueError, match="already registered"):
+
             @register_prompt_optimizer("dup_test", _StubConfig)
             class Second(PromptOptimizer):
-                def optimize(self, current_prompt, samples, metric):
-                    ...
+                def optimize(self, current_prompt, samples, metric): ...
 
         del _PROMPT_OPTIMIZER_REGISTRY["dup_test"]
 

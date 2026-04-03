@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 from healthbench_agent.prompt_optimization.optimizer import (
@@ -38,9 +36,7 @@ class TestTrialRecord:
         assert record.score is None
 
     def test_frozen(self):
-        record = TrialRecord(
-            trial_id=1, prompt="test", score=0.5, timestamp="t"
-        )
+        record = TrialRecord(trial_id=1, prompt="test", score=0.5, timestamp="t")
         with pytest.raises(AttributeError):
             record.score = 0.9  # type: ignore[misc]
 
@@ -49,9 +45,7 @@ class TestOptimizationResult:
     """Tests for OptimizationResult frozen dataclass."""
 
     def test_create(self):
-        trial = TrialRecord(
-            trial_id=0, prompt="p", score=0.5, timestamp="t"
-        )
+        trial = TrialRecord(trial_id=0, prompt="p", score=0.5, timestamp="t")
         result = OptimizationResult(
             optimized_prompt="optimized",
             baseline_score=0.4,

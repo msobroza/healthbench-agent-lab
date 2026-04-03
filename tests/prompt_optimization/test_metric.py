@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from healthbench_agent.domain.dataset import HealthBenchSample
-from healthbench_agent.domain.evaluation import CriterionVerdict, SingleEvalResult
+from healthbench_agent.domain.evaluation import CriterionVerdict
 from healthbench_agent.domain.rubric import RubricItem
 from healthbench_agent.prompt_optimization.metric import EndToEndMetric
 

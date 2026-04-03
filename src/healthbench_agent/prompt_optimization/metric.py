@@ -53,9 +53,7 @@ class EndToEndMetric:
         Returns:
             Aggregate HealthBench score in [0.0, 1.0].
         """
-        patched_config = self.agent_config.model_copy(
-            update={"instruction_override": prompt}
-        )
+        patched_config = self.agent_config.model_copy(update={"instruction_override": prompt})
         pipeline = create_pipeline(patched_config)
 
         async def _generate_all() -> list[str]:
@@ -67,9 +65,7 @@ class EndToEndMetric:
 
         results = []
         for sample, response in zip(self.samples, responses):
-            conversation = list(sample.prompt) + [
-                {"role": "assistant", "content": response}
-            ]
+            conversation = list(sample.prompt) + [{"role": "assistant", "content": response}]
             verdicts = self.judge.grade(conversation, sample.rubrics)
             score = calculate_score(sample.rubrics, verdicts)
             results.append(SingleEvalResult(score=score, metrics={}))
