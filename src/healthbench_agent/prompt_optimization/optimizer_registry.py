@@ -64,17 +64,14 @@ def create_prompt_optimizer(
     """
     if config.optimizer not in _PROMPT_OPTIMIZER_REGISTRY:
         available = list(_PROMPT_OPTIMIZER_REGISTRY) or ["(none)"]
-        raise ValueError(
-            f"Unknown prompt optimizer: {config.optimizer!r}. "
-            f"Available: {available}"
-        )
+        raise ValueError(f"Unknown prompt optimizer: {config.optimizer!r}. Available: {available}")
     _, optimizer_class = _PROMPT_OPTIMIZER_REGISTRY[config.optimizer]
     return optimizer_class(config)
 
 
-def registered_prompt_optimizers() -> (
-    dict[str, tuple[type[BaseOptimizationConfig], type[PromptOptimizer]]]
-):
+def registered_prompt_optimizers() -> dict[
+    str, tuple[type[BaseOptimizationConfig], type[PromptOptimizer]]
+]:
     """Return a copy of the current optimizer registry.
 
     Returns:

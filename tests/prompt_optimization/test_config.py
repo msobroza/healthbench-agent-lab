@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from healthbench_agent.prompt_optimization.config import (
-    BaseOptimizationConfig,
     CritiqueRefineConfig,
     DSPyConfig,
     TextGradConfig,

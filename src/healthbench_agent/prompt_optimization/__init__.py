@@ -16,6 +16,8 @@ Public API:
     - registered_prompt_optimizers: List registered backends.
 """
 
+# Import adapters to trigger registration
+from . import adapters as _adapters  # noqa: F401
 from .config import (
     BaseOptimizationConfig,
     CritiqueRefineConfig,
@@ -29,9 +31,6 @@ from .optimizer_registry import (
     register_prompt_optimizer,
     registered_prompt_optimizers,
 )
-
-# Import adapters to trigger registration
-from . import adapters as _adapters  # noqa: F401
 
 __all__ = [
     "PromptOptimizer",
