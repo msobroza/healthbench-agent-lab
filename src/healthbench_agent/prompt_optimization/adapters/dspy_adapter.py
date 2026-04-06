@@ -10,11 +10,16 @@ Registered as ``"dspy"`` in the optimizer registry.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from ..config import DSPyConfig
-from ..optimizer import OptimizationResult, PromptOptimizer, TrialRecord
+from ..optimizer import (
+    OptimizationResult,
+    PromptOptimizer,
+    _BudgetExceededError,
+    _TrialBudget,
+    require_optional,
+)
 from ..optimizer_registry import register_prompt_optimizer
 
 if TYPE_CHECKING:
@@ -26,23 +31,6 @@ try:
     import dspy
 except ImportError:
     dspy = None  # type: ignore[assignment]
-
-
-class _BudgetExceededError(Exception):
-    """Raised when the optimizer exceeds its trial budget.
-
-    Used internally by the DSPy adapter to abort compilation early
-    once ``max_trials`` distinct candidate prompts have been evaluated.
-    """
-
-
-def _check_dspy_installed() -> None:
-    """Raise a helpful ImportError if dspy is not installed."""
-    if dspy is None:
-        raise ImportError(
-            "DSPyOptimizer requires the 'optimization' extra. "
-            "Install with: uv sync --extra optimization"
-        )
 
 
 @register_prompt_optimizer("dspy", DSPyConfig)
@@ -105,16 +93,8 @@ class DSPyOptimizer(PromptOptimizer):
             ValueError: If samples or metric is None, or if
                 ``config.dspy_optimizer`` is not ``"copro"`` or ``"miprov2"``.
         """
-        _check_dspy_installed()
-        if samples is None:
-            raise ValueError(
-                "DSPyOptimizer requires samples for evaluation. "
-                "Pass a non-empty list of HealthBenchSample."
-            )
-        if metric is None:
-            raise ValueError(
-                "DSPyOptimizer requires a metric for scoring. Pass an EndToEndMetric callable."
-            )
+        require_optional(dspy, "DSPyOptimizer")
+        samples, metric = self._require_samples_and_metric(samples, metric, "DSPyOptimizer")
 
         # Configure DSPy language model
         language_model = dspy.LM(f"{self.config.meta_provider}/{self.config.meta_model}")
@@ -149,49 +129,25 @@ class DSPyOptimizer(PromptOptimizer):
             for sample in samples
         ]
 
-        # Cached, budget-tracked, DSPy-compatible metric.
-        # DSPy calls this once per (example, prediction) pair, so we cache
-        # by instruction string to avoid re-running the agent for every
-        # example sharing the same candidate.
-        score_cache: dict[str, float] = {}
-        trial_history: list[TrialRecord] = []
-        best_prompt = current_prompt
-        best_score = float("-inf")
-
-        def evaluate_prompt(prompt: str) -> float:
-            nonlocal best_prompt, best_score
-            if prompt in score_cache:
-                return score_cache[prompt]
-            if len(trial_history) >= self.config.max_trials:
-                raise _BudgetExceededError()
-            score = metric(prompt)
-            score_cache[prompt] = score
-            trial_history.append(
-                TrialRecord(
-                    trial_id=len(trial_history) + 1,
-                    prompt=prompt,
-                    score=score,
-                    timestamp=datetime.now(tz=UTC).isoformat(),
-                )
-            )
-            if score > best_score:
-                best_score = score
-                best_prompt = prompt
-            return score
+        # All bookkeeping (cache, history, best, budget) lives in
+        # _TrialBudget. DSPy calls the metric once per (example, prediction)
+        # pair, so the cache by instruction string avoids re-running the
+        # agent for every example sharing the same candidate.
+        budget = _TrialBudget(metric, self.config.max_trials)
 
         def dspy_metric(_example: Any, _pred: Any, _trace: Any = None) -> float:
             """DSPy-compatible per-example metric.
 
             Reads the current instruction from the module being
-            compiled and delegates to ``evaluate_prompt`` (which caches
-            per-instruction).
+            compiled and delegates to ``budget.evaluate`` (which caches
+            per-instruction and tracks the budget).
             """
             current_instruction = module.generate.signature.instructions
-            return evaluate_prompt(current_instruction)
+            return budget.evaluate(current_instruction)
 
         # Score the baseline up front so it appears in the result and
         # the budget always reflects at least one trial.
-        baseline_score = evaluate_prompt(current_prompt)
+        baseline_score = budget.evaluate(current_prompt)
 
         # Select and run the teleprompter
         if self.config.dspy_optimizer == "copro":
@@ -215,18 +171,18 @@ class DSPyOptimizer(PromptOptimizer):
             # cache and best-tracking even if DSPy never re-called the
             # metric on it.
             final_instruction = compiled_module.generate.signature.instructions
-            evaluate_prompt(final_instruction)
+            budget.evaluate(final_instruction)
         except _BudgetExceededError:
             # Budget exhausted mid-compile — keep whatever we found.
             pass
 
         return OptimizationResult(
-            optimized_prompt=best_prompt,
+            optimized_prompt=budget.best_prompt,
             baseline_score=baseline_score,
-            optimized_score=best_score,
-            improvement=best_score - baseline_score,
-            num_trials=len(trial_history),
-            trial_history=trial_history,
+            optimized_score=budget.best_score,
+            improvement=budget.best_score - baseline_score,
+            num_trials=len(budget.history),
+            trial_history=budget.history,
             optimizer_name="dspy",
-            config=self.config.model_dump(exclude={"google_api_key", "openai_api_key"}),
+            config=self.config.dump_safe(),
         )

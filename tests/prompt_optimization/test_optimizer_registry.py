@@ -14,6 +14,7 @@ from healthbench_agent.prompt_optimization.optimizer import (
 from healthbench_agent.prompt_optimization.optimizer_registry import (
     _PROMPT_OPTIMIZER_REGISTRY,
     create_prompt_optimizer,
+    get_optimizer_config_class,
     register_prompt_optimizer,
     registered_prompt_optimizers,
 )
@@ -95,3 +96,19 @@ class TestRegisteredPromptOptimizers:
         assert isinstance(result, dict)
         result["fake"] = (BaseOptimizationConfig, PromptOptimizer)
         assert "fake" not in _PROMPT_OPTIMIZER_REGISTRY
+
+
+class TestGetOptimizerConfigClass:
+    def test_returns_registered_config_class(self):
+        @register_prompt_optimizer("lookup_test", _StubConfig)
+        class _LookupStub(PromptOptimizer):
+            def optimize(self, current_prompt, samples, metric): ...
+
+        try:
+            assert get_optimizer_config_class("lookup_test") is _StubConfig
+        finally:
+            del _PROMPT_OPTIMIZER_REGISTRY["lookup_test"]
+
+    def test_unknown_name_raises(self):
+        with pytest.raises(ValueError, match="Unknown prompt optimizer"):
+            get_optimizer_config_class("nonexistent_optimizer")

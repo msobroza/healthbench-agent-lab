@@ -11,7 +11,7 @@ Registered as ``"critique_refine"`` in the optimizer registry.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from healthbench_agent.domain.sampler import SamplerBase
 
@@ -36,6 +36,44 @@ THINKING_STYLES: list[str] = [
     "Consider cultural sensitivity and inclusive language in health communication.",
     "Focus on actionable advice that patients can follow without medical training.",
 ]
+
+_MUTATE_TEMPLATE = """\
+You are an expert prompt engineer for health AI systems.
+
+Thinking approach: {thinking_style}
+
+Rewrite and improve the following system prompt for a health assistant. \
+Keep the core intent but make it more effective.
+
+Current prompt:
+{prompt}
+
+Respond with ONLY the improved prompt text, nothing else."""
+
+_CRITIQUE_TEMPLATE = """\
+You are an expert prompt engineer evaluating health AI prompts.
+
+Critically analyze the following system prompt. Identify specific weaknesses, \
+missing elements, and areas where it could be more effective for a health assistant.
+
+Prompt to critique:
+{prompt}
+
+Provide a detailed critique with specific, actionable suggestions."""
+
+_REFINE_TEMPLATE = """\
+You are an expert prompt engineer for health AI systems.
+
+Refine the following system prompt based on the critique below. \
+Address each weakness while preserving the prompt's strengths.
+
+Current prompt:
+{prompt}
+
+Critique:
+{critique}
+
+Respond with ONLY the refined prompt text, nothing else."""
 
 
 def create_sampler(config: CritiqueRefineConfig) -> SamplerBase:
@@ -150,19 +188,17 @@ class CritiqueRefineOptimizer(PromptOptimizer):
                 num_trials=len(trial_history),
                 trial_history=trial_history,
                 optimizer_name="critique_refine",
-                config=self._serialized_config(),
+                config=self.config.dump_safe(),
             )
 
         # --- Phase 2: Critique-Refine ---
         baseline_score = metric(current_prompt)
 
-        # Find the best candidate from mutation phase. The filter
-        # guarantees every score is non-None, so we can safely cast.
-        scored_trials = [t for t in trial_history if t.score is not None]
-        best_trial = max(scored_trials, key=lambda t: t.score or 0.0)
-        best_prompt = best_trial.prompt
-        assert best_trial.score is not None  # narrowed by filter above
-        best_score: float = best_trial.score
+        # Find the best candidate from the mutation phase. Building a
+        # ``(prompt, score)`` tuple list lets ``max`` infer ``float``
+        # without a separate type-narrowing step.
+        scored = [(t.prompt, t.score) for t in trial_history if t.score is not None]
+        best_prompt, best_score = max(scored, key=lambda pair: pair[1])
 
         for _ in range(self.config.refine_iterations):
             if len(trial_history) >= max_trials:
@@ -192,8 +228,25 @@ class CritiqueRefineOptimizer(PromptOptimizer):
             num_trials=len(trial_history),
             trial_history=trial_history,
             optimizer_name="critique_refine",
-            config=self._serialized_config(),
+            config=self.config.dump_safe(),
         )
+
+    @staticmethod
+    def _call_meta(sampler: SamplerBase, content: str) -> str:
+        """Send a one-shot user message to the meta-model and return the text.
+
+        Used by every mutation/critique/refine call so the message
+        construction lives in one place.
+
+        Args:
+            sampler: The meta-model sampler for LLM calls.
+            content: The full user prompt text to send.
+
+        Returns:
+            The stripped response text from the meta-model.
+        """
+        response = sampler([{"role": "user", "content": content}])
+        return response.response_text.strip()
 
     def _mutate_prompt(
         self,
@@ -211,21 +264,10 @@ class CritiqueRefineOptimizer(PromptOptimizer):
         Returns:
             The mutated prompt text from the meta-model.
         """
-        message_list = [
-            {
-                "role": "user",
-                "content": (
-                    f"You are an expert prompt engineer for health AI systems.\n\n"
-                    f"Thinking approach: {thinking_style}\n\n"
-                    f"Rewrite and improve the following system prompt for a health "
-                    f"assistant. Keep the core intent but make it more effective.\n\n"
-                    f"Current prompt:\n{prompt}\n\n"
-                    f"Respond with ONLY the improved prompt text, nothing else."
-                ),
-            }
-        ]
-        response = sampler(message_list)
-        return response.response_text.strip()
+        return self._call_meta(
+            sampler,
+            _MUTATE_TEMPLATE.format(thinking_style=thinking_style, prompt=prompt),
+        )
 
     def _critique_prompt(
         self,
@@ -241,21 +283,7 @@ class CritiqueRefineOptimizer(PromptOptimizer):
         Returns:
             A text critique identifying areas for improvement.
         """
-        message_list = [
-            {
-                "role": "user",
-                "content": (
-                    f"You are an expert prompt engineer evaluating health AI prompts.\n\n"
-                    f"Critically analyze the following system prompt. Identify specific "
-                    f"weaknesses, missing elements, and areas where it could be more "
-                    f"effective for a health assistant.\n\n"
-                    f"Prompt to critique:\n{prompt}\n\n"
-                    f"Provide a detailed critique with specific, actionable suggestions."
-                ),
-            }
-        ]
-        response = sampler(message_list)
-        return response.response_text.strip()
+        return self._call_meta(sampler, _CRITIQUE_TEMPLATE.format(prompt=prompt))
 
     def _refine_prompt(
         self,
@@ -273,26 +301,7 @@ class CritiqueRefineOptimizer(PromptOptimizer):
         Returns:
             The refined prompt text.
         """
-        message_list = [
-            {
-                "role": "user",
-                "content": (
-                    f"You are an expert prompt engineer for health AI systems.\n\n"
-                    f"Refine the following system prompt based on the critique below. "
-                    f"Address each weakness while preserving the prompt's strengths.\n\n"
-                    f"Current prompt:\n{prompt}\n\n"
-                    f"Critique:\n{critique}\n\n"
-                    f"Respond with ONLY the refined prompt text, nothing else."
-                ),
-            }
-        ]
-        response = sampler(message_list)
-        return response.response_text.strip()
-
-    def _serialized_config(self) -> dict[str, Any]:
-        """Serialize config for the result, excluding secret keys.
-
-        Returns:
-            Dict of config fields with API keys excluded.
-        """
-        return self.config.model_dump(exclude={"google_api_key", "openai_api_key"})
+        return self._call_meta(
+            sampler,
+            _REFINE_TEMPLATE.format(prompt=prompt, critique=critique),
+        )

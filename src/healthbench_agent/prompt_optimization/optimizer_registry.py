@@ -47,6 +47,27 @@ def register_prompt_optimizer(
     return decorator
 
 
+def get_optimizer_config_class(name: str) -> type[BaseOptimizationConfig]:
+    """Look up the config class registered for an optimizer name.
+
+    Avoids hardcoding the (name -> config class) mapping in callers
+    such as the CLI: the registry is the single source of truth.
+
+    Args:
+        name: Registered optimizer name.
+
+    Returns:
+        The ``BaseOptimizationConfig`` subclass associated with ``name``.
+
+    Raises:
+        ValueError: If ``name`` is not registered.
+    """
+    if name not in _PROMPT_OPTIMIZER_REGISTRY:
+        available = list(_PROMPT_OPTIMIZER_REGISTRY) or ["(none)"]
+        raise ValueError(f"Unknown prompt optimizer: {name!r}. Available: {available}")
+    return _PROMPT_OPTIMIZER_REGISTRY[name][0]
+
+
 def create_prompt_optimizer(
     config: BaseOptimizationConfig,
 ) -> PromptOptimizer:

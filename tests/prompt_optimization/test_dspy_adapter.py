@@ -9,11 +9,9 @@ import pytest
 from healthbench_agent.domain.dataset import HealthBenchSample
 from healthbench_agent.domain.rubric import RubricItem
 from healthbench_agent.prompt_optimization.adapters import dspy_adapter
-from healthbench_agent.prompt_optimization.adapters.dspy_adapter import (
-    DSPyOptimizer,
-    _BudgetExceededError,
-)
+from healthbench_agent.prompt_optimization.adapters.dspy_adapter import DSPyOptimizer
 from healthbench_agent.prompt_optimization.config import DSPyConfig
+from healthbench_agent.prompt_optimization.optimizer import _BudgetExceededError
 
 
 def _make_sample() -> HealthBenchSample:

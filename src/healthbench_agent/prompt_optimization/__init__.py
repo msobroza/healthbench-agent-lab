@@ -28,6 +28,7 @@ from .metric import EndToEndMetric
 from .optimizer import OptimizationResult, PromptOptimizer, TrialRecord
 from .optimizer_registry import (
     create_prompt_optimizer,
+    get_optimizer_config_class,
     register_prompt_optimizer,
     registered_prompt_optimizers,
 )
@@ -43,5 +44,6 @@ __all__ = [
     "CritiqueRefineConfig",
     "register_prompt_optimizer",
     "create_prompt_optimizer",
+    "get_optimizer_config_class",
     "registered_prompt_optimizers",
 ]
