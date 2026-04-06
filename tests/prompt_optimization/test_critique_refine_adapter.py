@@ -157,3 +157,80 @@ class TestCritiqueRefineOptimizerWithMetric:
 
         assert result.config["optimizer"] == "critique_refine"
         assert result.config["mutation_rounds"] == 1
+
+
+class TestCritiqueRefineOptimizerBudget:
+    """Verifies max_trials early-stop in both mutation and refine phases."""
+
+    def _build_sampler(self) -> MagicMock:
+        """Sampler that returns a unique response per call so candidates differ."""
+        mock_sampler = MagicMock()
+        counter = {"n": 0}
+
+        def side_effect(message_list):
+            counter["n"] += 1
+            return SamplerResponse(
+                response_text=f"Variant {counter['n']}.",
+                actual_queried_message_list=message_list,
+                response_metadata={},
+            )
+
+        mock_sampler.side_effect = side_effect
+        return mock_sampler
+
+    def test_max_trials_caps_mutation_phase(self):
+        # 5 rounds * 5 styles = 25 mutations, but max_trials=3 caps it.
+        config = CritiqueRefineConfig(
+            mutation_rounds=5,
+            style_variations=5,
+            refine_iterations=1,
+            max_trials=3,
+        )
+        optimizer = CritiqueRefineOptimizer(config)
+        mock_sampler = self._build_sampler()
+
+        with patch(
+            "healthbench_agent.prompt_optimization.adapters.critique_refine_adapter.create_sampler",
+            return_value=mock_sampler,
+        ):
+            result = optimizer.optimize(
+                current_prompt="Baseline.",
+                samples=None,
+                metric=None,  # mutation-only mode
+            )
+
+        # Mutation loop must stop after 3 candidates regardless of round/style budget.
+        assert result.num_trials == 3
+        assert len(result.trial_history) == 3
+
+    def test_max_trials_caps_refine_phase(self):
+        # 1 mutation round * 1 style = 1 mutation; refine_iterations=10 but
+        # max_trials=2 means only one refine iteration runs (1 mutation + 1 refine).
+        config = CritiqueRefineConfig(
+            mutation_rounds=1,
+            style_variations=1,
+            refine_iterations=10,
+            max_trials=2,
+        )
+        optimizer = CritiqueRefineOptimizer(config)
+        mock_sampler = self._build_sampler()
+
+        # Mutation score, baseline score, then 1 refine score = 3 metric calls.
+        end_metric = MagicMock(side_effect=[0.6, 0.5, 0.7])
+        sample = _make_sample()
+
+        with patch(
+            "healthbench_agent.prompt_optimization.adapters.critique_refine_adapter.create_sampler",
+            return_value=mock_sampler,
+        ):
+            result = optimizer.optimize(
+                current_prompt="Baseline.",
+                samples=[sample],
+                metric=end_metric,
+            )
+
+        # 1 mutation trial + 1 refine trial = 2 trials, capped by max_trials.
+        assert result.num_trials == 2
+        # Refine improved over mutation (0.7 > 0.6) so it wins.
+        assert result.optimized_score == 0.7
+        assert result.baseline_score == 0.5

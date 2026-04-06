@@ -84,6 +84,9 @@ class AgentNodeConfig(BaseModel):
             when empty.
         prompt_key: Key to extract from the prompt YAML file.
         prompt_version: Prompt YAML version string.
+        instruction_override: Optional raw instruction template that
+            replaces the file load when set. Used by prompt optimization
+            to inject candidate prompts without writing temp YAML files.
         tools: Registered tool names to attach (leaf agents only).
         framework: Orchestration framework backend (``"adk"`` or
             ``"langgraph"``). Used by the pipeline factory to select
@@ -124,6 +127,7 @@ class AgentNodeConfig(BaseModel):
     prompt_path: str = ""
     prompt_key: str = "instruction"
     prompt_version: str = ""
+    instruction_override: str | None = None
     tools: list[str] = Field(default_factory=list)
     framework: str = "adk"
     orchestration: str = "sequential"

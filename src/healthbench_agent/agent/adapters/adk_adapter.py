@@ -30,11 +30,41 @@ from healthbench_agent.agent.config import (
     RootAgentPipelineConfig,
 )
 from healthbench_agent.agent.framework_adapter import FrameworkAdapter
-from healthbench_agent.agent.prompt import format_conversation, load_instruction
+from healthbench_agent.agent.prompt import (
+    format_conversation,
+    load_instruction,
+    render_instruction,
+)
 from healthbench_agent.agent.tool_registry import get_tools
 from healthbench_agent.domain.conversation import MessageList
 
 _ADK_AGENT: TypeAlias = LlmAgent | SequentialAgent | LoopAgent | ParallelAgent
+
+
+def _resolve_instruction(
+    config: AgentNodeConfig,
+    prompt_path: str,
+    **context: Any,
+) -> str:
+    """Resolve an agent instruction, preferring ``instruction_override``.
+
+    When ``config.instruction_override`` is set, render it as a Jinja2
+    template directly. Otherwise load and render the prompt YAML file
+    at ``prompt_path``. This is the single resolution point used by
+    both build-time and runtime instruction loading so prompt
+    optimization can inject candidates without touching the filesystem.
+
+    Args:
+        config: Agent node configuration.
+        prompt_path: Resolved prompt file path (after parent inheritance).
+        **context: Template variables passed to Jinja2 rendering.
+
+    Returns:
+        The rendered instruction string.
+    """
+    if config.instruction_override is not None:
+        return render_instruction(config.instruction_override, **context)
+    return load_instruction(prompt_path, key=config.prompt_key, **context)
 
 
 class ADKAgentPipeline(AgentPipeline):
@@ -96,9 +126,9 @@ class ADKAgentPipeline(AgentPipeline):
         Returns:
             The agent's response text.
         """
-        rendered = load_instruction(
+        rendered = _resolve_instruction(
+            self.config,
             self.config.prompt_path,
-            key=self.config.prompt_key,
             conversation=format_conversation(conversation),
         )
         session = await self._session_service.create_session(
@@ -268,10 +298,7 @@ def build_agent_node(
         agent_callbacks = _resolve_agent_callbacks(config)
 
         if config.orchestration == "routing":
-            instruction = load_instruction(
-                prompt_path,
-                key=config.prompt_key,
-            )
+            instruction = _resolve_instruction(config, prompt_path)
             return _build_llm_agent(
                 config,
                 instruction=instruction,
@@ -311,7 +338,7 @@ def build_agent_node(
 
     # Leaf agent — tools resolved from registry, condition in description.
     tools = get_tools(config.tools) if config.tools else []
-    instruction = load_instruction(prompt_path, key=config.prompt_key)
+    instruction = _resolve_instruction(config, prompt_path)
     description = config.description
     if config.condition:
         description = f"{description} [Condition: {config.condition}]"

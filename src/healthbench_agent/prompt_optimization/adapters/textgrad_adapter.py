@@ -29,6 +29,15 @@ except ImportError:
     textgrad = None  # type: ignore[assignment]
 
 
+def _check_textgrad_installed() -> None:
+    """Raise a helpful ImportError if textgrad is not installed."""
+    if textgrad is None:
+        raise ImportError(
+            "TextGradOptimizer requires the 'optimization' extra. "
+            "Install with: uv sync --extra optimization"
+        )
+
+
 @register_prompt_optimizer("textgrad", TextGradConfig)
 class TextGradOptimizer(PromptOptimizer):
     """Prompt optimizer using text-gradient descent.
@@ -36,6 +45,10 @@ class TextGradOptimizer(PromptOptimizer):
     Creates a ``textgrad.Variable`` from the current prompt and iteratively
     refines it by computing text-based loss gradients and applying updates
     via ``textgrad.TGD``. Tracks the best prompt/score across all steps.
+
+    The number of optimization steps is capped at
+    ``min(config.steps, config.max_trials)`` so the global trial budget
+    from :class:`BaseOptimizationConfig` is honoured.
 
     Requires both ``samples`` and ``metric`` — raises ``ValueError`` if
     either is missing.
@@ -56,9 +69,10 @@ class TextGradOptimizer(PromptOptimizer):
         """Optimize a prompt using text-gradient descent.
 
         Creates a TextGrad variable for the prompt, an engine for the
-        meta-model, and a TGD optimizer. Runs ``config.steps`` iterations
-        of: score the current prompt, compute a loss variable, backward
-        pass to get text gradients, and optimizer step to update the prompt.
+        meta-model, and a TGD optimizer. Runs up to
+        ``min(config.steps, config.max_trials)`` iterations of: score
+        the current prompt, compute a loss variable, backward pass to
+        get text gradients, and optimizer step to update the prompt.
 
         Args:
             current_prompt: The starting prompt text.
@@ -71,8 +85,10 @@ class TextGradOptimizer(PromptOptimizer):
             OptimizationResult with the best prompt found across all steps.
 
         Raises:
+            ImportError: If the ``textgrad`` package is not installed.
             ValueError: If samples or metric is None.
         """
+        _check_textgrad_installed()
         if samples is None:
             raise ValueError(
                 "TextGradOptimizer requires samples for evaluation. "
@@ -102,7 +118,10 @@ class TextGradOptimizer(PromptOptimizer):
         best_score = baseline_score
         trial_history: list[TrialRecord] = []
 
-        for step in range(self.config.steps):
+        # Cap steps at the global trial budget so max_trials is honoured.
+        max_steps = min(self.config.steps, self.config.max_trials)
+
+        for step in range(max_steps):
             # Score current prompt variable
             score = metric(prompt_var.value)
 
@@ -128,8 +147,9 @@ class TextGradOptimizer(PromptOptimizer):
                 )
             )
 
-            # Track best (>= so gradient updates are preserved on ties)
-            if score >= best_score:
+            # Track strict improvement so the best prompt always
+            # corresponds to the highest score (not the latest tie).
+            if score > best_score:
                 best_prompt = prompt_var.value
                 best_score = score
 
