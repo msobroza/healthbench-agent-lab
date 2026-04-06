@@ -52,9 +52,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
       - `textgrad_adapter.py` — `TextGradOptimizer` (text-gradient descent; uses `_TrialBudget` for trial bookkeeping)
       - `critique_refine_adapter.py` — `CritiqueRefineOptimizer` (mutation + critique loop, no external dep). Loads `_CritiqueRefinePrompts` (mutate/critique/refine Jinja2 templates + thinking-styles list) from `config.prompt_path` at construction time.
 - **Working directories** (not installed, accessed via PYTHONPATH when using `uv run`):
-  - `agents/` — ADK agent pipeline definitions (`*_pipeline.py`) and ADK entry points (subdirs with `agent.py`)
+  - `agents/` — ADK agent pipeline definitions (`*_pipeline.py`) and ADK entry points (subdirs with `agent.py` and colocated `*_pipeline.test.json` golden test cases)
   - `tools/` — medical reference tool modules (`drug_reference`, `symptom_checker`, `emergency_flag`)
-  - `agent_test_cases/` — golden test cases for ADK eval (`*_pipeline.test.json`)
   - `evaluation/` — scoring, stats, experiment tracking (`experiment_tracker.py` CLI, `stats.py`)
   - `prompts/` — versioned YAML prompt files (subdirs: `llm_grader/`, `baseline_agent/`, `tool_agent/`, `multi_agent/`, `prompt_optimization/`)
   - `config/` — YAML configuration files for agent pipelines (`config/agents/*.yaml`)
@@ -457,9 +456,9 @@ See `AGENT_DECISIONS.md` for exhaustive pros/cons and design rationale for each 
 - Tests: routing vs sequential orchestration, condition in description, prompt_path inheritance, unsupported orchestration raises
 
 ### Subtask 2.6 — Golden Datasets
-- `agent_test_cases/baseline_pipeline.test.json` — golden test cases
-- `agent_test_cases/tool_pipeline.test.json` — golden test cases with tool trajectories
-- `agent_test_cases/multi_pipeline.test.json` — golden test cases with delegation
+- `agents/baseline_agent/baseline_pipeline.test.json` — golden test cases
+- `agents/tool_agent/tool_pipeline.test.json` — golden test cases with tool trajectories
+- `agents/multi_agent/multi_pipeline.test.json` — golden test cases with delegation
 - `evaluation/test_config.json` — ADK eval criteria thresholds
 
 ## Phase 3 — Evaluation Framework Subtasks
