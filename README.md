@@ -337,9 +337,15 @@ healthbench-agent-lab/
 │   ├── baseline_pipeline.py        #   Architecture A: single agent
 │   ├── tool_pipeline.py            #   Architecture B: agent + tools
 │   ├── multi_pipeline.py           #   Architecture C: multi-agent
-│   ├── baseline_agent/agent.py     #   ADK entry point
-│   ├── tool_agent/agent.py         #   ADK entry point
-│   └── multi_agent/agent.py        #   ADK entry point
+│   ├── baseline_agent/             #   ADK entry point + golden test cases
+│   │   ├── agent.py
+│   │   └── baseline_pipeline.test.json
+│   ├── tool_agent/                 #   ADK entry point + golden test cases
+│   │   ├── agent.py
+│   │   └── tool_pipeline.test.json
+│   └── multi_agent/                #   ADK entry point + golden test cases
+│       ├── agent.py
+│       └── multi_pipeline.test.json
 │
 ├── 📂 tools/                       # 🔧 Medical reference tools
 │   ├── drug_reference.py           #   💊 Drug lookup
@@ -369,8 +375,6 @@ healthbench-agent-lab/
 │   ├── 01_dataset_exploration.ipynb
 │   ├── 02_agent_comparison.ipynb
 │   └── 03_evaluation_deep_dive.ipynb
-│
-├── 📂 agent_test_cases/            # 🧪 Golden test cases (ADK eval)
 │
 └── 📂 tests/                       # ✅ pytest test suite
     ├── conftest.py                 #   Shared fixtures

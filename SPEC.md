@@ -871,13 +871,16 @@ healthbench-agent-lab/
 │   ├── multi_pipeline.py       # Architecture C: triage → specialist → reviewer
 │   ├── baseline_agent/         # ADK entry point (re-exports root_agent)
 │   │   ├── __init__.py
-│   │   └── agent.py
+│   │   ├── agent.py
+│   │   └── baseline_pipeline.test.json   # golden test cases for ADK eval
 │   ├── tool_agent/             # ADK entry point (re-exports root_agent)
 │   │   ├── __init__.py
-│   │   └── agent.py
+│   │   ├── agent.py
+│   │   └── tool_pipeline.test.json       # golden test cases with tool trajectories
 │   └── multi_agent/            # ADK entry point (re-exports root_agent)
 │       ├── __init__.py
-│       └── agent.py
+│       ├── agent.py
+│       └── multi_pipeline.test.json      # golden test cases with delegation
 │
 ├── tools/                      # medical reference tool modules
 │   ├── __init__.py             # triggers @register_tool registration on import
@@ -885,11 +888,6 @@ healthbench-agent-lab/
 │   ├── symptom_checker.py      # @register_tool("symptom_checker")
 │   ├── emergency_flag.py       # @register_tool("emergency_flag")
 │   └── tools.py                # re-exports all tool functions
-│
-├── agent_test_cases/           # golden test cases for ADK eval
-│   ├── baseline_pipeline.test.json
-│   ├── tool_pipeline.test.json
-│   └── multi_pipeline.test.json
 │
 ├── prompts/                    # versioned YAML prompt files with documented rationale
 │   ├── llm_grader/
