@@ -27,7 +27,7 @@ Orchestration modes:
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import AliasChoices, BaseModel, Field, SecretStr
 from pydantic_settings import (
@@ -253,4 +253,4 @@ class RootAgentPipelineConfig(AgentNodeConfig, BaseSettings):
                 ),
             },
         )
-        return yaml_config_class(**overrides)
+        return cast("RootAgentPipelineConfig", yaml_config_class(**overrides))

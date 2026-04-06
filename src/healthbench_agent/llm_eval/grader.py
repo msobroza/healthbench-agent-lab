@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from jinja2 import Environment
+from jinja2 import Environment, Template
 
 from healthbench_agent.domain.conversation import MessageList
 from healthbench_agent.domain.evaluation import CriterionVerdict
@@ -98,7 +98,7 @@ _JINJA_ENV = Environment(
 )
 
 
-def _make_template(raw: str) -> Environment:
+def _make_template(raw: str) -> Template:
     """Create a Jinja2 Template using <<...>> delimiters.
 
     Args:

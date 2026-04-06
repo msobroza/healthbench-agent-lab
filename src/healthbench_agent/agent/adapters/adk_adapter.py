@@ -13,9 +13,9 @@ builder constructs the appropriate ADK agent type based on the config's
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, cast
 
-from google.adk.agents import LlmAgent, LoopAgent, ParallelAgent, SequentialAgent
+from google.adk.agents import BaseAgent, LlmAgent, LoopAgent, ParallelAgent, SequentialAgent
 from google.adk.planners import BuiltInPlanner, PlanReActPlanner
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
@@ -189,27 +189,6 @@ def _resolve_callback(name: str | None) -> Callable[..., Any] | None:
     return get_callback(name) if name else None
 
 
-def _resolve_agent_callbacks(
-    config: AgentNodeConfig,
-) -> dict[str, Callable[..., Any] | None]:
-    """Resolve before/after agent callbacks from config.
-
-    These callbacks are available on all agent types (LlmAgent,
-    SequentialAgent, LoopAgent, ParallelAgent).
-
-    Args:
-        config: Agent node configuration.
-
-    Returns:
-        Dict with ``before_agent_callback`` and ``after_agent_callback``
-        keys, values are resolved callables or ``None``.
-    """
-    return {
-        "before_agent_callback": _resolve_callback(config.before_agent_callback),
-        "after_agent_callback": _resolve_callback(config.after_agent_callback),
-    }
-
-
 def _build_llm_agent(
     config: AgentNodeConfig,
     instruction: str,
@@ -232,14 +211,13 @@ def _build_llm_agent(
     Returns:
         A fully configured ``LlmAgent``.
     """
-    agent_callbacks = _resolve_agent_callbacks(config)
     return LlmAgent(
         name=config.name,
         model=config.model,
         description=description,
         instruction=instruction,
-        tools=tools or [],
-        sub_agents=sub_agents or [],
+        tools=cast(list, tools or []),
+        sub_agents=cast(list[BaseAgent], sub_agents or []),
         output_key=config.output_key,
         planner=_build_planner(config.planner) if config.planner else None,
         include_contents=config.include_contents,
@@ -250,7 +228,8 @@ def _build_llm_agent(
         after_model_callback=_resolve_callback(config.after_model_callback),
         before_tool_callback=_resolve_callback(config.before_tool_callback),
         after_tool_callback=_resolve_callback(config.after_tool_callback),
-        **agent_callbacks,
+        before_agent_callback=_resolve_callback(config.before_agent_callback),
+        after_agent_callback=_resolve_callback(config.after_agent_callback),
     )
 
 
@@ -294,8 +273,8 @@ def build_agent_node(
 
     if config.sub_agents:
         children = [build_agent_node(child, prompt_path) for child in config.sub_agents]
-
-        agent_callbacks = _resolve_agent_callbacks(config)
+        before_agent = _resolve_callback(config.before_agent_callback)
+        after_agent = _resolve_callback(config.after_agent_callback)
 
         if config.orchestration == "routing":
             instruction = _resolve_instruction(config, prompt_path)
@@ -310,25 +289,28 @@ def build_agent_node(
             return SequentialAgent(
                 name=config.name,
                 description=config.description,
-                sub_agents=children,
-                **agent_callbacks,
+                sub_agents=cast(list[BaseAgent], children),
+                before_agent_callback=before_agent,
+                after_agent_callback=after_agent,
             )
 
         if config.orchestration == "loop":
             return LoopAgent(
                 name=config.name,
                 description=config.description,
-                sub_agents=children,
+                sub_agents=cast(list[BaseAgent], children),
                 max_iterations=config.max_iterations,
-                **agent_callbacks,
+                before_agent_callback=before_agent,
+                after_agent_callback=after_agent,
             )
 
         if config.orchestration == "parallel":
             return ParallelAgent(
                 name=config.name,
                 description=config.description,
-                sub_agents=children,
-                **agent_callbacks,
+                sub_agents=cast(list[BaseAgent], children),
+                before_agent_callback=before_agent,
+                after_agent_callback=after_agent,
             )
 
         raise ValueError(

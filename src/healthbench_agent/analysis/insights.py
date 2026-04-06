@@ -76,11 +76,7 @@ def compute_theme_axis_breakdown(
 
         df = build_sample_dataframe(dataset)
         rdf = build_rubric_dataframe(dataset)
-        cross_pivot = (
-            rdf.groupby(["theme", "axis"])
-            .size()
-            .unstack(fill_value=0)
-        )
+        cross_pivot = rdf.groupby(["theme", "axis"]).size().unstack(fill_value=0)
         cross_table = cross_pivot.to_dict(orient="index")
 
         subset_result: dict[str, Any] = {
@@ -191,7 +187,9 @@ def compute_rubric_axis_difficulty(
         results[subset] = subset_result
         logger.info(
             "Subset %s: axis difficulty — %s axes across %s rubric items",
-            subset, len(axis_stats), len(df),
+            subset,
+            len(axis_stats),
+            len(df),
         )
 
     return results
@@ -244,9 +242,13 @@ def compute_penalty_concentration(
 
         subset_result: dict[str, Any] = {
             "theme_total_penalty": df.groupby("theme")["total_penalty_points"]
-            .sum().round(4).to_dict(),
+            .sum()
+            .round(4)
+            .to_dict(),
             "theme_mean_penalty": df.groupby("theme")["total_penalty_points"]
-            .mean().round(4).to_dict(),
+            .mean()
+            .round(4)
+            .to_dict(),
             "total_penalty_points": round(total_penalty, 4),
             "total_positive_points": round(total_positive, 4),
             "penalty_to_positive_ratio": (
@@ -257,14 +259,18 @@ def compute_penalty_concentration(
         if save:
             save_csv(
                 df.groupby("theme")[["total_penalty_points", "total_possible_points"]]
-                .agg(["sum", "mean"]).round(4).reset_index(),
+                .agg(["sum", "mean"])
+                .round(4)
+                .reset_index(),
                 output_dir / f"penalty_concentration_{subset}.csv",
             )
 
         results[subset] = subset_result
         logger.info(
             "Subset %s: penalty concentration — total_penalty=%.1f, ratio=%s",
-            subset, total_penalty, subset_result["penalty_to_positive_ratio"],
+            subset,
+            total_penalty,
+            subset_result["penalty_to_positive_ratio"],
         )
 
     return results
@@ -330,7 +336,9 @@ def compute_criterion_text_length_stats(
         results[subset] = subset_result
         logger.info(
             "Subset %s: criterion text length — %s rubric items, %s axes",
-            subset, len(df), len(length_stats_by_axis),
+            subset,
+            len(df),
+            len(length_stats_by_axis),
         )
 
     return results
@@ -378,32 +386,37 @@ def compute_score_ceiling_by_theme(
 
         subset_result: dict[str, Any] = {
             "theme_mean_possible_points": df.groupby("theme")["total_possible_points"]
-            .mean().round(4).to_dict(),
+            .mean()
+            .round(4)
+            .to_dict(),
             "theme_mean_penalty_ratio": df.dropna(subset=["penalty_mass_ratio"])
-            .groupby("theme")["penalty_mass_ratio"].mean().round(4).to_dict(),
+            .groupby("theme")["penalty_mass_ratio"]
+            .mean()
+            .round(4)
+            .to_dict(),
             "theme_sample_counts": df["theme"].value_counts().to_dict(),
-            "overall_mean_possible_points": round(
-                float(df["total_possible_points"].mean()), 4
-            ),
-            "overall_mean_penalty_ratio": round(
-                float(df["penalty_mass_ratio"].dropna().mean()), 4
-            ),
+            "overall_mean_possible_points": round(float(df["total_possible_points"].mean()), 4),
+            "overall_mean_penalty_ratio": round(float(df["penalty_mass_ratio"].dropna().mean()), 4),
         }
 
         if save:
             save_csv(
-                df.groupby("theme").agg(
+                df.groupby("theme")
+                .agg(
                     mean_possible_points=("total_possible_points", "mean"),
                     mean_penalty_ratio=("penalty_mass_ratio", "mean"),
                     sample_count=("theme", "count"),
-                ).round(4).reset_index(),
+                )
+                .round(4)
+                .reset_index(),
                 output_dir / f"score_ceiling_by_theme_{subset}.csv",
             )
 
         results[subset] = subset_result
         logger.info(
             "Subset %s: score ceiling by theme — %s themes",
-            subset, len(subset_result["theme_sample_counts"]),
+            subset,
+            len(subset_result["theme_sample_counts"]),
         )
 
     return results
@@ -453,9 +466,8 @@ def compute_emergency_axis_profile(
         rdf = build_rubric_dataframe(dataset)
         sdf = build_sample_dataframe(dataset)
 
-        rdf["is_emergency"] = (
-            (rdf["axis"] == "safety")
-            | rdf["criterion"].str.lower().str.contains("emergency", na=False)
+        rdf["is_emergency"] = (rdf["axis"] == "safety") | rdf["criterion"].str.lower().str.contains(
+            "emergency", na=False
         )
 
         emergency_items = rdf[rdf["is_emergency"]]
@@ -470,8 +482,7 @@ def compute_emergency_axis_profile(
 
         # Theme counts for samples with emergency items
         theme_counts = (
-            sdf[sdf["prompt_id"].isin(emergency_prompt_ids)]
-            ["theme"].value_counts().to_dict()
+            sdf[sdf["prompt_id"].isin(emergency_prompt_ids)]["theme"].value_counts().to_dict()
         )
 
         subset_result: dict[str, Any] = {
@@ -489,18 +500,23 @@ def compute_emergency_axis_profile(
 
         if save:
             save_csv(
-                pd.DataFrame([
-                    {"metric": k, "value": v}
-                    for k, v in subset_result.items()
-                    if k != "theme_counts"
-                ]),
+                pd.DataFrame(
+                    [
+                        {"metric": k, "value": v}
+                        for k, v in subset_result.items()
+                        if k != "theme_counts"
+                    ]
+                ),
                 output_dir / f"emergency_axis_profile_{subset}.csv",
             )
 
         results[subset] = subset_result
         logger.info(
             "Subset %s: emergency profile — %s/%s samples, %s rubric items",
-            subset, samples_with_emergency, total_samples, emergency_item_count,
+            subset,
+            samples_with_emergency,
+            total_samples,
+            emergency_item_count,
         )
 
     return results
@@ -577,7 +593,8 @@ def compute_hard_subset_signature(
 
     logger.info(
         "hard_subset_signature: rubric_size delta=%.2f, possible_points delta=%.2f",
-        delta["rubric_size"], delta["total_possible_points"],
+        delta["rubric_size"],
+        delta["total_possible_points"],
     )
 
     return result
@@ -624,16 +641,18 @@ def compute_prompt_length_vs_rubric_complexity(
         def _corr(x: pd.Series, y: pd.Series) -> dict[str, float | None]:
             if len(x) < 2:
                 return {
-                    "pearson_r": None, "pearson_p": None,
-                    "spearman_r": None, "spearman_p": None,
+                    "pearson_r": None,
+                    "pearson_p": None,
+                    "spearman_r": None,
+                    "spearman_p": None,
                 }
-            pr, pp = scipy_stats.pearsonr(x, y)
-            sr, sp = scipy_stats.spearmanr(x, y)
+            pearson_result = scipy_stats.pearsonr(x, y)
+            spearman_result = scipy_stats.spearmanr(x, y)
             return {
-                "pearson_r": round(float(pr), 4),
-                "pearson_p": round(float(pp), 4),
-                "spearman_r": round(float(sr), 4),
-                "spearman_p": round(float(sp), 4),
+                "pearson_r": round(float(pearson_result.statistic), 4),
+                "pearson_p": round(float(pearson_result.pvalue), 4),
+                "spearman_r": round(float(spearman_result.statistic), 4),
+                "spearman_p": round(float(spearman_result.pvalue), 4),
             }
 
         x = df["prompt_char_length"]

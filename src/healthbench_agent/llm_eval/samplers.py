@@ -175,9 +175,7 @@ def create_sampler(config: JudgeConfig) -> SamplerBase:
         ValueError: If the configured provider is not supported.
     """
     if config.provider == "openai":
-        api_key = (
-            config.openai_api_key.get_secret_value() if config.openai_api_key else None
-        )
+        api_key = config.openai_api_key.get_secret_value() if config.openai_api_key else None
         return OpenAIChatSampler(
             model=config.model,
             temperature=config.temperature,
@@ -186,15 +184,11 @@ def create_sampler(config: JudgeConfig) -> SamplerBase:
             api_key=api_key,
         )
     if config.provider == "gemini":
-        api_key = (
-            config.google_api_key.get_secret_value() if config.google_api_key else None
-        )
+        api_key = config.google_api_key.get_secret_value() if config.google_api_key else None
         return GeminiChatSampler(
             model=config.model,
             temperature=config.temperature,
             max_retries=config.max_retries,
             api_key=api_key,
         )
-    raise ValueError(
-        f"Unknown provider: {config.provider!r}. Supported: 'openai', 'gemini'."
-    )
+    raise ValueError(f"Unknown provider: {config.provider!r}. Supported: 'openai', 'gemini'.")

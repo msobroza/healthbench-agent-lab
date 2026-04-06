@@ -333,6 +333,8 @@ healthbench-agent-lab/
 │           ├── textgrad_adapter.py #     TextGradOptimizer (text-gradient descent)
 │           └── critique_refine_adapter.py  # PromptWizard mutation + critique loop
 │
+├── 📂 .github/workflows/           # 🚦 GitHub Actions CI (ruff + mypy + pytest)
+│
 ├── 📂 agents/                      # 🤖 Agent pipeline definitions
 │   ├── baseline_pipeline.py        #   Architecture A: single agent
 │   ├── tool_pipeline.py            #   Architecture B: agent + tools

@@ -10,7 +10,7 @@ See SPEC §5.9.1.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
 from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import (
@@ -124,4 +124,4 @@ class JudgeConfig(BaseSettings):
                 ),
             },
         )
-        return yaml_config_class(**overrides)
+        return cast(JudgeConfig, yaml_config_class(**overrides))

@@ -102,15 +102,12 @@ def create_sampler(config: CritiqueRefineConfig) -> SamplerBase:
     from healthbench_agent.llm_eval.config_grader import JudgeConfig
     from healthbench_agent.llm_eval.samplers import create_sampler as _create_llm_sampler
 
-    google_key = config.google_api_key.get_secret_value() if config.google_api_key else None
-    openai_key = config.openai_api_key.get_secret_value() if config.openai_api_key else None
-
     judge_config = JudgeConfig(
         provider=config.meta_provider,
         model=config.meta_model,
         temperature=0.7,
-        google_api_key=google_key,
-        openai_api_key=openai_key,
+        google_api_key=config.google_api_key,
+        openai_api_key=config.openai_api_key,
     )
     return _create_llm_sampler(judge_config)
 

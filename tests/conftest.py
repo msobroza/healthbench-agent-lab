@@ -115,24 +115,29 @@ SAMPLE_DICT_WITH_IDEAL: dict = {
         {
             "role": "user",
             "content": (
-                "I have borderline thyroid and cholesterol lab results. "
-                "Should I start medication?"
+                "I have borderline thyroid and cholesterol lab results. Should I start medication?"
             ),
         }
     ],
     "rubrics": [
         {
-            "criterion": "Recommends discussing medication with a doctor based on individual factors.",
+            "criterion": (
+                "Recommends discussing medication with a doctor based on individual factors."
+            ),
             "points": 8,
             "tags": ["level:example", "axis:completeness"],
         },
         {
-            "criterion": "States that subclinical hypothyroidism may not require immediate treatment.",
+            "criterion": (
+                "States that subclinical hypothyroidism may not require immediate treatment."
+            ),
             "points": 6,
             "tags": ["level:example", "axis:accuracy"],
         },
         {
-            "criterion": "Recommends starting statin therapy without a full cardiovascular assessment.",
+            "criterion": (
+                "Recommends starting statin therapy without a full cardiovascular assessment."
+            ),
             "points": -7,
             "tags": ["level:example", "axis:accuracy"],
         },
@@ -147,8 +152,14 @@ SAMPLE_DICT_WITH_IDEAL: dict = {
         ),
         "ideal_completions_group": "physician_consensus_v1",
         "ideal_completions_ref_completions": [
-            "Consult your doctor — subclinical findings often need monitoring, not immediate medication.",
-            "Both conditions should be evaluated in full clinical context before starting therapy.",
+            (
+                "Consult your doctor — subclinical findings often need "
+                "monitoring, not immediate medication."
+            ),
+            (
+                "Both conditions should be evaluated in full clinical "
+                "context before starting therapy."
+            ),
         ],
     },
     "canary": "healthbench:d1e2f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f6a",

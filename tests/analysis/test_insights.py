@@ -141,7 +141,9 @@ class TestComputeThemeAxisBreakdown:
         assert any(tmp_path.glob("theme_axis_breakdown_*.csv"))
 
     def test_multiple_datasets_keyed_separately(self, main_dataset, consensus_dataset, tmp_path):
-        result = compute_theme_axis_breakdown([main_dataset, consensus_dataset], tmp_path, save=False)
+        result = compute_theme_axis_breakdown(
+            [main_dataset, consensus_dataset], tmp_path, save=False
+        )
         assert "main" in result
         assert "consensus" in result
 
@@ -225,8 +227,13 @@ class TestComputePenaltyConcentration:
     def test_result_contains_expected_keys(self, main_dataset, tmp_path):
         result = compute_penalty_concentration([main_dataset], tmp_path, save=False)
         keys = result["main"].keys()
-        for k in ("theme_total_penalty", "theme_mean_penalty", "total_penalty_points",
-                  "total_positive_points", "penalty_to_positive_ratio"):
+        for k in (
+            "theme_total_penalty",
+            "theme_mean_penalty",
+            "total_penalty_points",
+            "total_positive_points",
+            "penalty_to_positive_ratio",
+        ):
             assert k in keys
 
     def test_penalty_to_positive_ratio_none_when_no_positive_points(self, tmp_path):
@@ -318,9 +325,13 @@ class TestComputeScoreCeilingByTheme:
     def test_result_contains_expected_keys(self, main_dataset, tmp_path):
         result = compute_score_ceiling_by_theme([main_dataset], tmp_path, save=False)
         keys = result["main"].keys()
-        for k in ("theme_mean_possible_points", "theme_mean_penalty_ratio",
-                  "theme_sample_counts", "overall_mean_possible_points",
-                  "overall_mean_penalty_ratio"):
+        for k in (
+            "theme_mean_possible_points",
+            "theme_mean_penalty_ratio",
+            "theme_sample_counts",
+            "overall_mean_possible_points",
+            "overall_mean_penalty_ratio",
+        ):
             assert k in keys
 
     def test_overall_mean_possible_points_is_positive_when_samples_have_positive_rubrics(
@@ -365,16 +376,25 @@ class TestComputeEmergencyAxisProfile:
     def test_result_contains_expected_keys(self, main_dataset, tmp_path):
         result = compute_emergency_axis_profile([main_dataset], tmp_path, save=False)
         keys = result["main"].keys()
-        for k in ("emergency_rubric_item_count", "emergency_rubric_item_fraction",
-                  "samples_with_emergency_item_count", "samples_with_emergency_item_fraction",
-                  "emergency_penalty_points_total", "theme_counts"):
+        for k in (
+            "emergency_rubric_item_count",
+            "emergency_rubric_item_fraction",
+            "samples_with_emergency_item_count",
+            "samples_with_emergency_item_fraction",
+            "emergency_penalty_points_total",
+            "theme_counts",
+        ):
             assert k in keys
 
     def test_no_emergency_items_yields_zero_count(self, tmp_path):
         s = RubricItem(criterion="routine check", points=1.0, tags=["axis:completeness"])
         sample = HealthBenchSample(
-            prompt_id="p1", prompt=[{"role": "user", "content": "hi"}],
-            rubrics=[s], example_tags=[], ideal_completions_data=None, canary=None,
+            prompt_id="p1",
+            prompt=[{"role": "user", "content": "hi"}],
+            rubrics=[s],
+            example_tags=[],
+            ideal_completions_data=None,
+            canary=None,
         )
         dataset = HealthBenchDataset(subset="main", samples=[sample], source_path="/tmp/x.jsonl")
         result = compute_emergency_axis_profile([dataset], tmp_path, save=False)
@@ -384,8 +404,12 @@ class TestComputeEmergencyAxisProfile:
     def test_safety_axis_item_counted_as_emergency(self, tmp_path):
         s = RubricItem(criterion="routine check", points=-1.0, tags=["axis:safety"])
         sample = HealthBenchSample(
-            prompt_id="p1", prompt=[{"role": "user", "content": "hi"}],
-            rubrics=[s], example_tags=["theme:general"], ideal_completions_data=None, canary=None,
+            prompt_id="p1",
+            prompt=[{"role": "user", "content": "hi"}],
+            rubrics=[s],
+            example_tags=["theme:general"],
+            ideal_completions_data=None,
+            canary=None,
         )
         dataset = HealthBenchDataset(subset="main", samples=[sample], source_path="/tmp/x.jsonl")
         result = compute_emergency_axis_profile([dataset], tmp_path, save=False)
@@ -393,11 +417,16 @@ class TestComputeEmergencyAxisProfile:
         assert result["main"]["emergency_penalty_points_total"] == pytest.approx(1.0)
 
     def test_emergency_keyword_in_criterion_text_counted_as_emergency(self, tmp_path):
-        s = RubricItem(criterion="Call emergency services immediately", points=2.0,
-                       tags=["axis:accuracy"])
+        s = RubricItem(
+            criterion="Call emergency services immediately", points=2.0, tags=["axis:accuracy"]
+        )
         sample = HealthBenchSample(
-            prompt_id="p1", prompt=[{"role": "user", "content": "hi"}],
-            rubrics=[s], example_tags=["theme:general"], ideal_completions_data=None, canary=None,
+            prompt_id="p1",
+            prompt=[{"role": "user", "content": "hi"}],
+            rubrics=[s],
+            example_tags=["theme:general"],
+            ideal_completions_data=None,
+            canary=None,
         )
         dataset = HealthBenchDataset(subset="main", samples=[sample], source_path="/tmp/x.jsonl")
         result = compute_emergency_axis_profile([dataset], tmp_path, save=False)
@@ -424,15 +453,11 @@ class TestComputeEmergencyAxisProfile:
 
 
 class TestComputeHardSubsetSignature:
-    def test_returns_empty_dict_when_only_main_present(
-        self, main_dataset_for_signature, tmp_path
-    ):
+    def test_returns_empty_dict_when_only_main_present(self, main_dataset_for_signature, tmp_path):
         result = compute_hard_subset_signature([main_dataset_for_signature], tmp_path, save=False)
         assert result == {}
 
-    def test_returns_empty_dict_when_only_hard_present(
-        self, hard_dataset_for_signature, tmp_path
-    ):
+    def test_returns_empty_dict_when_only_hard_present(self, hard_dataset_for_signature, tmp_path):
         result = compute_hard_subset_signature([hard_dataset_for_signature], tmp_path, save=False)
         assert result == {}
 
@@ -445,8 +470,13 @@ class TestComputeHardSubsetSignature:
         result = compute_hard_subset_signature(
             [main_dataset_for_signature, hard_dataset_for_signature], tmp_path, save=False
         )
-        for k in ("main_stats", "hard_stats", "delta",
-                  "theme_distribution_main", "theme_distribution_hard"):
+        for k in (
+            "main_stats",
+            "hard_stats",
+            "delta",
+            "theme_distribution_main",
+            "theme_distribution_hard",
+        ):
             assert k in result
 
     def test_delta_keys_include_all_metric_names(
@@ -455,8 +485,12 @@ class TestComputeHardSubsetSignature:
         result = compute_hard_subset_signature(
             [main_dataset_for_signature, hard_dataset_for_signature], tmp_path, save=False
         )
-        for metric in ("rubric_size", "total_possible_points", "penalty_mass_ratio",
-                       "prompt_char_length"):
+        for metric in (
+            "rubric_size",
+            "total_possible_points",
+            "penalty_mass_ratio",
+            "prompt_char_length",
+        ):
             assert metric in result["delta"]
 
     def test_save_false_writes_no_files(

@@ -138,7 +138,9 @@ def test_run_one_returns_dict_keyed_by_name(isolated_registry, tmp_path, main_da
     assert "simple" in result
 
 
-def test_run_one_filters_datasets_to_declared_subsets(isolated_registry, tmp_path, main_dataset, hard_dataset):
+def test_run_one_filters_datasets_to_declared_subsets(
+    isolated_registry, tmp_path, main_dataset, hard_dataset
+):
     received: list = []
 
     @register_analysis(name="main_only", category="exploration", datasets=["main"])

@@ -59,7 +59,9 @@ class TestLoadGraderPrompt:
     """Tests for load_grader_prompt()."""
 
     def test_load_from_yaml_returns_template_version_hash(self):
-        prompt_path = Path(__file__).resolve().parents[2] / "prompts" / "llm_grader" / "v1_llm_grader.yaml"
+        prompt_path = (
+            Path(__file__).resolve().parents[2] / "prompts" / "llm_grader" / "v1_llm_grader.yaml"
+        )
         template, version, sha256 = load_grader_prompt(prompt_path)
         assert version == "1.0.0"
         assert len(sha256) == 64  # SHA-256 hex digest
@@ -68,7 +70,9 @@ class TestLoadGraderPrompt:
         assert "test item" in rendered
 
     def test_hash_is_deterministic(self):
-        prompt_path = Path(__file__).resolve().parents[2] / "prompts" / "llm_grader" / "v1_llm_grader.yaml"
+        prompt_path = (
+            Path(__file__).resolve().parents[2] / "prompts" / "llm_grader" / "v1_llm_grader.yaml"
+        )
         _, _, hash1 = load_grader_prompt(prompt_path)
         _, _, hash2 = load_grader_prompt(prompt_path)
         assert hash1 == hash2
@@ -189,9 +193,7 @@ class TestGradeSample:
     """Tests for grade_sample() with mocked samplers."""
 
     def test_single_rubric_item_met(self):
-        sampler = _make_mock_sampler(
-            ['{"explanation": "Correct", "criteria_met": true}']
-        )
+        sampler = _make_mock_sampler(['{"explanation": "Correct", "criteria_met": true}'])
         rubric_items = [RubricItem("States the diagnosis", 5.0, ["axis:accuracy"])]
         conversation: MessageList = [
             {"role": "user", "content": "What's wrong?"},
@@ -203,9 +205,7 @@ class TestGradeSample:
         assert verdicts[0].criterion == "States the diagnosis"
 
     def test_single_rubric_item_not_met(self):
-        sampler = _make_mock_sampler(
-            ['{"explanation": "Missing info", "criteria_met": false}']
-        )
+        sampler = _make_mock_sampler(['{"explanation": "Missing info", "criteria_met": false}'])
         rubric_items = [RubricItem("Mentions side effects", 3.0)]
         conversation: MessageList = [{"role": "user", "content": "Tell me about X."}]
         verdicts = grade_sample(sampler, conversation, rubric_items)
@@ -213,11 +213,13 @@ class TestGradeSample:
         assert verdicts[0].criteria_met is False
 
     def test_multiple_rubric_items(self):
-        sampler = _make_mock_sampler([
-            '{"explanation": "Good", "criteria_met": true}',
-            '{"explanation": "Bad", "criteria_met": false}',
-            '{"explanation": "OK", "criteria_met": true}',
-        ])
+        sampler = _make_mock_sampler(
+            [
+                '{"explanation": "Good", "criteria_met": true}',
+                '{"explanation": "Bad", "criteria_met": false}',
+                '{"explanation": "OK", "criteria_met": true}',
+            ]
+        )
         rubric_items = [
             RubricItem("Item A", 5.0),
             RubricItem("Item B", 3.0),
@@ -240,10 +242,12 @@ class TestGradeSample:
         assert "Failed to parse" in verdicts[0].explanation
 
     def test_sampler_called_once_per_rubric_item(self):
-        sampler = _make_mock_sampler([
-            '{"explanation": "A", "criteria_met": true}',
-            '{"explanation": "B", "criteria_met": true}',
-        ])
+        sampler = _make_mock_sampler(
+            [
+                '{"explanation": "A", "criteria_met": true}',
+                '{"explanation": "B", "criteria_met": true}',
+            ]
+        )
         rubric_items = [RubricItem("X", 1.0), RubricItem("Y", 2.0)]
         conversation: MessageList = [{"role": "user", "content": "Q"}]
         grade_sample(sampler, conversation, rubric_items)
@@ -269,9 +273,7 @@ class TestLLMJudgeGrader:
         assert isinstance(judge, JudgeGrader)
 
     def test_grade_single_item_met(self):
-        sampler = _make_mock_sampler(
-            ['{"explanation": "Good", "criteria_met": true}']
-        )
+        sampler = _make_mock_sampler(['{"explanation": "Good", "criteria_met": true}'])
         judge = LLMJudgeGrader(sampler=sampler)
         rubric_items = [RubricItem("Correct diagnosis", 5.0)]
         conversation: MessageList = [
@@ -284,10 +286,12 @@ class TestLLMJudgeGrader:
         assert verdicts[0].criterion == "Correct diagnosis"
 
     def test_grade_multiple_items(self):
-        sampler = _make_mock_sampler([
-            '{"explanation": "A", "criteria_met": true}',
-            '{"explanation": "B", "criteria_met": false}',
-        ])
+        sampler = _make_mock_sampler(
+            [
+                '{"explanation": "A", "criteria_met": true}',
+                '{"explanation": "B", "criteria_met": false}',
+            ]
+        )
         judge = LLMJudgeGrader(sampler=sampler)
         rubric_items = [
             RubricItem("Item A", 5.0),
@@ -310,10 +314,12 @@ class TestLLMJudgeGrader:
         assert "Failed to parse" in verdicts[0].explanation
 
     def test_sampler_called_once_per_rubric_item(self):
-        sampler = _make_mock_sampler([
-            '{"explanation": "A", "criteria_met": true}',
-            '{"explanation": "B", "criteria_met": true}',
-        ])
+        sampler = _make_mock_sampler(
+            [
+                '{"explanation": "A", "criteria_met": true}',
+                '{"explanation": "B", "criteria_met": true}',
+            ]
+        )
         judge = LLMJudgeGrader(sampler=sampler)
         judge.grade(
             [{"role": "user", "content": "Q"}],
@@ -349,9 +355,7 @@ class TestCreateJudge:
         config = JudgeConfig(prompt_path="prompts/llm_grader/v1_llm_grader.yaml")
         judge = create_judge(config)
         # Template should render successfully with <<>> placeholders
-        rendered = judge.template.render(
-            conversation="test convo", rubric_item="test item"
-        )
+        rendered = judge.template.render(conversation="test convo", rubric_item="test item")
         assert "test convo" in rendered
         assert "test item" in rendered
 

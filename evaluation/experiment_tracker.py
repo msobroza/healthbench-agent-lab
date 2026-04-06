@@ -104,14 +104,10 @@ def build_run_metrics(results: list[Any]) -> RunMetrics:
     stratified = stratified_scores(results)
 
     theme_scores = {
-        k.removeprefix("theme:"): v
-        for k, v in stratified.items()
-        if k.startswith("theme:")
+        k.removeprefix("theme:"): v for k, v in stratified.items() if k.startswith("theme:")
     }
     axis_scores = {
-        k.removeprefix("axis:"): v
-        for k, v in stratified.items()
-        if k.startswith("axis:")
+        k.removeprefix("axis:"): v for k, v in stratified.items() if k.startswith("axis:")
     }
     return RunMetrics(
         overall_score=overall,
@@ -164,7 +160,7 @@ def log_evaluation_run(
             metrics.overall_score,
         )
 
-    return run_id
+    return str(run_id)
 
 
 def log_comparison(
@@ -193,21 +189,25 @@ def log_comparison(
     with mlflow.start_run() as run:
         run_id = run.info.run_id
 
-        mlflow.log_params({
-            "comparison_type": "paired",
-            "run_id_a": run_id_a,
-            "run_id_b": run_id_b,
-            "timestamp": datetime.now(UTC).isoformat(),
-        })
+        mlflow.log_params(
+            {
+                "comparison_type": "paired",
+                "run_id_a": run_id_a,
+                "run_id_b": run_id_b,
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
+        )
 
-        mlflow.log_metrics({
-            "mean_difference": bootstrap_ci.get("mean_difference", 0.0),
-            "ci_lower": bootstrap_ci.get("ci_lower", 0.0),
-            "ci_upper": bootstrap_ci.get("ci_upper", 0.0),
-            "t_statistic": t_test.get("t_statistic", 0.0),
-            "p_value": t_test.get("p_value", 1.0),
-            "cohens_d": cohens_d,
-        })
+        mlflow.log_metrics(
+            {
+                "mean_difference": bootstrap_ci.get("mean_difference", 0.0),
+                "ci_lower": bootstrap_ci.get("ci_lower", 0.0),
+                "ci_upper": bootstrap_ci.get("ci_upper", 0.0),
+                "t_statistic": t_test.get("t_statistic", 0.0),
+                "p_value": t_test.get("p_value", 1.0),
+                "cohens_d": cohens_d,
+            }
+        )
 
         comparison_data = {
             "run_id_a": run_id_a,
@@ -226,7 +226,7 @@ def log_comparison(
             cohens_d,
         )
 
-    return run_id
+    return str(run_id)
 
 
 def _log_json_artifact(data: dict[str, Any], filename: str) -> None:
@@ -266,30 +266,20 @@ def _cli() -> None:
     from healthbench_agent.dataset.split_utils import stratified_sample
     from healthbench_agent.llm_eval.runner import EvalRunner
 
-    logging.basicConfig(
-        level=logging.INFO, format="%(levelname)s: %(message)s"
-    )
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
     parser = argparse.ArgumentParser(
-        description=(
-            "Run HealthBench evaluation and log results to MLflow."
-        ),
+        description=("Run HealthBench evaluation and log results to MLflow."),
     )
     parser.add_argument(
         "--agent-config",
         required=True,
-        help=(
-            "Path to agent YAML config "
-            "(e.g. config/agents/baseline_agent.yaml)."
-        ),
+        help=("Path to agent YAML config (e.g. config/agents/baseline_agent.yaml)."),
     )
     parser.add_argument(
         "--judge-config",
         default=None,
-        help=(
-            "Path to judge YAML config. "
-            "Uses JudgeConfig defaults if not provided."
-        ),
+        help=("Path to judge YAML config. Uses JudgeConfig defaults if not provided."),
     )
     parser.add_argument(
         "--sample-size",
@@ -354,9 +344,7 @@ def _cli() -> None:
     pipeline = create_pipeline(agent_config)
     runner = EvalRunner.from_config(judge_config)
     logger.info("Generating agent responses and evaluating...")
-    results = asyncio.run(
-        runner.evaluate_pipeline(pipeline, list(sampled.samples))
-    )
+    results = asyncio.run(runner.evaluate_pipeline(pipeline, list(sampled.samples)))
     logger.info("Evaluated %d samples", len(results))
 
     # Build params and metrics
@@ -376,13 +364,9 @@ def _cli() -> None:
         "seed": args.seed,
         "results": [
             {
-                "prompt_id": (
-                    r.example_level_metadata.get("prompt_id", "")
-                ),
+                "prompt_id": (r.example_level_metadata.get("prompt_id", "")),
                 "score": r.score,
-                "verdicts": (
-                    r.example_level_metadata.get("verdicts", [])
-                ),
+                "verdicts": (r.example_level_metadata.get("verdicts", [])),
             }
             for r in results
             if r.example_level_metadata

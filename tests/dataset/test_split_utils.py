@@ -34,10 +34,9 @@ def ten_sample_dataset():
 @pytest.fixture
 def themed_dataset():
     """Dataset with 6 cardiology + 4 oncology samples tagged by theme."""
-    samples = (
-        [_make_sample(f"card_{i}", tags=["theme:cardiology"]) for i in range(6)]
-        + [_make_sample(f"onco_{i}", tags=["theme:oncology"]) for i in range(4)]
-    )
+    samples = [_make_sample(f"card_{i}", tags=["theme:cardiology"]) for i in range(6)] + [
+        _make_sample(f"onco_{i}", tags=["theme:oncology"]) for i in range(4)
+    ]
     return HealthBenchDataset(subset="main", samples=samples, source_path="/tmp/main.jsonl")
 
 

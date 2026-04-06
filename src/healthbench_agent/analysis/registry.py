@@ -162,8 +162,7 @@ def run_one(
     """
     if name not in _analysis_registry:
         raise ValueError(
-            f"Analysis {name!r} is not registered. "
-            f"Available analyses: {sorted(_analysis_registry)}"
+            f"Analysis {name!r} is not registered. Available analyses: {sorted(_analysis_registry)}"
         )
 
     entry = _analysis_registry[name]

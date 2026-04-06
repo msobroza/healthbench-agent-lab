@@ -65,9 +65,7 @@ def paired_bootstrap_ci(
         ValueError: If score lists have different lengths.
     """
     if len(scores_a) != len(scores_b):
-        raise ValueError(
-            f"Score lists must have equal length: {len(scores_a)} vs {len(scores_b)}"
-        )
+        raise ValueError(f"Score lists must have equal length: {len(scores_a)} vs {len(scores_b)}")
 
     differences = np.array(scores_b) - np.array(scores_a)
     mean_diff = float(np.mean(differences))
@@ -135,15 +133,13 @@ def paired_t_test(
         ValueError: If score lists have different lengths or fewer than 2 pairs.
     """
     if len(scores_a) != len(scores_b):
-        raise ValueError(
-            f"Score lists must have equal length: {len(scores_a)} vs {len(scores_b)}"
-        )
+        raise ValueError(f"Score lists must have equal length: {len(scores_a)} vs {len(scores_b)}")
     if len(scores_a) < 2:
         raise ValueError("Need at least 2 paired observations for t-test")
 
-    t_stat, p_value = scipy_stats.ttest_rel(scores_b, scores_a)
-    t_stat = float(t_stat)
-    p_value = float(p_value)
+    ttest_result = scipy_stats.ttest_rel(scores_b, scores_a)
+    t_stat: float = float(ttest_result.statistic)
+    p_value: float = float(ttest_result.pvalue)
 
     # scipy returns NaN for zero-variance differences; treat as not significant
     if np.isnan(p_value):
@@ -179,9 +175,7 @@ def effect_size_cohens_d(
         ValueError: If score lists have different lengths.
     """
     if len(scores_a) != len(scores_b):
-        raise ValueError(
-            f"Score lists must have equal length: {len(scores_a)} vs {len(scores_b)}"
-        )
+        raise ValueError(f"Score lists must have equal length: {len(scores_a)} vs {len(scores_b)}")
 
     differences = np.array(scores_b) - np.array(scores_a)
     mean_diff = float(np.mean(differences))
@@ -217,8 +211,4 @@ def bonferroni_correction(
     if n_tests == 0:
         return []
 
-    adjusted_alpha = alpha / n_tests
-    return [
-        (min(p * n_tests, 1.0), p * n_tests < alpha)
-        for p in p_values
-    ]
+    return [(min(p * n_tests, 1.0), p * n_tests < alpha) for p in p_values]

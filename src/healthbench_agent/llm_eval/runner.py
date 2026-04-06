@@ -153,8 +153,7 @@ class EvalRunner:
         if self.config.mode == EvalMode.ASYNC:
             return self.run_async(samples, responses)
         raise NotImplementedError(  # pragma: no cover
-            "Batch mode (OpenAI Batch API) is not yet implemented. "
-            "Use mode='async' for now."
+            "Batch mode (OpenAI Batch API) is not yet implemented. Use mode='async' for now."
         )
 
     async def evaluate_pipeline(
@@ -175,9 +174,7 @@ class EvalRunner:
         Returns:
             List of SingleEvalResult in the same order as input samples.
         """
-        responses = await asyncio.gather(
-            *[pipeline.generate(sample.prompt) for sample in samples]
-        )
+        responses = await asyncio.gather(*[pipeline.generate(sample.prompt) for sample in samples])
         return self.run(samples, list(responses))
 
 

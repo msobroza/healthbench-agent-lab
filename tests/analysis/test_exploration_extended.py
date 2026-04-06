@@ -183,8 +183,14 @@ class TestComputeRubricPointsDistribution:
     def test_result_contains_expected_keys(self, main_dataset, tmp_path):
         result = compute_rubric_points_distribution([main_dataset], tmp_path, save=False)
         keys = result["main"].keys()
-        for k in ("points_value_counts", "points_stats", "fraction_positive",
-                  "fraction_negative", "fraction_zero", "total_rubric_items"):
+        for k in (
+            "points_value_counts",
+            "points_stats",
+            "fraction_positive",
+            "fraction_negative",
+            "fraction_zero",
+            "total_rubric_items",
+        ):
             assert k in keys
 
     def test_fractions_sum_to_one(self, single_sample_dataset, tmp_path):
@@ -241,13 +247,17 @@ class TestComputePositiveVsPenaltyStats:
     def test_result_contains_expected_keys(self, main_dataset, tmp_path):
         result = compute_positive_vs_penalty_stats([main_dataset], tmp_path, save=False)
         keys = result["main"].keys()
-        for k in ("total_possible_points_stats", "total_penalty_points_stats",
-                  "penalty_mass_ratio_stats", "samples_with_zero_possible_points"):
+        for k in (
+            "total_possible_points_stats",
+            "total_penalty_points_stats",
+            "penalty_mass_ratio_stats",
+            "samples_with_zero_possible_points",
+        ):
             assert k in keys
 
     def test_samples_with_zero_possible_points_correct(self, tmp_path):
-        s_pos = _make_sample("p1", rubric_points=[1.0])      # has positive
-        s_neg = _make_sample("p2", rubric_points=[-1.0])     # only penalty → zero possible
+        s_pos = _make_sample("p1", rubric_points=[1.0])  # has positive
+        s_neg = _make_sample("p2", rubric_points=[-1.0])  # only penalty → zero possible
         dataset = HealthBenchDataset(
             subset="main", samples=[s_pos, s_neg], source_path="/tmp/x.jsonl"
         )
@@ -255,8 +265,8 @@ class TestComputePositiveVsPenaltyStats:
         assert result["main"]["samples_with_zero_possible_points"] == 1
 
     def test_total_possible_points_mean_correct(self, tmp_path):
-        s1 = _make_sample("p1", rubric_points=[2.0, -1.0])   # possible = 2.0
-        s2 = _make_sample("p2", rubric_points=[4.0])          # possible = 4.0
+        s1 = _make_sample("p1", rubric_points=[2.0, -1.0])  # possible = 2.0
+        s2 = _make_sample("p2", rubric_points=[4.0])  # possible = 4.0
         dataset = HealthBenchDataset(subset="main", samples=[s1, s2], source_path="/tmp/x.jsonl")
         result = compute_positive_vs_penalty_stats([dataset], tmp_path, save=False)
         assert result["main"]["total_possible_points_stats"]["mean"] == pytest.approx(3.0)
@@ -341,8 +351,12 @@ class TestComputeExampleTagFrequency:
     def test_result_contains_expected_keys(self, main_dataset, tmp_path):
         result = compute_example_tag_frequency([main_dataset], tmp_path, save=False)
         keys = result["main"].keys()
-        for k in ("tag_value_counts", "total_unique_example_tags",
-                  "mean_example_tags_per_sample", "samples_with_zero_example_tags"):
+        for k in (
+            "tag_value_counts",
+            "total_unique_example_tags",
+            "mean_example_tags_per_sample",
+            "samples_with_zero_example_tags",
+        ):
             assert k in keys
 
     def test_samples_with_zero_example_tags_correct(self, tmp_path):
@@ -371,7 +385,7 @@ class TestComputeExampleTagFrequency:
 
     def test_mean_example_tags_per_sample_correct(self, tmp_path):
         s1 = _make_sample("p1", example_tags=["t1", "t2"])  # 2 tags
-        s2 = _make_sample("p2", example_tags=["t3"])         # 1 tag
+        s2 = _make_sample("p2", example_tags=["t3"])  # 1 tag
         dataset = HealthBenchDataset(subset="main", samples=[s1, s2], source_path="/tmp/x.jsonl")
         result = compute_example_tag_frequency([dataset], tmp_path, save=False)
         assert result["main"]["mean_example_tags_per_sample"] == pytest.approx(1.5)
@@ -405,8 +419,12 @@ class TestComputeTagPrefixDistribution:
     def test_result_contains_expected_keys(self, main_dataset, tmp_path):
         result = compute_tag_prefix_distribution([main_dataset], tmp_path, save=False)
         keys = result["main"].keys()
-        for k in ("example_tag_prefix_distribution", "rubric_tag_prefix_distribution",
-                  "example_tag_unique_prefixes", "rubric_tag_unique_prefixes"):
+        for k in (
+            "example_tag_prefix_distribution",
+            "rubric_tag_prefix_distribution",
+            "example_tag_unique_prefixes",
+            "rubric_tag_unique_prefixes",
+        ):
             assert k in keys
 
     def test_theme_prefix_found_when_tags_have_theme_prefix(self, tmp_path):
@@ -452,13 +470,22 @@ class TestComputeDataQuality:
     def test_result_contains_expected_keys(self, main_dataset, tmp_path):
         result = compute_data_quality([main_dataset], tmp_path, save=False)
         keys = result["main"].keys()
-        for k in ("total_samples", "total_rubric_items",
-                  "empty_rubrics_count", "empty_rubrics_fraction",
-                  "zero_points_rubric_items_count", "zero_points_rubric_items_fraction",
-                  "duplicate_prompt_id_count", "duplicate_prompt_id_fraction",
-                  "zero_possible_points_samples_count", "zero_possible_points_samples_fraction",
-                  "empty_rubric_tags_count", "empty_rubric_tags_fraction",
-                  "empty_example_tags_count", "empty_example_tags_fraction"):
+        for k in (
+            "total_samples",
+            "total_rubric_items",
+            "empty_rubrics_count",
+            "empty_rubrics_fraction",
+            "zero_points_rubric_items_count",
+            "zero_points_rubric_items_fraction",
+            "duplicate_prompt_id_count",
+            "duplicate_prompt_id_fraction",
+            "zero_possible_points_samples_count",
+            "zero_possible_points_samples_fraction",
+            "empty_rubric_tags_count",
+            "empty_rubric_tags_fraction",
+            "empty_example_tags_count",
+            "empty_example_tags_fraction",
+        ):
             assert k in keys
 
     def test_total_samples_matches_dataset_length(self, main_dataset, tmp_path):
@@ -536,8 +563,14 @@ class TestComputeSubsetOverlap:
         self, hard_dataset, consensus_dataset, tmp_path
     ):
         result = compute_subset_overlap([hard_dataset, consensus_dataset], tmp_path, save=False)
-        for k in ("hard_only_count", "consensus_only_count", "intersection_count",
-                  "hard_total", "consensus_total", "jaccard_similarity"):
+        for k in (
+            "hard_only_count",
+            "consensus_only_count",
+            "intersection_count",
+            "hard_total",
+            "consensus_total",
+            "jaccard_similarity",
+        ):
             assert k in result
 
     def test_save_false_writes_no_files(self, hard_dataset, consensus_dataset, tmp_path):

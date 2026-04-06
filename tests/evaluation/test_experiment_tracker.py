@@ -158,37 +158,27 @@ class TestLogEvaluationRun:
         assert isinstance(run_id, str)
         assert len(run_id) == 32  # MLflow run IDs are 32 hex chars
 
-    def test_params_logged_to_mlflow(
-        self, tmp_mlflow, sample_params, sample_metrics
-    ):
+    def test_params_logged_to_mlflow(self, tmp_mlflow, sample_params, sample_metrics):
         run_id = log_evaluation_run(sample_params, sample_metrics)
         run = mlflow.get_run(run_id)
         assert run.data.params["agent_name"] == "baseline_agent"
         assert run.data.params["model"] == "gemini-2.5-flash"
 
-    def test_metrics_logged_to_mlflow(
-        self, tmp_mlflow, sample_params, sample_metrics
-    ):
+    def test_metrics_logged_to_mlflow(self, tmp_mlflow, sample_params, sample_metrics):
         run_id = log_evaluation_run(sample_params, sample_metrics)
         run = mlflow.get_run(run_id)
         assert run.data.metrics["overall_score"] == pytest.approx(0.65)
         assert run.data.metrics["theme/safety/mean"] == pytest.approx(0.80)
 
-    def test_results_json_artifact_logged(
-        self, tmp_mlflow, sample_params, sample_metrics
-    ):
+    def test_results_json_artifact_logged(self, tmp_mlflow, sample_params, sample_metrics):
         results = {"sample_0": {"score": 0.8}, "sample_1": {"score": 0.5}}
-        run_id = log_evaluation_run(
-            sample_params, sample_metrics, results_json=results
-        )
+        run_id = log_evaluation_run(sample_params, sample_metrics, results_json=results)
         client = mlflow.tracking.MlflowClient()
         artifacts = client.list_artifacts(run_id)
         artifact_names = [a.path for a in artifacts]
         assert "results.json" in artifact_names
 
-    def test_prompt_yaml_artifact_logged(
-        self, tmp_mlflow, tmp_path, sample_params, sample_metrics
-    ):
+    def test_prompt_yaml_artifact_logged(self, tmp_mlflow, tmp_path, sample_params, sample_metrics):
         prompt_path = tmp_path / "v1_llm_grader.yaml"
         prompt_path.write_text("version: '1.0.0'\ntemplate: 'test'")
         run_id = log_evaluation_run(
@@ -201,17 +191,13 @@ class TestLogEvaluationRun:
         artifact_names = [a.path for a in artifacts]
         assert "v1_llm_grader.yaml" in artifact_names
 
-    def test_no_artifacts_when_none_provided(
-        self, tmp_mlflow, sample_params, sample_metrics
-    ):
+    def test_no_artifacts_when_none_provided(self, tmp_mlflow, sample_params, sample_metrics):
         run_id = log_evaluation_run(sample_params, sample_metrics)
         client = mlflow.tracking.MlflowClient()
         artifacts = client.list_artifacts(run_id)
         assert len(artifacts) == 0
 
-    def test_nonexistent_prompt_path_skipped(
-        self, tmp_mlflow, sample_params, sample_metrics
-    ):
+    def test_nonexistent_prompt_path_skipped(self, tmp_mlflow, sample_params, sample_metrics):
         run_id = log_evaluation_run(
             sample_params,
             sample_metrics,
@@ -221,9 +207,7 @@ class TestLogEvaluationRun:
         artifacts = client.list_artifacts(run_id)
         assert len(artifacts) == 0
 
-    def test_custom_experiment_name(
-        self, tmp_mlflow, sample_params, sample_metrics
-    ):
+    def test_custom_experiment_name(self, tmp_mlflow, sample_params, sample_metrics):
         run_id = log_evaluation_run(
             sample_params,
             sample_metrics,
@@ -324,9 +308,7 @@ class TestBuildRunParams:
         assert params.grader_model == "gemini-2.5-flash"
 
     def test_extracts_agent_fields_from_agent_config(self):
-        agent = self._agent(
-            name="tool_agent", model="gemini-2.5-pro", prompt_version="2.0.0"
-        )
+        agent = self._agent(name="tool_agent", model="gemini-2.5-pro", prompt_version="2.0.0")
         params = build_run_params(JudgeConfig(), agent, sample_size=100)
         assert params.agent_name == "tool_agent"
         assert params.model == "gemini-2.5-pro"
@@ -349,29 +331,21 @@ class TestBuildRunParams:
         assert len(params.grader_prompt_sha256) == 64
 
     def test_returns_run_params_instance(self):
-        params = build_run_params(
-            JudgeConfig(), self._agent(name="multi_agent"), sample_size=200
-        )
+        params = build_run_params(JudgeConfig(), self._agent(name="multi_agent"), sample_size=200)
         assert isinstance(params, RunParams)
         assert params.agent_name == "multi_agent"
         assert params.sample_size == 200
 
     def test_seed_stored_in_params(self):
-        params = build_run_params(
-            JudgeConfig(), self._agent(), sample_size=50, seed=42
-        )
+        params = build_run_params(JudgeConfig(), self._agent(), sample_size=50, seed=42)
         assert params.seed == 42
 
     def test_seed_defaults_to_zero(self):
-        params = build_run_params(
-            JudgeConfig(), self._agent(), sample_size=50
-        )
+        params = build_run_params(JudgeConfig(), self._agent(), sample_size=50)
         assert params.seed == 0
 
     def test_seed_in_to_dict(self):
-        params = build_run_params(
-            JudgeConfig(), self._agent(), sample_size=50, seed=123
-        )
+        params = build_run_params(JudgeConfig(), self._agent(), sample_size=50, seed=123)
         assert params.to_dict()["seed"] == 123
 
 
@@ -452,9 +426,7 @@ class TestRootAgentPipelineConfig:
         assert config.prompt_version == "1.0.0"
 
     def test_from_yaml_loads_agent_config(self):
-        config = RootAgentPipelineConfig.from_yaml(
-            "config/agents/tool_agent.yaml"
-        )
+        config = RootAgentPipelineConfig.from_yaml("config/agents/tool_agent.yaml")
         assert config.name == "tool_agent"
         assert config.prompt_version == "2.0.0"
 
@@ -466,8 +438,16 @@ class TestRootAgentPipelineConfig:
         assert config.model == "gemini-2.5-pro"
         assert config.name == "baseline_agent"
 
-    def test_api_keys_default_to_none(self):
-        config = RootAgentPipelineConfig()
+    def test_api_keys_default_to_none(self, monkeypatch):
+        # Scrub env vars so the test is hermetic regardless of local .env
+        for var in (
+            "OPENAI_API_KEY",
+            "GOOGLE_API_KEY",
+            "AGENT_OPENAI_API_KEY",
+            "AGENT_GOOGLE_API_KEY",
+        ):
+            monkeypatch.delenv(var, raising=False)
+        config = RootAgentPipelineConfig(_env_file=None)
         assert config.google_api_key is None
         assert config.openai_api_key is None
 
@@ -482,8 +462,5 @@ class TestRootAgentPipelineConfig:
         assert config.description == "Health assistant agent."
 
     def test_description_from_yaml(self):
-        config = RootAgentPipelineConfig.from_yaml(
-            "config/agents/baseline_agent.yaml"
-        )
+        config = RootAgentPipelineConfig.from_yaml("config/agents/baseline_agent.yaml")
         assert config.description == "Baseline health assistant with no tools or sub-agents."
-

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 
@@ -98,12 +98,7 @@ def compute_sample_counts(
         with_ideal_count = int(dataframe["has_ideal_completions"].sum())
         without_ideal_count = total - with_ideal_count
 
-        group_distribution = (
-            dataframe["ideal_completions_group"]
-            .dropna()
-            .value_counts()
-            .to_dict()
-        )
+        group_distribution = dataframe["ideal_completions_group"].dropna().value_counts().to_dict()
 
         subset_result: dict[str, Any] = {
             "total_samples": total,
@@ -192,15 +187,11 @@ def compute_prompt_structure(
                 (t for t in reversed(sample.prompt) if t.get("role") == "user"),
                 None,
             )
-            last_user_lengths.append(
-                len(str(last_user.get("content", ""))) if last_user else 0
-            )
+            last_user_lengths.append(len(str(last_user.get("content", ""))) if last_user else 0)
         df["last_user_turn_char_length"] = last_user_lengths
 
         subset_result: dict[str, Any] = {
-            "num_turns_stats": series_stats(
-                df["num_turns"], percentiles=DEFAULT_PERCENTILES
-            ),
+            "num_turns_stats": series_stats(df["num_turns"], percentiles=DEFAULT_PERCENTILES),
             "total_char_length_stats": series_stats(
                 df["prompt_char_length"], percentiles=DEFAULT_PERCENTILES
             ),
@@ -280,7 +271,7 @@ def compute_rubric_size(
                 percentiles=DEFAULT_PERCENTILES,
             ),
             "rubric_size_value_counts": {
-                int(k): int(v)
+                int(cast(int, k)): int(v)
                 for k, v in rubric_sizes.value_counts().sort_index().items()
             },
         }
@@ -362,7 +353,7 @@ def compute_rubric_points_distribution(
 
         subset_result: dict[str, Any] = {
             "points_value_counts": {
-                float(k): int(v)
+                float(cast(float, k)): int(v)
                 for k, v in all_points.value_counts().sort_index().items()
             },
             "points_stats": series_stats(
@@ -446,17 +437,18 @@ def compute_positive_vs_penalty_stats(
 
         subset_result: dict[str, Any] = {
             "total_possible_points_stats": series_stats(
-                df["total_possible_points"], percentiles=DEFAULT_PERCENTILES,
+                df["total_possible_points"],
+                percentiles=DEFAULT_PERCENTILES,
             ),
             "total_penalty_points_stats": series_stats(
-                df["total_penalty_points"], percentiles=DEFAULT_PERCENTILES,
+                df["total_penalty_points"],
+                percentiles=DEFAULT_PERCENTILES,
             ),
             "penalty_mass_ratio_stats": series_stats(
-                df["penalty_mass_ratio"].dropna(), percentiles=DEFAULT_PERCENTILES,
+                df["penalty_mass_ratio"].dropna(),
+                percentiles=DEFAULT_PERCENTILES,
             ),
-            "samples_with_zero_possible_points": int(
-                (df["total_possible_points"] == 0).sum()
-            ),
+            "samples_with_zero_possible_points": int((df["total_possible_points"] == 0).sum()),
         }
 
         if save:
@@ -529,13 +521,16 @@ def compute_score_range_stats(
 
         subset_result: dict[str, Any] = {
             "max_possible_score_stats": series_stats(
-                df["total_possible_points"], percentiles=DEFAULT_PERCENTILES,
+                df["total_possible_points"],
+                percentiles=DEFAULT_PERCENTILES,
             ),
             "min_possible_score_stats": series_stats(
-                df["min_possible_score"], percentiles=DEFAULT_PERCENTILES,
+                df["min_possible_score"],
+                percentiles=DEFAULT_PERCENTILES,
             ),
             "score_range_width_stats": series_stats(
-                df["score_range_width"], percentiles=DEFAULT_PERCENTILES,
+                df["score_range_width"],
+                percentiles=DEFAULT_PERCENTILES,
             ),
         }
 
@@ -811,7 +806,6 @@ def compute_example_tag_frequency(
 # ---------------------------------------------------------------------------
 
 
-
 @register_analysis(
     name="tag_prefix_distribution",
     category="exploration",
@@ -983,9 +977,7 @@ def compute_data_quality(
         }
 
         if save:
-            quality_df = pd.DataFrame(
-                [{"metric": k, "value": v} for k, v in subset_result.items()]
-            )
+            quality_df = pd.DataFrame([{"metric": k, "value": v} for k, v in subset_result.items()])
             save_csv(
                 quality_df,
                 output_dir / f"compute_data_quality_{subset}.csv",
@@ -1040,16 +1032,13 @@ def compute_subset_overlap(
 
     if "hard" not in dataset_by_subset or "consensus" not in dataset_by_subset:
         logger.info(
-            "subset_overlap requires both 'hard' and 'consensus' datasets; "
-            "found only: %s",
+            "subset_overlap requires both 'hard' and 'consensus' datasets; found only: %s",
             list(dataset_by_subset.keys()),
         )
         return {}
 
     hard_ids = {sample.prompt_id for sample in dataset_by_subset["hard"].samples}
-    consensus_ids = {
-        sample.prompt_id for sample in dataset_by_subset["consensus"].samples
-    }
+    consensus_ids = {sample.prompt_id for sample in dataset_by_subset["consensus"].samples}
 
     hard_only = hard_ids - consensus_ids
     consensus_only = consensus_ids - hard_ids
@@ -1068,9 +1057,7 @@ def compute_subset_overlap(
     }
 
     if save:
-        summary_df = pd.DataFrame(
-            [{"metric": k, "value": v} for k, v in result.items()]
-        )
+        summary_df = pd.DataFrame([{"metric": k, "value": v} for k, v in result.items()])
         save_csv(
             summary_df,
             output_dir / "compute_subset_overlap_hard_consensus.csv",

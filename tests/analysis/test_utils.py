@@ -70,8 +70,8 @@ def test_series_stats_default_percentiles_keys_present(uniform_series):
     result = series_stats(uniform_series)
     for p in DEFAULT_PERCENTILES:
         label = f"{int(p * 100)}%" if p * 100 == int(p * 100) else f"{p * 100}%"
-        # pandas labels e.g. "5%", "25%", "50%", "75%", "95%"
-    # Just verify the count matches: std + count + mean + min + max + 5 percentiles = 9
+        assert label in result
+    # std + count + mean + min + max + 5 percentiles = 9
     assert len(result) >= 7
 
 

@@ -198,8 +198,16 @@ class TestJudgeConfig:
         # SecretStr serializes as '**********', not the actual value
         assert dump.get("openai_api_key") != "sk-secret"
 
-    def test_no_api_keys_by_default(self):
-        config = JudgeConfig()
+    def test_no_api_keys_by_default(self, monkeypatch):
+        # Scrub env vars so the test is hermetic regardless of local .env
+        for var in (
+            "OPENAI_API_KEY",
+            "GOOGLE_API_KEY",
+            "JUDGE_OPENAI_API_KEY",
+            "JUDGE_GOOGLE_API_KEY",
+        ):
+            monkeypatch.delenv(var, raising=False)
+        config = JudgeConfig(_env_file=None)
         assert config.openai_api_key is None
         assert config.google_api_key is None
 

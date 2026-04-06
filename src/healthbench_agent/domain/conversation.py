@@ -17,7 +17,7 @@ from .rubric import RubricItem
 # Primitive message types (mirrors simple-evals Message / MessageList)
 # ---------------------------------------------------------------------------
 
-Message = dict[str, Any]     # keys: "role" (str), "content" (str | list)
+Message = dict[str, Any]  # keys: "role" (str), "content" (str | list)
 MessageList = list[Message]  # ordered turns forming a conversation
 
 

@@ -71,7 +71,7 @@ def tag_value(tags: list[str], prefix: str) -> str | None:
     target = prefix + ":"
     for tag in tags:
         if tag.startswith(target):
-            return tag[len(target):]
+            return tag[len(target) :]
     return None
 
 
@@ -157,9 +157,15 @@ def build_sample_dataframe(dataset: HealthBenchDataset) -> pd.DataFrame:
         expected columns when the dataset has no samples.
     """
     columns = [
-        "prompt_id", "theme", "rubric_size", "total_possible_points",
-        "total_penalty_points", "penalty_mass_ratio", "prompt_char_length",
-        "num_turns", "num_user_turns",
+        "prompt_id",
+        "theme",
+        "rubric_size",
+        "total_possible_points",
+        "total_penalty_points",
+        "penalty_mass_ratio",
+        "prompt_char_length",
+        "num_turns",
+        "num_user_turns",
     ]
     if not dataset.samples:
         return pd.DataFrame(columns=columns)
@@ -168,17 +174,19 @@ def build_sample_dataframe(dataset: HealthBenchDataset) -> pd.DataFrame:
     for s in dataset.samples:
         pos = total_positive_points(s)
         pen = total_penalty_points(s)
-        rows.append({
-            "prompt_id": s.prompt_id,
-            "theme": tag_value(s.example_tags, "theme") or "_unknown",
-            "rubric_size": len(s.rubrics),
-            "total_possible_points": pos,
-            "total_penalty_points": pen,
-            "penalty_mass_ratio": pen / pos if pos > 0 else None,
-            "prompt_char_length": total_prompt_chars(s),
-            "num_turns": len(s.prompt),
-            "num_user_turns": sum(1 for t in s.prompt if t.get("role") == "user"),
-        })
+        rows.append(
+            {
+                "prompt_id": s.prompt_id,
+                "theme": tag_value(s.example_tags, "theme") or "_unknown",
+                "rubric_size": len(s.rubrics),
+                "total_possible_points": pos,
+                "total_penalty_points": pen,
+                "penalty_mass_ratio": pen / pos if pos > 0 else None,
+                "prompt_char_length": total_prompt_chars(s),
+                "num_turns": len(s.prompt),
+                "num_user_turns": sum(1 for t in s.prompt if t.get("role") == "user"),
+            }
+        )
     return pd.DataFrame(rows)
 
 
