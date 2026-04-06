@@ -6,8 +6,12 @@ fields. All share a common base with env var override (prefix ``OPTIM_``).
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_SECRET_FIELDS: frozenset[str] = frozenset({"google_api_key", "openai_api_key"})
 
 
 class BaseOptimizationConfig(BaseSettings):
@@ -47,6 +51,15 @@ class BaseOptimizationConfig(BaseSettings):
         default=None,
         validation_alias=AliasChoices("OPTIM_OPENAI_API_KEY", "OPENAI_API_KEY"),
     )
+
+    def dump_safe(self) -> dict[str, Any]:
+        """Serialize config for results, excluding secret fields.
+
+        Returns:
+            ``model_dump()`` output with API keys removed so the result
+            is safe to log, persist, or include in trial artefacts.
+        """
+        return self.model_dump(exclude=set(_SECRET_FIELDS))
 
 
 class DSPyConfig(BaseOptimizationConfig):

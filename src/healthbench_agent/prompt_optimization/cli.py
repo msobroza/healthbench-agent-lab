@@ -80,11 +80,9 @@ def main() -> None:
     from healthbench_agent.agent import RootAgentPipelineConfig
     from healthbench_agent.agent.prompt import load_instruction
     from healthbench_agent.prompt_optimization import (
-        CritiqueRefineConfig,
-        DSPyConfig,
         EndToEndMetric,
-        TextGradConfig,
         create_prompt_optimizer,
+        get_optimizer_config_class,
     )
 
     # Load agent config and extract current prompt
@@ -93,14 +91,10 @@ def main() -> None:
     logger.info("Agent: %s, model: %s", agent_config.name, agent_config.model)
     logger.info("Current prompt length: %d chars", len(current_prompt))
 
-    # Build optimizer config
-    config_map: dict = {
-        "dspy": DSPyConfig,
-        "textgrad": TextGradConfig,
-        "critique_refine": CritiqueRefineConfig,
-    }
-    config_class = config_map[args.optimizer]
+    # Build optimizer config — registry is the single source of truth.
+    config_class = get_optimizer_config_class(args.optimizer)
     optim_config = config_class(
+        optimizer=args.optimizer,
         max_trials=args.max_trials,
         sample_size=args.sample_size,
         seed=args.seed,
