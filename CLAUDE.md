@@ -83,6 +83,27 @@ uv run track-experiment --agent-config config/agents/baseline_agent.yaml --sampl
 uv run track-experiment --agent-config config/agents/tool_agent.yaml --subset hard --seed 42
 ```
 
+### Prompt Optimization
+```bash
+# Critique-refine (no external dep, ships with default templates)
+uv run optimize-prompt --optimizer critique_refine \
+    --agent-config config/agents/baseline_agent.yaml \
+    --sample-size 20 --max-trials 10
+
+# DSPy COPRO/MIPROv2 (requires `uv sync --extra optimization`)
+uv run optimize-prompt --optimizer dspy --dspy-optimizer copro \
+    --agent-config config/agents/baseline_agent.yaml --sample-size 20
+
+# TextGrad (requires `uv sync --extra optimization`)
+uv run optimize-prompt --optimizer textgrad \
+    --agent-config config/agents/baseline_agent.yaml --sample-size 20 --steps 5
+
+# Override critique-refine templates with a custom YAML
+uv run optimize-prompt --optimizer critique_refine \
+    --agent-config config/agents/baseline_agent.yaml \
+    --prompt-path prompts/prompt_optimization/v1_critique_refine.yaml
+```
+
 ### Code Quality
 ```bash
 uv run ruff check .         # Lint
@@ -121,6 +142,14 @@ Three agent architectures are built and compared against HealthBench:
 - `rubrics_based_criterion` — Scores each HealthBench rubric as met/not-met
 - `tool_trajectory_avg_score` — Verifies tool calls in correct order
 - `final_response_match_v2` — Semantic equivalence with reference responses
+
+### Prompt Optimization (`src/healthbench_agent/prompt_optimization/`)
+The module provides three optimizer backends behind a common `PromptOptimizer` ABC and a registry-based factory:
+- **Critique-refine** — PromptWizard-style mutation + critique loop. **No external dependency**, uses the meta-LLM via the existing `SamplerBase`. Templates and thinking-styles are loaded from `prompts/prompt_optimization/v1_critique_refine.yaml` so the Python is **fully domain-agnostic** — any vertical-specific phrasing belongs in YAML, never inside the adapter.
+- **DSPy** — wraps COPRO/MIPROv2 teleprompters. The shared `_TrialBudget` helper caches scores per instruction (DSPy calls the metric per-example with one candidate at a time), enforces `max_trials` via `_BudgetExceededError`, and tracks the best prompt across compilation.
+- **TextGrad** — wraps text-gradient descent. Also uses `_TrialBudget` for trial bookkeeping; loop is pre-capped at `min(steps, max_trials)`.
+
+DSPy and TextGrad are optional dependencies (install with `uv sync --extra optimization`); the lazy import is guarded by `require_optional()` so the rest of the package works without them. Any optimizer scores candidate prompts via `EndToEndMetric`, which runs the configured agent pipeline + LLM judge end-to-end through `instruction_override`. To specialise the critique-refine optimizer for a non-health vertical, copy the YAML, edit the templates and thinking-styles, then point `CritiqueRefineConfig.prompt_path` (or `--prompt-path` on the CLI) at it.
 
 ## Coding Standards
 
@@ -463,7 +492,7 @@ See `AGENT_DECISIONS.md` for exhaustive pros/cons and design rationale for each 
 
 ## Key Conventions
 
-**Prompt Versioning** — All system prompts live in `prompts/` as YAML with documented rationale. Always link prompt version to MLflow runs.
+**Prompt Versioning** — All system prompts live in `prompts/` as YAML with documented rationale. Always link prompt version to MLflow runs. This applies to **every** subsystem that consumes a prompt: agent instructions (`baseline_agent/`, `tool_agent/`, `multi_agent/`), the LLM judge (`llm_grader/`), and the prompt optimizer (`prompt_optimization/`). Python modules must never embed vertical-specific (medical, legal, financial, etc.) phrasing — keep them domain-agnostic and load any specialised text from a YAML file under `prompts/`.
 
 **Paired Evaluation** — Always run the same sampled conversations across all agents being compared to reduce variance.
 

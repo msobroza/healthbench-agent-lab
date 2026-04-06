@@ -27,11 +27,13 @@ Three agent architectures are built and rigorously compared:
 - 🧪 **Three competing agent architectures** — baseline → tool-augmented → multi-agent pipeline
 - 📊 **28 registered analyses** — exploration, cross-cutting insights, and visualizations
 - ⚖️ **LLM-as-judge evaluation** — provider-agnostic rubric grading (OpenAI / Gemini)
+- 🪄 **Automatic prompt optimization** — pluggable backends (DSPy COPRO/MIPROv2, TextGrad, critique-refine) behind a single CLI
 - 📈 **Statistical rigor** — bootstrap CI, paired t-tests, Cohen's d, Bonferroni correction
 - 🔬 **Experiment tracking** — MLflow logging with prompt fingerprints (SHA-256)
 - 📝 **Versioned prompts** — Git-tracked YAML with Jinja2 templating and metadata
 - ⚙️ **Config-driven pipelines** — YAML configs define agent trees with orchestration modes
 - 🧩 **Clean architecture** — pure domain layer, dependency inversion, SOLID principles
+- 🌐 **Domain-agnostic optimization core** — vertical-specific text lives in YAML, never in Python
 
 ---
 
@@ -103,6 +105,33 @@ uv run track-experiment \
     --agent-config config/agents/tool_agent.yaml \
     --subset hard --seed 42
 ```
+
+### 🪄 Optimize a Prompt
+
+```bash
+# Critique-refine — no extra deps, ships with a domain-agnostic default template
+uv run optimize-prompt \
+    --optimizer critique_refine \
+    --agent-config config/agents/baseline_agent.yaml \
+    --sample-size 20 --max-trials 10
+
+# DSPy COPRO/MIPROv2 — requires the optional `optimization` extra
+uv sync --extra optimization
+uv run optimize-prompt \
+    --optimizer dspy --dspy-optimizer copro \
+    --agent-config config/agents/baseline_agent.yaml --sample-size 20
+
+# TextGrad — also under the `optimization` extra
+uv run optimize-prompt \
+    --optimizer textgrad \
+    --agent-config config/agents/baseline_agent.yaml \
+    --sample-size 20 --steps 5
+```
+
+> ✨ The critique-refine optimizer is **domain-agnostic** — its mutate / critique / refine
+> templates and thinking-styles all live in `prompts/prompt_optimization/v1_critique_refine.yaml`.
+> Specialise it for any vertical by copying the YAML, editing the templates, and pointing
+> `--prompt-path` at your file.
 
 ### 📓 Explore the Dataset
 
@@ -288,11 +317,21 @@ healthbench-agent-lab/
 │   │   ├── exploration.py          #   12 descriptive stats
 │   │   ├── insights.py             #   8 cross-cutting insights
 │   │   └── visualization.py        #   8 matplotlib visualizations
-│   └── llm_eval/                   # ⚖️ LLM-as-judge evaluation
-│       ├── config_grader.py        #   JudgeConfig, EvalMode
-│       ├── grader.py               #   LLMJudgeGrader, GRADER_TEMPLATE
-│       ├── samplers.py             #   OpenAIChatSampler, GeminiChatSampler
-│       └── runner.py               #   EvalRunner (async/batch)
+│   ├── llm_eval/                   # ⚖️ LLM-as-judge evaluation
+│   │   ├── config_grader.py        #   JudgeConfig, EvalMode
+│   │   ├── grader.py               #   LLMJudgeGrader, GRADER_TEMPLATE
+│   │   ├── samplers.py             #   OpenAIChatSampler, GeminiChatSampler
+│   │   └── runner.py               #   EvalRunner (async/batch)
+│   └── prompt_optimization/        # 🪄 Automatic prompt optimization (domain-agnostic)
+│       ├── optimizer.py            #   PromptOptimizer ABC, _TrialBudget, require_optional
+│       ├── config.py               #   BaseOptimizationConfig, DSPy/TextGrad/CritiqueRefine
+│       ├── metric.py               #   EndToEndMetric (agent + judge end-to-end)
+│       ├── optimizer_registry.py   #   @register_prompt_optimizer, factory
+│       ├── cli.py                  #   `optimize-prompt` entry point
+│       └── adapters/               #   Per-backend adapters (lazy-imported)
+│           ├── dspy_adapter.py     #     DSPyOptimizer (COPRO / MIPROv2)
+│           ├── textgrad_adapter.py #     TextGradOptimizer (text-gradient descent)
+│           └── critique_refine_adapter.py  # PromptWizard mutation + critique loop
 │
 ├── 📂 agents/                      # 🤖 Agent pipeline definitions
 │   ├── baseline_pipeline.py        #   Architecture A: single agent
@@ -311,7 +350,8 @@ healthbench-agent-lab/
 │   ├── baseline_agent/             #   v1_baseline.yaml
 │   ├── tool_agent/                 #   v1_clinical.yaml
 │   ├── multi_agent/                #   v1_structured.yaml
-│   └── llm_grader/                 #   v1_llm_grader.yaml
+│   ├── llm_grader/                 #   v1_llm_grader.yaml
+│   └── prompt_optimization/        #   v1_critique_refine.yaml (domain-agnostic)
 │
 ├── 📂 config/agents/               # ⚙️ Agent YAML configs
 │   ├── baseline_agent.yaml
@@ -338,7 +378,8 @@ healthbench-agent-lab/
     ├── dataset/                    #   I/O layer tests
     ├── analysis/                   #   Analysis tests
     ├── evaluation/                 #   Evaluation tests
-    └── llm_eval/                   #   Grader & sampler tests
+    ├── llm_eval/                   #   Grader & sampler tests
+    └── prompt_optimization/        #   Optimizer adapters & metric tests
 ```
 
 ---
