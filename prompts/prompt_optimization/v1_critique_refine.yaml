@@ -1,0 +1,68 @@
+version: "1.0.0"
+created: "2026-04-06"
+optimizer: "critique_refine"
+rationale: >
+  Domain-agnostic templates and thinking styles for the critique-refine
+  prompt optimizer (PromptWizard-style mutation + critique loop).
+  These templates make no assumption about the downstream task: they
+  ask the meta-LLM to improve a generic "system prompt" without
+  encoding any health, legal, customer-service or other vertical-specific
+  language. To specialise the optimizer for a particular domain, copy
+  this file, edit the templates and thinking styles to reference that
+  domain, and pass the new path via ``CritiqueRefineConfig.prompt_path``.
+
+  Templates use Jinja2 ``{{ variable }}`` syntax. Required variables:
+    - mutate_template:   ``{{ thinking_style }}``, ``{{ prompt }}``
+    - critique_template: ``{{ prompt }}``
+    - refine_template:   ``{{ prompt }}``, ``{{ critique }}``
+
+mutate_template: |
+  You are an expert prompt engineer.
+
+  Thinking approach: {{ thinking_style }}
+
+  Rewrite and improve the following system prompt. Keep the core
+  intent but make it more effective.
+
+  Current prompt:
+  {{ prompt }}
+
+  Respond with ONLY the improved prompt text, nothing else.
+
+critique_template: |
+  You are an expert prompt engineer evaluating a system prompt.
+
+  Critically analyze the following system prompt. Identify specific
+  weaknesses, missing elements, and areas where it could be more
+  effective.
+
+  Prompt to critique:
+  {{ prompt }}
+
+  Provide a detailed critique with specific, actionable suggestions.
+
+refine_template: |
+  You are an expert prompt engineer.
+
+  Refine the following system prompt based on the critique below.
+  Address each weakness while preserving the prompt's strengths.
+
+  Current prompt:
+  {{ prompt }}
+
+  Critique:
+  {{ critique }}
+
+  Respond with ONLY the refined prompt text, nothing else.
+
+thinking_styles:
+  - "Think step-by-step about what makes a system prompt effective for its task."
+  - "Consider the perspective of an end user encountering this prompt's outputs."
+  - "Focus on clarity, specificity, and unambiguous instructions."
+  - "Emphasize the desired output format, structure, and constraints."
+  - "Think about edge cases and how the prompt should handle them."
+  - "Consider how the prompt should handle uncertainty and out-of-scope requests."
+  - "Focus on tone, voice, and audience appropriateness."
+  - "Think about multi-turn interactions and preserving context across exchanges."
+  - "Consider robustness against adversarial, ambiguous, or malformed input."
+  - "Focus on actionable, concrete language over vague guidance."

@@ -41,22 +41,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
     - `grader.py` — `LLMJudgeGrader` (→ `JudgeGrader`), `create_judge()` factory, `GRADER_TEMPLATE`, `grade_sample()`, `format_conversation()`, `parse_grading_response()`, `load_grader_prompt()`
     - `samplers.py` — `OpenAIChatSampler`, `GeminiChatSampler` (both → `SamplerBase`), `create_sampler()` factory
     - `runner.py` — `EvalRunner` (depends on `JudgeGrader` and `AgentPipeline` abstractions)
-  - `prompt_optimization/` — automatic prompt engineering (→ domain, agent, llm_eval)
-    - `optimizer.py` — `PromptOptimizer` ABC, `OptimizationResult`, `TrialRecord` (frozen dataclasses)
-    - `config.py` — `BaseOptimizationConfig` (pydantic-settings, prefix `OPTIM_`), `DSPyConfig`, `TextGradConfig`, `CritiqueRefineConfig`
+  - `prompt_optimization/` — automatic prompt engineering (→ domain, agent, llm_eval). **Domain-agnostic**: any vertical-specific text (mutate/critique/refine templates, thinking styles) lives in YAML under `prompts/prompt_optimization/`, never in Python.
+    - `optimizer.py` — `PromptOptimizer` ABC, `OptimizationResult`, `TrialRecord` (frozen dataclasses), `_TrialBudget` + `_BudgetExceededError` (shared cache/history/best/budget helper for adapters), `require_optional()` (optional-dep guard)
+    - `config.py` — `BaseOptimizationConfig` (pydantic-settings, prefix `OPTIM_`, `dump_safe()`), `DSPyConfig`, `TextGradConfig`, `CritiqueRefineConfig` (with `prompt_path` field pointing to a YAML template file)
     - `metric.py` — `EndToEndMetric` (callable `metric(prompt) -> float` that runs agent + judge end-to-end via `instruction_override`)
-    - `optimizer_registry.py` — `@register_prompt_optimizer` decorator, `create_prompt_optimizer()` factory, `registered_prompt_optimizers()`
+    - `optimizer_registry.py` — `@register_prompt_optimizer` decorator, `create_prompt_optimizer()` factory, `get_optimizer_config_class()`, `registered_prompt_optimizers()`
     - `cli.py` — `optimize-prompt` CLI entry point
     - `adapters/` — per-framework optimizer implementations (lazy-imported)
-      - `dspy_adapter.py` — `DSPyOptimizer` (COPRO/MIPROv2 with cached per-instruction metric)
-      - `textgrad_adapter.py` — `TextGradOptimizer` (text-gradient descent)
-      - `critique_refine_adapter.py` — `CritiqueRefineOptimizer` (mutation + critique loop, no external dep)
+      - `dspy_adapter.py` — `DSPyOptimizer` (COPRO/MIPROv2; uses `_TrialBudget` for cached per-instruction metric)
+      - `textgrad_adapter.py` — `TextGradOptimizer` (text-gradient descent; uses `_TrialBudget` for trial bookkeeping)
+      - `critique_refine_adapter.py` — `CritiqueRefineOptimizer` (mutation + critique loop, no external dep). Loads `_CritiqueRefinePrompts` (mutate/critique/refine Jinja2 templates + thinking-styles list) from `config.prompt_path` at construction time.
 - **Working directories** (not installed, accessed via PYTHONPATH when using `uv run`):
   - `agents/` — ADK agent pipeline definitions (`*_pipeline.py`) and ADK entry points (subdirs with `agent.py`)
   - `tools/` — medical reference tool modules (`drug_reference`, `symptom_checker`, `emergency_flag`)
   - `agent_test_cases/` — golden test cases for ADK eval (`*_pipeline.test.json`)
   - `evaluation/` — scoring, stats, experiment tracking (`experiment_tracker.py` CLI, `stats.py`)
-  - `prompts/` — versioned YAML prompt files (subdirs: `llm_grader/`, `baseline_agent/`, `tool_agent/`, `multi_agent/`)
+  - `prompts/` — versioned YAML prompt files (subdirs: `llm_grader/`, `baseline_agent/`, `tool_agent/`, `multi_agent/`, `prompt_optimization/`)
   - `config/` — YAML configuration files for agent pipelines (`config/agents/*.yaml`)
 
 ## Commands

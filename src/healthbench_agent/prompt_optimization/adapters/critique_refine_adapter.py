@@ -5,13 +5,25 @@ the existing SamplerBase for LLM calls. No external optimization framework
 dependencies -- the mutation and refinement logic is driven by prompt
 engineering over the meta-model.
 
+The adapter is **domain-agnostic**: the mutate, critique and refine
+templates plus the thinking-styles list are loaded from a YAML file at
+construction time (path comes from :class:`CritiqueRefineConfig.prompt_path`).
+A neutral default ships under ``prompts/prompt_optimization/`` and can be
+overridden to specialise the optimizer for any vertical without touching
+this module.
+
 Registered as ``"critique_refine"`` in the optimizer registry.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
+
+import yaml
+from jinja2 import Template
 
 from healthbench_agent.domain.sampler import SamplerBase
 
@@ -24,56 +36,54 @@ if TYPE_CHECKING:
 
     from ..metric import EndToEndMetric
 
-THINKING_STYLES: list[str] = [
-    "Think step-by-step about what makes a prompt effective for medical conversations.",
-    "Consider the perspective of a patient who is anxious and seeking reassurance.",
-    "Focus on clinical accuracy and evidence-based recommendations.",
-    "Emphasize empathy, active listening, and patient-centered communication.",
-    "Think about safety-critical scenarios where incorrect advice could cause harm.",
-    "Consider how to handle uncertainty and when to recommend professional consultation.",
-    "Focus on clarity and readability for patients with varying health literacy.",
-    "Think about multi-turn conversations and maintaining context across exchanges.",
-    "Consider cultural sensitivity and inclusive language in health communication.",
-    "Focus on actionable advice that patients can follow without medical training.",
-]
 
-_MUTATE_TEMPLATE = """\
-You are an expert prompt engineer for health AI systems.
+@dataclass(frozen=True)
+class _CritiqueRefinePrompts:
+    """Bundle of Jinja2 templates and thinking styles loaded from YAML.
 
-Thinking approach: {thinking_style}
+    Attributes:
+        mutate: Template with ``{{ thinking_style }}`` and ``{{ prompt }}``
+            variables. Renders the mutation request to the meta-model.
+        critique: Template with ``{{ prompt }}``. Renders the critique
+            request to the meta-model.
+        refine: Template with ``{{ prompt }}`` and ``{{ critique }}``.
+            Renders the refinement request to the meta-model.
+        thinking_styles: Directives the optimizer cycles through to
+            steer mutation diversity.
+    """
 
-Rewrite and improve the following system prompt for a health assistant. \
-Keep the core intent but make it more effective.
+    mutate: Template
+    critique: Template
+    refine: Template
+    thinking_styles: list[str]
 
-Current prompt:
-{prompt}
 
-Respond with ONLY the improved prompt text, nothing else."""
+def _load_prompts(path: str | Path) -> _CritiqueRefinePrompts:
+    """Load critique-refine prompts and thinking styles from a YAML file.
 
-_CRITIQUE_TEMPLATE = """\
-You are an expert prompt engineer evaluating health AI prompts.
+    Args:
+        path: Path to the YAML file. Required keys: ``mutate_template``,
+            ``critique_template``, ``refine_template``, ``thinking_styles``.
 
-Critically analyze the following system prompt. Identify specific weaknesses, \
-missing elements, and areas where it could be more effective for a health assistant.
+    Returns:
+        A populated :class:`_CritiqueRefinePrompts` bundle.
 
-Prompt to critique:
-{prompt}
-
-Provide a detailed critique with specific, actionable suggestions."""
-
-_REFINE_TEMPLATE = """\
-You are an expert prompt engineer for health AI systems.
-
-Refine the following system prompt based on the critique below. \
-Address each weakness while preserving the prompt's strengths.
-
-Current prompt:
-{prompt}
-
-Critique:
-{critique}
-
-Respond with ONLY the refined prompt text, nothing else."""
+    Raises:
+        FileNotFoundError: If the YAML file does not exist.
+        KeyError: If the file is missing one of the required keys.
+        ValueError: If ``thinking_styles`` is empty.
+    """
+    with open(path) as fh:
+        data = yaml.safe_load(fh)
+    thinking_styles = list(data["thinking_styles"])
+    if not thinking_styles:
+        raise ValueError(f"{path}: 'thinking_styles' must contain at least one entry")
+    return _CritiqueRefinePrompts(
+        mutate=Template(data["mutate_template"]),
+        critique=Template(data["critique_template"]),
+        refine=Template(data["refine_template"]),
+        thinking_styles=thinking_styles,
+    )
 
 
 def create_sampler(config: CritiqueRefineConfig) -> SamplerBase:
@@ -113,7 +123,8 @@ class CritiqueRefineOptimizer(PromptOptimizer):
 
     1. **Mutation phase** -- generates ``mutation_rounds * style_variations``
        prompt variants by asking the meta-LLM to rewrite the current prompt
-       incorporating different thinking styles from ``THINKING_STYLES``.
+       incorporating different thinking styles loaded from the YAML file
+       at ``config.prompt_path``.
 
     2. **Critique-refine phase** (when metric is provided) -- scores all
        candidates, critiques the best one, and refines it. Repeats for
@@ -128,6 +139,10 @@ class CritiqueRefineOptimizer(PromptOptimizer):
 
     def __init__(self, config: CritiqueRefineConfig) -> None:
         self.config = config
+        # Loading the YAML once at construction lets ``optimize()`` stay
+        # I/O-free and surfaces a malformed prompt file as soon as the
+        # optimizer is instantiated, not mid-run.
+        self._prompts = _load_prompts(config.prompt_path)
 
     def optimize(
         self,
@@ -158,9 +173,9 @@ class CritiqueRefineOptimizer(PromptOptimizer):
             for style_index in range(self.config.style_variations):
                 if len(trial_history) >= max_trials:
                     break
-                style = THINKING_STYLES[
-                    (round_index * self.config.style_variations + style_index)
-                    % len(THINKING_STYLES)
+                styles = self._prompts.thinking_styles
+                style = styles[
+                    (round_index * self.config.style_variations + style_index) % len(styles)
                 ]
                 mutated = self._mutate_prompt(sampler, current_prompt, style)
                 candidates.append(mutated)
@@ -266,7 +281,7 @@ class CritiqueRefineOptimizer(PromptOptimizer):
         """
         return self._call_meta(
             sampler,
-            _MUTATE_TEMPLATE.format(thinking_style=thinking_style, prompt=prompt),
+            self._prompts.mutate.render(thinking_style=thinking_style, prompt=prompt),
         )
 
     def _critique_prompt(
@@ -283,7 +298,7 @@ class CritiqueRefineOptimizer(PromptOptimizer):
         Returns:
             A text critique identifying areas for improvement.
         """
-        return self._call_meta(sampler, _CRITIQUE_TEMPLATE.format(prompt=prompt))
+        return self._call_meta(sampler, self._prompts.critique.render(prompt=prompt))
 
     def _refine_prompt(
         self,
@@ -303,5 +318,5 @@ class CritiqueRefineOptimizer(PromptOptimizer):
         """
         return self._call_meta(
             sampler,
-            _REFINE_TEMPLATE.format(prompt=prompt, critique=critique),
+            self._prompts.refine.render(prompt=prompt, critique=critique),
         )
