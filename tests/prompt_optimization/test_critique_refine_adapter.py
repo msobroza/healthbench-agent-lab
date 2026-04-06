@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
+import yaml
 
 from healthbench_agent.domain.dataset import HealthBenchSample
 from healthbench_agent.domain.rubric import RubricItem
 from healthbench_agent.domain.sampler import SamplerResponse
 from healthbench_agent.prompt_optimization.adapters.critique_refine_adapter import (
-    THINKING_STYLES,
     CritiqueRefineOptimizer,
+    _load_prompts,
 )
 from healthbench_agent.prompt_optimization.config import CritiqueRefineConfig
 
@@ -23,15 +27,54 @@ def _make_sample() -> HealthBenchSample:
     )
 
 
-class TestThinkingStyles:
-    def test_styles_is_nonempty_list(self):
-        assert isinstance(THINKING_STYLES, list)
-        assert len(THINKING_STYLES) > 0
+def _write_test_prompts_yaml(tmp_path: Path, *, thinking_styles: list[str] | None = None) -> Path:
+    """Write a minimal prompts YAML for tests and return its path."""
+    if thinking_styles is None:
+        thinking_styles = ["Test style A.", "Test style B."]
+    path = tmp_path / "test_prompts.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "mutate_template": "Mutate {{ prompt }} with {{ thinking_style }}.",
+                "critique_template": "Critique {{ prompt }}.",
+                "refine_template": "Refine {{ prompt }} given {{ critique }}.",
+                "thinking_styles": thinking_styles,
+            }
+        )
+    )
+    return path
 
-    def test_styles_are_strings(self):
-        for style in THINKING_STYLES:
-            assert isinstance(style, str)
-            assert len(style) > 0
+
+class TestLoadPrompts:
+    def test_default_yaml_loads(self):
+        """The shipped default YAML must load and expose all four fields."""
+        config = CritiqueRefineConfig()
+        prompts = _load_prompts(config.prompt_path)
+        assert isinstance(prompts.thinking_styles, list)
+        assert len(prompts.thinking_styles) > 0
+        for style in prompts.thinking_styles:
+            assert isinstance(style, str) and len(style) > 0
+        # Templates render with their declared variables.
+        assert "p" in prompts.mutate.render(prompt="p", thinking_style="s")
+        assert "p" in prompts.critique.render(prompt="p")
+        assert "p" in prompts.refine.render(prompt="p", critique="c")
+
+    def test_missing_file_raises(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            _load_prompts(tmp_path / "does_not_exist.yaml")
+
+    def test_empty_thinking_styles_raises(self, tmp_path):
+        path = _write_test_prompts_yaml(tmp_path, thinking_styles=[])
+        with pytest.raises(ValueError, match="thinking_styles"):
+            _load_prompts(path)
+
+    def test_custom_yaml_overrides_default(self, tmp_path):
+        """A custom YAML path can fully replace the default templates."""
+        path = _write_test_prompts_yaml(tmp_path, thinking_styles=["Only one."])
+        prompts = _load_prompts(path)
+        assert prompts.thinking_styles == ["Only one."]
+        rendered = prompts.mutate.render(prompt="P", thinking_style="S")
+        assert rendered == "Mutate P with S."
 
 
 class TestCritiqueRefineOptimizerMutationOnly:

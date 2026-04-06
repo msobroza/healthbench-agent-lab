@@ -94,9 +94,15 @@ class CritiqueRefineConfig(BaseOptimizationConfig):
         mutation_rounds: Number of prompt mutation rounds per iteration.
         refine_iterations: Number of critique-and-refine cycles.
         style_variations: Number of thinking-style variations per mutation.
+        prompt_path: Path to the YAML file containing the mutate, critique
+            and refine Jinja2 templates plus the thinking-styles list.
+            Defaults to a domain-agnostic template shipped with the
+            project. Override to specialise the optimizer for a specific
+            vertical (medical, legal, customer service, etc.).
     """
 
     optimizer: str = "critique_refine"
     mutation_rounds: int = Field(3, ge=1)
     refine_iterations: int = Field(3, ge=1)
     style_variations: int = Field(5, ge=1)
+    prompt_path: str = "prompts/prompt_optimization/v1_critique_refine.yaml"
