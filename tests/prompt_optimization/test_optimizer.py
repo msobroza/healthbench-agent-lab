@@ -85,6 +85,8 @@ class TestPromptOptimizerABC:
             PromptOptimizer()  # type: ignore[abstract]
 
     def test_concrete_subclass(self):
+        from healthbench_agent.prompt_optimization.config import BaseOptimizationConfig
+
         class DummyOptimizer(PromptOptimizer):
             def optimize(self, current_prompt, samples, metric):
                 return OptimizationResult(
@@ -98,6 +100,6 @@ class TestPromptOptimizerABC:
                     config={},
                 )
 
-        optimizer = DummyOptimizer()
+        optimizer = DummyOptimizer(BaseOptimizationConfig())
         result = optimizer.optimize("prompt", None, None)
         assert result.optimized_prompt == "prompt"

@@ -23,13 +23,13 @@ logger = logging.getLogger(__name__)
 # Dataset URLs (mirrors simple-evals healthbench_eval.py INPUT_PATH constants)
 # ---------------------------------------------------------------------------
 
-DATASET_URLS: dict[str, str] = {
+DATASET_URLS: dict[DatasetSubset, str] = {
     "main": "https://openaipublic.blob.core.windows.net/simple-evals/healthbench/2025-05-07-06-14-12_oss_eval.jsonl",
     "hard": "https://openaipublic.blob.core.windows.net/simple-evals/healthbench/hard_2025-05-08-21-00-10.jsonl",
     "consensus": "https://openaipublic.blob.core.windows.net/simple-evals/healthbench/consensus_2025-05-09-20-00-46.jsonl",
 }
 
-DATASET_FILENAMES: dict[str, str] = {
+DATASET_FILENAMES: dict[DatasetSubset, str] = {
     "main": "healthbench.jsonl",
     "hard": "healthbench_hard.jsonl",
     "consensus": "healthbench_consensus.jsonl",
@@ -70,9 +70,7 @@ def download_dataset(
         urllib.error.URLError: If the download fails due to a network error.
     """
     if subset not in DATASET_URLS:
-        raise ValueError(
-            f"Unknown subset {subset!r}. Choose from: {list(DATASET_URLS)}"
-        )
+        raise ValueError(f"Unknown subset {subset!r}. Choose from: {list(DATASET_URLS)}")
 
     data_dir.mkdir(parents=True, exist_ok=True)
     destination = data_dir / DATASET_FILENAMES[subset]

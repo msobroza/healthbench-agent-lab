@@ -865,6 +865,10 @@ healthbench-agent-lab/
 │       ├── tool_agent.yaml     # tool-augmented agent config
 │       └── multi_agent.yaml    # multi-agent pipeline config
 │
+├── .github/                    # GitHub Actions CI
+│   └── workflows/
+│       └── ci.yml              # ruff check + format check + mypy + pytest with coverage
+│
 ├── agents/                     # ADK agent definitions (not installed; via PYTHONPATH)
 │   ├── baseline_pipeline.py    # Architecture A: single agent, no tools
 │   ├── tool_pipeline.py        # Architecture B: single agent + medical tools

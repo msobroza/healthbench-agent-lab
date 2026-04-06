@@ -54,7 +54,10 @@ def sample_dataset(
 
     logger.info(
         "Sampled %d/%d samples from subset %r (seed=%d)",
-        k, len(dataset.samples), dataset.subset, seed,
+        k,
+        len(dataset.samples),
+        dataset.subset,
+        seed,
     )
     return HealthBenchDataset(
         subset=dataset.subset, samples=sampled, source_path=dataset.source_path
@@ -105,13 +108,15 @@ def stratified_sample(
         )
 
     labels = [_extract_stratum(s.example_tags, tag_prefix) for s in samples]
-    _, sampled = train_test_split(
-        samples, test_size=n, stratify=labels, random_state=seed
-    )
+    _, sampled = train_test_split(samples, test_size=n, stratify=labels, random_state=seed)
 
     logger.info(
         "Stratified sample of %d/%d from subset %r by prefix %r (seed=%d)",
-        len(sampled), total, dataset.subset, tag_prefix, seed,
+        len(sampled),
+        total,
+        dataset.subset,
+        tag_prefix,
+        seed,
     )
     return HealthBenchDataset(
         subset=dataset.subset, samples=sampled, source_path=dataset.source_path
@@ -131,5 +136,5 @@ def _extract_stratum(tags: list[str], prefix: str) -> str:
     needle = f"{prefix}: "
     for tag in tags:
         if tag.startswith(needle):
-            return tag[len(needle):].strip()
+            return tag[len(needle) :].strip()
     return "_no_prefix"

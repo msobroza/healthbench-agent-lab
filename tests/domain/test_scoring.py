@@ -51,8 +51,7 @@ def two_positive_items():
 @pytest.fixture
 def two_met_verdicts(two_positive_items):
     return [
-        CriterionVerdict(criterion=item.criterion, criteria_met=True)
-        for item in two_positive_items
+        CriterionVerdict(criterion=item.criterion, criteria_met=True) for item in two_positive_items
     ]
 
 
@@ -147,15 +146,18 @@ def test_calculate_score_zero_point_item_ignored_in_denominator(positive_item):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("score,expected", [
-    (1.0,   1.0),   # upper boundary
-    (0.0,   0.0),   # lower boundary
-    (0.5,   0.5),   # mid-range unchanged
-    (-0.5,  0.0),   # negative clipped to 0
-    (1.5,   1.0),   # above 1 clipped to 1
-    (-10.0, 0.0),   # large negative
-    (10.0,  1.0),   # large positive
-])
+@pytest.mark.parametrize(
+    "score,expected",
+    [
+        (1.0, 1.0),  # upper boundary
+        (0.0, 0.0),  # lower boundary
+        (0.5, 0.5),  # mid-range unchanged
+        (-0.5, 0.0),  # negative clipped to 0
+        (1.5, 1.0),  # above 1 clipped to 1
+        (-10.0, 0.0),  # large negative
+        (10.0, 1.0),  # large positive
+    ],
+)
 def test_clip_score(score, expected):
     assert clip_score(score) == pytest.approx(expected)
 
@@ -260,8 +262,7 @@ def test_calculate_score_positive_met_penalty_unmet_gives_perfect(simple_sample)
 def test_calculate_score_all_met_including_penalty_lowers_score(simple_sample):
     # met all: achieved = 10 + 9 + (-10) = 9; total_possible = 19
     verdicts = [
-        CriterionVerdict(criterion=r.criterion, criteria_met=True)
-        for r in simple_sample.rubrics
+        CriterionVerdict(criterion=r.criterion, criteria_met=True) for r in simple_sample.rubrics
     ]
     assert calculate_score(simple_sample.rubrics, verdicts) == pytest.approx(9.0 / 19.0)
 
@@ -269,16 +270,14 @@ def test_calculate_score_all_met_including_penalty_lowers_score(simple_sample):
 def test_calculate_score_hard_sample_all_met(hard_sample):
     # achieved = 7 + 7 + 8 + (-9) = 13; total_possible = 7 + 7 + 8 = 22
     verdicts = [
-        CriterionVerdict(criterion=r.criterion, criteria_met=True)
-        for r in hard_sample.rubrics
+        CriterionVerdict(criterion=r.criterion, criteria_met=True) for r in hard_sample.rubrics
     ]
     assert calculate_score(hard_sample.rubrics, verdicts) == pytest.approx(13.0 / 22.0)
 
 
 def test_calculate_score_hard_sample_none_met_returns_zero(hard_sample):
     verdicts = [
-        CriterionVerdict(criterion=r.criterion, criteria_met=False)
-        for r in hard_sample.rubrics
+        CriterionVerdict(criterion=r.criterion, criteria_met=False) for r in hard_sample.rubrics
     ]
     assert calculate_score(hard_sample.rubrics, verdicts) == pytest.approx(0.0)
 

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import matplotlib.figure
 import numpy as np
@@ -102,7 +102,8 @@ def plot_score_ceiling_distribution(
         results[subset] = subset_result
         logger.info(
             "Subset %s: score ceiling distribution — mean=%.2f",
-            subset, subset_result["stats"]["mean"],
+            subset,
+            subset_result["stats"]["mean"],
         )
 
     return results
@@ -169,7 +170,9 @@ def plot_theme_axis_heatmap(
         results[subset] = subset_result
         logger.info(
             "Subset %s: theme × axis heatmap — %s themes × %s axes",
-            subset, len(subset_result["themes"]), len(subset_result["axes"]),
+            subset,
+            len(subset_result["themes"]),
+            len(subset_result["axes"]),
         )
 
     return results
@@ -215,7 +218,7 @@ def plot_criteria_weight_histogram(
 
         subset_result: dict[str, Any] = {
             "points_value_counts": {
-                float(k): int(v)
+                float(cast(float, k)): int(v)
                 for k, v in points.round(1).value_counts().sort_index().items()
             },
             "stats": series_stats(points, percentiles=DEFAULT_PERCENTILES),
@@ -236,7 +239,8 @@ def plot_criteria_weight_histogram(
         results[subset] = subset_result
         logger.info(
             "Subset %s: criteria weight histogram — %s rubric items",
-            subset, int(subset_result["stats"]["count"]),
+            subset,
+            int(subset_result["stats"]["count"]),
         )
 
     return results
@@ -285,9 +289,16 @@ def plot_penalty_heatmap(
             results[subset] = {}
             continue
 
-        pivot = neg.pivot_table(
-            values="penalty", index="theme", columns="axis", aggfunc="mean",
-        ).fillna(0).round(2)
+        pivot = (
+            neg.pivot_table(
+                values="penalty",
+                index="theme",
+                columns="axis",
+                aggfunc="mean",
+            )
+            .fillna(0)
+            .round(2)
+        )
 
         subset_result: dict[str, Any] = {
             "penalty_table": pivot.to_dict(orient="index"),
@@ -312,7 +323,9 @@ def plot_penalty_heatmap(
         results[subset] = subset_result
         logger.info(
             "Subset %s: penalty heatmap — %s themes × %s axes",
-            subset, len(subset_result["themes"]), len(subset_result["axes"]),
+            subset,
+            len(subset_result["themes"]),
+            len(subset_result["axes"]),
         )
 
     return results
@@ -364,8 +377,7 @@ def plot_multiturn_complexity_comparison(
         group_stats: dict[str, dict[str, Any]] = {}
         for turn_type, group in df.groupby("turn_type"):
             group_stats[str(turn_type)] = {
-                m: series_stats(group[m], percentiles=DEFAULT_PERCENTILES)
-                for m in metrics
+                m: series_stats(group[m], percentiles=DEFAULT_PERCENTILES) for m in metrics
             }
 
         counts = df["turn_type"].value_counts().to_dict()
@@ -382,7 +394,7 @@ def plot_multiturn_complexity_comparison(
                 ax = fig.add_subplot(1, 3, idx + 1)
                 single = df.loc[df["turn_type"] == "single_turn", metric]
                 multi = df.loc[df["turn_type"] == "multi_turn", metric]
-                ax.boxplot([single, multi], labels=["Single", "Multi"], widths=0.5)
+                ax.boxplot([single, multi], tick_labels=["Single", "Multi"], widths=0.5)
                 ax.set_title(metric.replace("_", " ").title())
                 ax.set_ylabel(metric)
             fig.suptitle(f"Single-Turn vs Multi-Turn Complexity — {subset}", y=1.02)
@@ -394,7 +406,9 @@ def plot_multiturn_complexity_comparison(
         results[subset] = subset_result
         logger.info(
             "Subset %s: multiturn comparison — single=%s, multi=%s",
-            subset, subset_result["single_turn_count"], subset_result["multi_turn_count"],
+            subset,
+            subset_result["single_turn_count"],
+            subset_result["multi_turn_count"],
         )
 
     return results
@@ -450,7 +464,7 @@ def plot_penalty_ratio_cdf(
         fig = matplotlib.figure.Figure(figsize=(8, 5))
         ax = fig.add_subplot(111)
         for subset, series in sorted(ratio_series.items()):
-            sorted_vals = np.sort(series.values)
+            sorted_vals = np.sort(np.asarray(series.values))
             cdf = np.arange(1, len(sorted_vals) + 1) / len(sorted_vals)
             ax.plot(sorted_vals, cdf, label=subset, linewidth=1.5)
         ax.axvline(1.0, color="gray", linewidth=0.8, linestyle="--", label="ratio = 1.0")
@@ -536,7 +550,8 @@ def plot_positive_share_by_axis(
         results[subset] = subset_result
         logger.info(
             "Subset %s: positive share by axis — %s axes",
-            subset, len(positive_share),
+            subset,
+            len(positive_share),
         )
 
     return results
@@ -601,8 +616,15 @@ def plot_positive_share_heatmap(
             )
             ax = fig.add_subplot(111)
             sns.heatmap(
-                pivot, annot=True, fmt=".2f", cmap="RdYlGn", center=0.5,
-                vmin=0, vmax=1, linewidths=0.5, ax=ax,
+                pivot,
+                annot=True,
+                fmt=".2f",
+                cmap="RdYlGn",
+                center=0.5,
+                vmin=0,
+                vmax=1,
+                linewidths=0.5,
+                ax=ax,
             )
             ax.set_title(f"Positive Share (theme × axis) — {subset}")
             ax.set_xlabel("Axis")
@@ -615,7 +637,9 @@ def plot_positive_share_heatmap(
         results[subset] = subset_result
         logger.info(
             "Subset %s: positive share heatmap — %s themes × %s axes",
-            subset, len(subset_result["themes"]), len(subset_result["axes"]),
+            subset,
+            len(subset_result["themes"]),
+            len(subset_result["axes"]),
         )
 
     return results

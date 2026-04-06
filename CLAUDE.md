@@ -54,6 +54,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Working directories** (not installed, accessed via PYTHONPATH when using `uv run`):
   - `agents/` — ADK agent pipeline definitions (`*_pipeline.py`) and ADK entry points (subdirs with `agent.py` and colocated `*_pipeline.test.json` golden test cases)
   - `tools/` — medical reference tool modules (`drug_reference`, `symptom_checker`, `emergency_flag`)
+  - `.github/workflows/` — GitHub Actions CI (`ci.yml` runs ruff check, ruff format check, mypy, pytest with coverage)
   - `evaluation/` — scoring, stats, experiment tracking (`experiment_tracker.py` CLI, `stats.py`)
   - `prompts/` — versioned YAML prompt files (subdirs: `llm_grader/`, `baseline_agent/`, `tool_agent/`, `multi_agent/`, `prompt_optimization/`)
   - `config/` — YAML configuration files for agent pipelines (`config/agents/*.yaml`)

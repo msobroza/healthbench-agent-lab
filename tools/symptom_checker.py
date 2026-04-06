@@ -44,8 +44,7 @@ _SYMPTOM_DATABASE: dict[str, list[dict]] = {
             "condition": "Subarachnoid hemorrhage",
             "urgency": "emergency",
             "description": (
-                "Sudden 'thunderclap' worst-ever headache; "
-                "requires immediate evaluation."
+                "Sudden 'thunderclap' worst-ever headache; requires immediate evaluation."
             ),
         },
     ],
@@ -93,8 +92,7 @@ _SYMPTOM_DATABASE: dict[str, list[dict]] = {
             "condition": "Appendicitis",
             "urgency": "emergency",
             "description": (
-                "Right lower quadrant pain, fever, guarding; "
-                "requires surgical evaluation."
+                "Right lower quadrant pain, fever, guarding; requires surgical evaluation."
             ),
         },
         {

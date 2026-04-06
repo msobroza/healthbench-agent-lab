@@ -213,9 +213,7 @@ class TestPlotCriteriaWeightHistogram:
         assert "paths" in result["main"]
 
     def test_multiple_datasets_keyed_separately(self, main_dataset, hard_dataset, tmp_path):
-        result = plot_criteria_weight_histogram(
-            [main_dataset, hard_dataset], tmp_path, save=False
-        )
+        result = plot_criteria_weight_histogram([main_dataset, hard_dataset], tmp_path, save=False)
         assert "main" in result
         assert "hard" in result
 

@@ -252,9 +252,7 @@ def test_sample_counts_unique_prompt_ids_equals_sample_count(consensus_dataset, 
 # ---------------------------------------------------------------------------
 
 
-def test_prompt_structure_multi_turn_sample_counted_as_multi_turn(
-    multi_turn_sample, tmp_path
-):
+def test_prompt_structure_multi_turn_sample_counted_as_multi_turn(multi_turn_sample, tmp_path):
     dataset = HealthBenchDataset(
         subset="main",
         samples=[multi_turn_sample],
@@ -279,9 +277,7 @@ def test_prompt_structure_mixed_dataset_distinguishes_turn_types(
     assert result["main"]["multi_turn_count"] == 1
 
 
-def test_prompt_structure_multi_turn_num_turns_stats_min_is_three(
-    multi_turn_sample, tmp_path
-):
+def test_prompt_structure_multi_turn_num_turns_stats_min_is_three(multi_turn_sample, tmp_path):
     dataset = HealthBenchDataset(
         subset="hard",
         samples=[multi_turn_sample],
@@ -298,9 +294,7 @@ def test_prompt_structure_multi_turn_num_turns_stats_min_is_three(
 # ---------------------------------------------------------------------------
 
 
-def test_rubric_size_reflects_actual_item_count_from_consensus(
-    consensus_dataset, tmp_path
-):
+def test_rubric_size_reflects_actual_item_count_from_consensus(consensus_dataset, tmp_path):
     result = compute_rubric_size([consensus_dataset], tmp_path, save=False)
     stats = result["consensus"]["rubric_size_stats"]
     assert stats["min"] == 3

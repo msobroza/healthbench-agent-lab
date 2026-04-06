@@ -62,10 +62,14 @@ class TestEvaluateSample:
             rubric_points=[5.0, -2.0],
             example_tags=["theme:test"],
         )
-        judge = _FakeJudge([[
-            {"explanation": "Good", "criteria_met": True},
-            {"explanation": "Bad", "criteria_met": False},
-        ]])
+        judge = _FakeJudge(
+            [
+                [
+                    {"explanation": "Good", "criteria_met": True},
+                    {"explanation": "Bad", "criteria_met": False},
+                ]
+            ]
+        )
         runner = EvalRunner(judge=judge, config=_make_config())
         result = runner.evaluate_sample(sample, "Test response")
 
@@ -75,30 +79,42 @@ class TestEvaluateSample:
 
     def test_all_met_gives_score_one(self):
         sample = make_sample(rubric_points=[5.0, 3.0])
-        judge = _FakeJudge([[
-            {"criteria_met": True},
-            {"criteria_met": True},
-        ]])
+        judge = _FakeJudge(
+            [
+                [
+                    {"criteria_met": True},
+                    {"criteria_met": True},
+                ]
+            ]
+        )
         runner = EvalRunner(judge=judge, config=_make_config())
         result = runner.evaluate_sample(sample, "Perfect response")
         assert result.score == pytest.approx(1.0)
 
     def test_none_met_gives_score_zero(self):
         sample = make_sample(rubric_points=[5.0, 3.0])
-        judge = _FakeJudge([[
-            {"criteria_met": False},
-            {"criteria_met": False},
-        ]])
+        judge = _FakeJudge(
+            [
+                [
+                    {"criteria_met": False},
+                    {"criteria_met": False},
+                ]
+            ]
+        )
         runner = EvalRunner(judge=judge, config=_make_config())
         result = runner.evaluate_sample(sample, "Bad response")
         assert result.score == pytest.approx(0.0)
 
     def test_penalty_met_gives_negative_score(self):
         sample = make_sample(rubric_points=[5.0, -10.0])
-        judge = _FakeJudge([[
-            {"criteria_met": False},  # 5pt positive not met
-            {"criteria_met": True},   # -10pt penalty met
-        ]])
+        judge = _FakeJudge(
+            [
+                [
+                    {"criteria_met": False},  # 5pt positive not met
+                    {"criteria_met": True},  # -10pt penalty met
+                ]
+            ]
+        )
         runner = EvalRunner(judge=judge, config=_make_config())
         result = runner.evaluate_sample(sample, "Harmful response")
         assert result.score is not None
@@ -106,10 +122,14 @@ class TestEvaluateSample:
 
     def test_conversation_includes_agent_response(self):
         sample = make_sample()
-        judge = _FakeJudge([[
-            {"criteria_met": True},
-            {"criteria_met": True},
-        ]])
+        judge = _FakeJudge(
+            [
+                [
+                    {"criteria_met": True},
+                    {"criteria_met": True},
+                ]
+            ]
+        )
         runner = EvalRunner(judge=judge, config=_make_config())
         result = runner.evaluate_sample(sample, "My response")
         last_turn = result.convo[-1]
@@ -118,9 +138,13 @@ class TestEvaluateSample:
 
     def test_verdicts_stored_in_metadata(self):
         sample = make_sample(rubric_points=[5.0])
-        judge = _FakeJudge([[
-            {"explanation": "Correct", "criteria_met": True},
-        ]])
+        judge = _FakeJudge(
+            [
+                [
+                    {"explanation": "Correct", "criteria_met": True},
+                ]
+            ]
+        )
         runner = EvalRunner(judge=judge, config=_make_config())
         result = runner.evaluate_sample(sample, "Response")
         verdicts = result.example_level_metadata["verdicts"]
@@ -138,20 +162,11 @@ class TestRunAsync:
     """Tests for EvalRunner.run_async() with fake judges."""
 
     def test_returns_results_in_order(self):
-        samples = [
-            make_sample(prompt_id=f"sample-{i}", rubric_points=[5.0])
-            for i in range(3)
-        ]
+        samples = [make_sample(prompt_id=f"sample-{i}", rubric_points=[5.0]) for i in range(3)]
         # Each sample gets one call with one verdict
-        judge = _FakeJudge([
-            [{"criteria_met": i % 2 == 0}] for i in range(3)
-        ])
-        runner = EvalRunner(
-            judge=judge, config=_make_config(max_workers=2)
-        )
-        results = runner.run_async(
-            samples, ["resp0", "resp1", "resp2"]
-        )
+        judge = _FakeJudge([[{"criteria_met": i % 2 == 0}] for i in range(3)])
+        runner = EvalRunner(judge=judge, config=_make_config(max_workers=2))
+        results = runner.run_async(samples, ["resp0", "resp1", "resp2"])
         assert len(results) == 3
         for i, result in enumerate(results):
             assert result.example_level_metadata["prompt_id"] == f"sample-{i}"
@@ -159,9 +174,7 @@ class TestRunAsync:
     def test_single_sample(self):
         sample = make_sample(rubric_points=[5.0])
         judge = _FakeJudge([[{"criteria_met": True}]])
-        runner = EvalRunner(
-            judge=judge, config=_make_config(max_workers=1)
-        )
+        runner = EvalRunner(judge=judge, config=_make_config(max_workers=1))
         results = runner.run_async([sample], ["response"])
         assert len(results) == 1
         assert results[0].score == pytest.approx(1.0)
@@ -239,16 +252,9 @@ class TestEvaluatePipeline:
         assert "Response to:" in last_turn["content"]
 
     def test_multiple_samples(self):
-        samples = [
-            make_sample(prompt_id=f"p-{i}", rubric_points=[5.0])
-            for i in range(3)
-        ]
-        judge = _FakeJudge([
-            [{"criteria_met": True}] for _ in range(3)
-        ])
-        runner = EvalRunner(
-            judge=judge, config=_make_config(max_workers=2)
-        )
+        samples = [make_sample(prompt_id=f"p-{i}", rubric_points=[5.0]) for i in range(3)]
+        judge = _FakeJudge([[{"criteria_met": True}] for _ in range(3)])
+        runner = EvalRunner(judge=judge, config=_make_config(max_workers=2))
         pipeline = _FakeAgentPipeline()
         results = asyncio.get_event_loop().run_until_complete(
             runner.evaluate_pipeline(pipeline, samples)

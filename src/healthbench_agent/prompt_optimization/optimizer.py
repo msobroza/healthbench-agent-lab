@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from healthbench_agent.domain.dataset import HealthBenchSample
 
+    from .config import BaseOptimizationConfig
     from .metric import EndToEndMetric
 
 
@@ -90,6 +91,18 @@ class PromptOptimizer(ABC):
     Subclasses implement the optimization logic for a specific framework
     (DSPy, TextGrad, critique-refine) and return an OptimizationResult.
     """
+
+    def __init__(self, config: BaseOptimizationConfig) -> None:
+        """Accept an optimizer configuration.
+
+        Subclasses are expected to assign ``self.config`` with the
+        concrete config subclass; this base ``__init__`` only declares
+        the constructor signature so the registry factory can call
+        ``optimizer_class(config)`` polymorphically.
+
+        Args:
+            config: Optimizer configuration; concrete subclass varies.
+        """
 
     @abstractmethod
     def optimize(
