@@ -11,7 +11,7 @@ Registered as ``"critique_refine"`` in the optimizer registry.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from healthbench_agent.domain.sampler import SamplerBase
 
@@ -111,18 +111,21 @@ class CritiqueRefineOptimizer(PromptOptimizer):
         sampler = create_sampler(self.config)
         trial_history: list[TrialRecord] = []
         candidates: list[str] = []
-        trial_id = 0
+        max_trials = self.config.max_trials
 
         # --- Phase 1: Mutation ---
         for round_index in range(self.config.mutation_rounds):
+            if len(trial_history) >= max_trials:
+                break
             for style_index in range(self.config.style_variations):
+                if len(trial_history) >= max_trials:
+                    break
                 style = THINKING_STYLES[
                     (round_index * self.config.style_variations + style_index)
                     % len(THINKING_STYLES)
                 ]
                 mutated = self._mutate_prompt(sampler, current_prompt, style)
                 candidates.append(mutated)
-                trial_id += 1
 
                 score = None
                 if metric is not None:
@@ -130,7 +133,7 @@ class CritiqueRefineOptimizer(PromptOptimizer):
 
                 trial_history.append(
                     TrialRecord(
-                        trial_id=trial_id,
+                        trial_id=len(trial_history) + 1,
                         prompt=mutated,
                         score=score,
                         timestamp=datetime.now(tz=UTC).isoformat(),
@@ -153,21 +156,24 @@ class CritiqueRefineOptimizer(PromptOptimizer):
         # --- Phase 2: Critique-Refine ---
         baseline_score = metric(current_prompt)
 
-        # Find the best candidate from mutation phase
+        # Find the best candidate from mutation phase. The filter
+        # guarantees every score is non-None, so we can safely cast.
         scored_trials = [t for t in trial_history if t.score is not None]
-        best_trial = max(scored_trials, key=lambda t: t.score)  # type: ignore[arg-type]
+        best_trial = max(scored_trials, key=lambda t: t.score or 0.0)
         best_prompt = best_trial.prompt
-        best_score = best_trial.score  # type: ignore[assignment]
+        assert best_trial.score is not None  # narrowed by filter above
+        best_score: float = best_trial.score
 
         for _ in range(self.config.refine_iterations):
+            if len(trial_history) >= max_trials:
+                break
             critique = self._critique_prompt(sampler, best_prompt)
             refined = self._refine_prompt(sampler, best_prompt, critique)
-            trial_id += 1
             refined_score = metric(refined)
 
             trial_history.append(
                 TrialRecord(
-                    trial_id=trial_id,
+                    trial_id=len(trial_history) + 1,
                     prompt=refined,
                     score=refined_score,
                     timestamp=datetime.now(tz=UTC).isoformat(),
@@ -283,7 +289,7 @@ class CritiqueRefineOptimizer(PromptOptimizer):
         response = sampler(message_list)
         return response.response_text.strip()
 
-    def _serialized_config(self) -> dict:
+    def _serialized_config(self) -> dict[str, Any]:
         """Serialize config for the result, excluding secret keys.
 
         Returns:

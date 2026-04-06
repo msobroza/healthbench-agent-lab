@@ -17,19 +17,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
     - `judge.py` — `JudgeGrader` (ABC — grade conversation against rubric items)
     - `experiment.py` — `RunParams`, `RunMetrics` (experiment tracking metadata dataclasses)
   - `agent/` — agent infrastructure (pipeline ABC, config, prompt rendering, tool registry, framework adapters)
-    - `__init__.py` — re-exports `AgentPipeline`, `AgentNodeConfig`, `PlannerConfig`, `RootAgentPipelineConfig`, `FrameworkAdapter`, `create_pipeline`, `format_conversation`, `load_instruction`, `register_callback`, `get_callback`, `registered_callbacks`, `register_tool`, `get_tool`, `get_tools`, `registered_tools`
+    - `__init__.py` — re-exports `AgentPipeline`, `AgentNodeConfig`, `PlannerConfig`, `RootAgentPipelineConfig`, `FrameworkAdapter`, `create_pipeline`, `format_conversation`, `load_instruction`, `render_instruction`, `register_callback`, `get_callback`, `registered_callbacks`, `register_tool`, `get_tool`, `get_tools`, `registered_tools`
     - `agent_pipeline.py` — `AgentPipeline` (ABC — async generate response from conversation)
-    - `config.py` — `PlannerConfig` (planner type + thinking params), `AgentNodeConfig` (recursive BaseModel, shared agent fields incl. `framework`, `orchestration`, `planner`, `include_contents`, `disallow_transfer_to_parent`, `disallow_transfer_to_peers`, `global_instruction`, callback names), `RootAgentPipelineConfig(AgentNodeConfig, BaseSettings)` (root config with env/YAML support)
+    - `config.py` — `PlannerConfig` (planner type + thinking params), `AgentNodeConfig` (recursive BaseModel, shared agent fields incl. `framework`, `orchestration`, `planner`, `include_contents`, `disallow_transfer_to_parent`, `disallow_transfer_to_peers`, `global_instruction`, `instruction_override`, callback names), `RootAgentPipelineConfig(AgentNodeConfig, BaseSettings)` (root config with env/YAML support)
     - `framework_adapter.py` — `FrameworkAdapter` (ABC — translates config into runnable `AgentPipeline`)
     - `factory.py` — `create_pipeline()` factory function (dispatches on `config.framework`)
-    - `prompt.py` — `load_instruction()` (Jinja2 template rendering from YAML), `format_conversation()` (formats `MessageList`)
+    - `prompt.py` — `render_instruction()` (Jinja2 render of a raw template string), `load_instruction()` (load YAML and render), `format_conversation()` (formats `MessageList`)
     - `tool_registry.py` — `@register_tool` decorator, `get_tool()`, `get_tools()`, `registered_tools()`
     - `callback_registry.py` — `@register_callback` decorator, `get_callback()`, `registered_callbacks()`
     - `adapters/` — framework-specific adapter implementations
-      - `adk_adapter.py` — `ADKFrameworkAdapter` (→ `FrameworkAdapter`), `ADKAgentPipeline` (→ `AgentPipeline`, shared `generate()`), `build_agent_node()` (recursive ADK agent tree builder, supports sequential/routing/loop/parallel orchestration, planners, callbacks, multi-agent control)
-  - `io/` — I/O layer (→ domain)
-    - `downloader.py` — network download (`download_dataset`, `download_all_datasets`, URL constants)
-    - `dataset_loader.py` — disk deserialization (`load_dataset`)
+      - `adk_adapter.py` — `ADKFrameworkAdapter` (→ `FrameworkAdapter`), `ADKAgentPipeline` (→ `AgentPipeline`, shared `generate()`), `build_agent_node()` (recursive ADK agent tree builder, supports sequential/routing/loop/parallel orchestration, planners, callbacks, multi-agent control), `_resolve_instruction()` (prefers `config.instruction_override` over file load)
+  - `dataset/` — HealthBench dataset I/O (→ domain)
+    - `loader.py` — `download_dataset`, `download_all_datasets`, `load_dataset`, URL/filename/path constants
+    - `split_utils.py` — `sample_dataset`, `stratified_sample` (sklearn-backed proportional sampling)
   - `analysis/` — statistics layer (→ domain)
     - `registry.py` — `@register_analysis` decorator, `run_one`, `run_category`, `run_all`
     - `utils.py` — shared helpers (`series_stats`, `save_csv`, `DEFAULT_PERCENTILES`, `build_rubric_dataframe`, `build_sample_dataframe`)
@@ -41,6 +41,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
     - `grader.py` — `LLMJudgeGrader` (→ `JudgeGrader`), `create_judge()` factory, `GRADER_TEMPLATE`, `grade_sample()`, `format_conversation()`, `parse_grading_response()`, `load_grader_prompt()`
     - `samplers.py` — `OpenAIChatSampler`, `GeminiChatSampler` (both → `SamplerBase`), `create_sampler()` factory
     - `runner.py` — `EvalRunner` (depends on `JudgeGrader` and `AgentPipeline` abstractions)
+  - `prompt_optimization/` — automatic prompt engineering (→ domain, agent, llm_eval)
+    - `optimizer.py` — `PromptOptimizer` ABC, `OptimizationResult`, `TrialRecord` (frozen dataclasses)
+    - `config.py` — `BaseOptimizationConfig` (pydantic-settings, prefix `OPTIM_`), `DSPyConfig`, `TextGradConfig`, `CritiqueRefineConfig`
+    - `metric.py` — `EndToEndMetric` (callable `metric(prompt) -> float` that runs agent + judge end-to-end via `instruction_override`)
+    - `optimizer_registry.py` — `@register_prompt_optimizer` decorator, `create_prompt_optimizer()` factory, `registered_prompt_optimizers()`
+    - `cli.py` — `optimize-prompt` CLI entry point
+    - `adapters/` — per-framework optimizer implementations (lazy-imported)
+      - `dspy_adapter.py` — `DSPyOptimizer` (COPRO/MIPROv2 with cached per-instruction metric)
+      - `textgrad_adapter.py` — `TextGradOptimizer` (text-gradient descent)
+      - `critique_refine_adapter.py` — `CritiqueRefineOptimizer` (mutation + critique loop, no external dep)
 - **Working directories** (not installed, accessed via PYTHONPATH when using `uv run`):
   - `agents/` — ADK agent pipeline definitions (`*_pipeline.py`) and ADK entry points (subdirs with `agent.py`)
   - `tools/` — medical reference tool modules (`drug_reference`, `symptom_checker`, `emergency_flag`)

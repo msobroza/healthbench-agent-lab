@@ -18,6 +18,8 @@ from jinja2 import Template
 
 from healthbench_agent.domain.conversation import MessageList
 
+__all__ = ["format_conversation", "render_instruction", "load_instruction"]
+
 
 def format_conversation(message_list: MessageList) -> str:
     """Format a MessageList into a readable string for prompt insertion.
@@ -36,6 +38,21 @@ def format_conversation(message_list: MessageList) -> str:
         content = message.get("content", "")
         parts.append(f"[{role}]: {content}")
     return "\n\n".join(parts)
+
+
+def render_instruction(template_string: str, **context: Any) -> str:
+    """Render a Jinja2 instruction template string with the given context.
+
+    Args:
+        template_string: Jinja2 template source.
+        **context: Template variables passed to Jinja2 rendering.
+            Common variables: ``conversation`` (formatted MessageList).
+
+    Returns:
+        The rendered instruction string. Templates without variables
+        are returned unchanged.
+    """
+    return Template(template_string).render(**context)
 
 
 def load_instruction(
@@ -65,6 +82,4 @@ def load_instruction(
     """
     with open(prompt_path) as f:
         data = yaml.safe_load(f)
-    raw = data[key]
-    template = Template(raw)
-    return template.render(**context)
+    return render_instruction(data[key], **context)
