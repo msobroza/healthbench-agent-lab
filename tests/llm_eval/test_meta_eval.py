@@ -12,6 +12,8 @@ from healthbench_agent.llm_eval.meta_eval import (
     EmptyFilterError,
     MetricLevel,
     MetricSpec,
+    adversarial_accuracy,
+    adversarial_prf1,
     axis_filter,
     calibration_curve,
     cohens_kappa,
@@ -19,6 +21,7 @@ from healthbench_agent.llm_eval.meta_eval import (
     gold_score,
     krippendorff_alpha,
     metadata_filter,
+    per_criterion_metrics,
     per_dimension_confusion,
     register_meta_metric,
     registered_meta_metrics,
@@ -318,3 +321,42 @@ def test_per_dimension_confusion_unspecified_for_none():
         ]
     )
     assert per_dimension_confusion(df)["unspecified"]["tp"] == 1
+
+
+def test_adversarial_accuracy_three_of_four_match():
+    df = pd.DataFrame(
+        [
+            {"observed_met": True, "expected_met": True},
+            {"observed_met": True, "expected_met": False},
+            {"observed_met": False, "expected_met": False},
+            {"observed_met": True, "expected_met": True},
+        ]
+    )
+    assert adversarial_accuracy(df) == 0.75
+
+
+def test_adversarial_prf1_returns_all_keys():
+    df = pd.DataFrame(
+        [
+            {"observed_met": True, "expected_met": True},
+            {"observed_met": False, "expected_met": True},
+            {"observed_met": True, "expected_met": False},
+            {"observed_met": False, "expected_met": False},
+        ]
+    )
+    out = adversarial_prf1(df)
+    assert set(out.keys()) == {"precision", "recall", "f1", "support"}
+    assert all(isinstance(v, float) for v in out.values())
+
+
+def test_per_criterion_metrics_grouped_by_rubric_key():
+    df = pd.DataFrame(
+        [
+            {"rubric_key": "c1", "observed_met": True, "expected_met": True},
+            {"rubric_key": "c1", "observed_met": False, "expected_met": False},
+            {"rubric_key": "c2", "observed_met": True, "expected_met": False},
+        ]
+    )
+    out = per_criterion_metrics(df)
+    assert set(out.keys()) == {"c1", "c2"}
+    assert set(out["c1"].keys()) == {"accuracy", "precision", "recall", "f1"}
