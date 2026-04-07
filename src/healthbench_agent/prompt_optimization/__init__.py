@@ -24,7 +24,13 @@ from .config import (
     DSPyConfig,
     TextGradConfig,
 )
-from .metric import EndToEndMetric
+from .metric import (
+    EndToEndMetric,
+    accepts_instruction_override,
+    find_agent_node,
+    list_agent_names,
+    locate_target,
+)
 from .optimizer import OptimizationResult, PromptOptimizer, TrialRecord
 from .optimizer_registry import (
     create_prompt_optimizer,
@@ -38,6 +44,10 @@ __all__ = [
     "OptimizationResult",
     "TrialRecord",
     "EndToEndMetric",
+    "accepts_instruction_override",
+    "find_agent_node",
+    "list_agent_names",
+    "locate_target",
     "BaseOptimizationConfig",
     "DSPyConfig",
     "TextGradConfig",
