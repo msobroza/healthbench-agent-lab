@@ -275,9 +275,9 @@ def calibration_curve(verdicts: pd.DataFrame) -> dict[int, float]:
             expected = bool(group["expected_met"].iloc[0])
             agreements.append(1.0 if majority == expected else 0.0)
         n = len(agreements)
-        if n == 0:
+        if n < 2:
             continue
         mean = sum(agreements) / n
-        variance = sum((a - mean) ** 2 for a in agreements) / max(n - 1, 1)
+        variance = sum((a - mean) ** 2 for a in agreements) / (n - 1)
         curve[k] = math.sqrt(variance / n)
     return curve
