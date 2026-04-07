@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
+import shutil
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any  # noqa: F401
@@ -25,6 +27,8 @@ from healthbench_agent.domain.conversation import MessageList
 from healthbench_agent.domain.evaluation import CriterionVerdict
 from healthbench_agent.domain.judge import JudgeGrader  # noqa: F401
 from healthbench_agent.domain.rubric import RubricItem  # noqa: F401
+
+logger = logging.getLogger(__name__)
 
 
 def _default_cache_root() -> Path:
@@ -119,6 +123,7 @@ class VerdictCache:
         try:
             data = json.loads(path.read_text())
         except (OSError, json.JSONDecodeError):
+            logger.warning("Corrupt cache entry at %s — treating as miss", path)
             self._misses += 1
             return None
         self._hits += 1
@@ -140,18 +145,13 @@ class VerdictCache:
             return
         path = self._path_for(key)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(asdict(verdict)))
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(asdict(verdict)))
+        os.replace(tmp, path)
 
     def clear(self) -> None:
         """Delete every cached verdict and remove the root directory."""
-        if not self.root.exists():
-            return
-        for shard in self.root.iterdir():
-            if shard.is_dir():
-                for entry in shard.iterdir():
-                    entry.unlink()
-                shard.rmdir()
-        self.root.rmdir()
+        shutil.rmtree(self.root, ignore_errors=True)
 
     def stats(self) -> dict[str, int]:
         """Return runtime statistics for this cache instance.
