@@ -13,6 +13,7 @@ from healthbench_agent.llm_eval.meta_eval import (
     MetricLevel,
     MetricSpec,
     axis_filter,
+    calibration_curve,
     cohens_kappa,
     get_meta_metric,
     gold_score,
@@ -217,3 +218,40 @@ def test_krippendorff_alpha_full_agreement():
 def test_krippendorff_alpha_random_is_near_zero():
     df = _agreement_rows([True, True, False, False], [True, False, True, False])
     assert abs(krippendorff_alpha(df)) < 0.5
+
+
+def test_calibration_curve_returns_dict_keyed_by_k():
+    rng = list(range(1, 8))
+    rows = []
+    for prompt in range(10):
+        for k in rng:
+            rows.append(
+                {
+                    "prompt_id": f"p{prompt}",
+                    "rubric_key": "r1",
+                    "gold_source": "ideal_completion",
+                    "sample_k": k,
+                    "observed_met": (prompt + k) % 2 == 0,
+                    "expected_met": prompt % 2 == 0,
+                }
+            )
+    df = pd.DataFrame(rows)
+    curve = calibration_curve(df)
+    assert set(curve.keys()) == {1, 3, 5, 7}
+    for v in curve.values():
+        assert isinstance(v, float)
+        assert v >= 0
+
+
+def test_calibration_curve_empty_dataframe_returns_empty_dict():
+    df = pd.DataFrame(
+        columns=[
+            "prompt_id",
+            "rubric_key",
+            "gold_source",
+            "sample_k",
+            "observed_met",
+            "expected_met",
+        ]
+    )
+    assert calibration_curve(df) == {}
