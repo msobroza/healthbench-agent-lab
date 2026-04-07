@@ -335,6 +335,11 @@ def test_adversarial_accuracy_three_of_four_match():
     assert adversarial_accuracy(df) == 0.75
 
 
+def test_adversarial_accuracy_empty_dataframe_returns_zero():
+    df = pd.DataFrame(columns=["observed_met", "expected_met"])
+    assert adversarial_accuracy(df) == 0.0
+
+
 def test_adversarial_prf1_returns_all_keys():
     df = pd.DataFrame(
         [
@@ -346,7 +351,10 @@ def test_adversarial_prf1_returns_all_keys():
     )
     out = adversarial_prf1(df)
     assert set(out.keys()) == {"precision", "recall", "f1", "support"}
-    assert all(isinstance(v, float) for v in out.values())
+    assert out["precision"] == pytest.approx(0.5, abs=1e-9)
+    assert out["recall"] == pytest.approx(0.5, abs=1e-9)
+    assert out["f1"] == pytest.approx(0.5, abs=1e-9)
+    assert out["support"] == pytest.approx(4.0, abs=1e-9)
 
 
 def test_per_criterion_metrics_grouped_by_rubric_key():
@@ -360,3 +368,5 @@ def test_per_criterion_metrics_grouped_by_rubric_key():
     out = per_criterion_metrics(df)
     assert set(out.keys()) == {"c1", "c2"}
     assert set(out["c1"].keys()) == {"accuracy", "precision", "recall", "f1"}
+    assert out["c1"]["accuracy"] == pytest.approx(1.0, abs=1e-9)
+    assert out["c2"]["accuracy"] == pytest.approx(0.0, abs=1e-9)
