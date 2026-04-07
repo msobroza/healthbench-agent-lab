@@ -19,7 +19,7 @@ This spec adds a small, dataset-agnostic meta-evaluation module that grades a fi
 - **Optional SPEC.md fields, backwards compatible.** `RubricItem` and `LabelledSample` accept the SPEC.md schema fields (`criterion_id`, `category`, `example_meets`, `example_fails`, `language`, `specialty`, `metadata`) as **optional** with safe defaults. HealthBench loaders ignore them; SPEC.md-format loaders populate them. No existing call site breaks.
 - **Filters compose, metrics stay pure.** Sample-level (`Callable[[LabelledSample], bool]`) and rubric-level (`Callable[[RubricItem], bool]`) filters are applied **upstream** of the metric registry, never inside metric functions. Metric functions remain pure DataFrame operations and stay reusable across any combination of filters.
 - **Dataset-agnostic core.** `meta_eval.py` knows nothing about HealthBench. It operates on `list[LabelledSample]`. The HealthBench-specific glue (loading the consensus subset, populating the meta-eval fields from `ideal_completions_data`, extracting axis tags) lives in the CLI, not the library module.
-- **Pluggable metrics.** Metrics are functions registered with a `@register_meta_metric` decorator (mirroring `@register_tool`, `@register_callback`, `@register_prompt_optimizer`, `@register_analysis`). Adding a new metric is one decorated function — no changes to the runner, the result type, the CLI, or the artifact schema.
+- **Pluggable metrics with declared level.** Metrics are functions registered with a `@register_meta_metric` decorator (mirroring `@register_tool`, `@register_callback`, `@register_prompt_optimizer`, `@register_analysis`). Each registration declares a `MetricLevel` (`SAMPLE`, `RUBRIC`, or `ANY`) and a one-line description, which the runner uses to filter rows and the CLI surfaces via `--list-metrics`. Adding a new metric is one decorated function — no changes to the runner, the result type, the CLI, or the artifact schema. The level declaration keeps `gold_source` filtering out of metric bodies and out of user-facing argument flags.
 - **Single judge per artifact.** A meta-eval run targets one judge, produces one parquet + one JSON. Cross-judge comparison is done offline by joining two parquets on `(prompt_id, criterion)`. The runner never mixes judges.
 - **Raw verdicts persisted.** Every (sample, criterion, k-pass) verdict is written to parquet so any future metric is a pure function over the file — no need to re-call the judge.
 
@@ -43,7 +43,7 @@ This spec adds a small, dataset-agnostic meta-evaluation module that grades a fi
 | Artifact format | Raw `verdicts.parquet` + summary `metrics.json` | New metrics become reanalyses, not re-runs |
 | Sampling strategy | Stratified by **theme** via existing `stratified_sample(..., tag_prefix="theme")` | `axis:*` tags live on rubric items, not on samples; the existing helper only supports sample-level tags. Theme stratification gives even coverage across the 7 HealthBench themes; per-axis confusion still works because every rubric on every sampled conversation is graded |
 | Default sample size | 100 | Cheap enough for routine "did the grader prompt drift?" checks |
-| Metric API | `@register_meta_metric` registry | Consistent with the rest of the project; open/closed |
+| Metric API | `@register_meta_metric(name, *, level, description)` registry | Consistent with the rest of the project; open/closed; level declared at registration so the runner filters once per run and the CLI can list metrics with their evaluation level |
 | Domain placement | `LabelledSample` and `MetricResults` live in `domain/`; `HealthBenchSample` inherits from `LabelledSample` | Pure data types belong in the domain layer; inheritance gives Liskov-clean dataset-agnosticism |
 | Prompt-opt integration | New `JudgeAgreementMetric` + `--target {agent, judge}` flag on existing `optimize-prompt` CLI | Reuses all three optimizer adapters unchanged |
 | Module placement | `src/healthbench_agent/llm_eval/meta_eval.py` (single file) | Co-located with the judge it evaluates; no new package directory |
@@ -257,37 +257,125 @@ class MetricResults:
 
 ### Metric registry
 
+Each metric declares **at registration time** which evaluation level it consumes. The runner uses this declaration to (a) filter the verdict DataFrame to the correct row subset before calling the metric, (b) skip metrics whose level is absent from the actual data with a single info-log line, and (c) expose the level + description in `meta-evaluate-judge --list-metrics` so users see what each metric does without reading source.
+
 ```python
 # src/healthbench_agent/llm_eval/meta_eval.py
 
+from enum import Enum
+
+class MetricLevel(str, Enum):
+    """Which row subset a metric operates on.
+
+    SAMPLE — sample-level rows only (gold_source == "ideal_completion").
+        Metric is meaningful only when the dataset ships a gold_response.
+    RUBRIC — rubric-level adversarial rows only
+        (gold_source ∈ {"example_meets", "example_fails"}).
+        Metric is meaningful only when rubrics carry example_meets/example_fails.
+    ANY    — metric is well-defined on either subset and on the union;
+        the runner passes whatever rows the dataset produces.
+    """
+    SAMPLE = "sample"
+    RUBRIC = "rubric"
+    ANY = "any"
+
+
 Metric = Callable[[pd.DataFrame], Any]
-_METRIC_REGISTRY: dict[str, Metric] = {}
 
-def register_meta_metric(name: str) -> Callable[[Metric], Metric]:
-    """Decorator that registers a meta-evaluation metric by name."""
+@dataclass(frozen=True)
+class MetricSpec:
+    """Registered metric metadata.
 
-def get_meta_metric(name: str) -> Metric: ...
-def registered_meta_metrics() -> dict[str, Metric]: ...
+    Attributes:
+        name: Unique identifier (used by --metrics CLI flag and metrics.json).
+        fn: The pure metric function. Takes a (level-filtered) DataFrame,
+            returns a JSON-serialisable score.
+        level: Which gold_source rows the runner passes to ``fn``.
+        description: One-line human-readable summary shown by --list-metrics.
+    """
+    name: str
+    fn: Metric
+    level: MetricLevel
+    description: str
+
+
+_METRIC_REGISTRY: dict[str, MetricSpec] = {}
+
+def register_meta_metric(
+    name: str,
+    *,
+    level: MetricLevel,
+    description: str,
+) -> Callable[[Metric], Metric]:
+    """Decorator that registers a meta-evaluation metric by name + level.
+
+    Both ``level`` and ``description`` are required. The level tells the
+    runner which row subset to feed the metric (it filters before calling),
+    so individual metric functions never write `gold_source` filters by hand.
+    The description is surfaced by ``meta-evaluate-judge --list-metrics``.
+    """
+
+def get_meta_metric(name: str) -> MetricSpec: ...
+def registered_meta_metrics() -> dict[str, MetricSpec]: ...
 ```
 
-Adding a new metric (e.g. Fleiss' κ, ROC-AUC, judge-vs-judge agreement) is one decorated function. Zero changes anywhere else.
+Adding a new metric (e.g. Fleiss' κ, ROC-AUC, judge-vs-judge agreement) is one decorated function — name, level, description, and the pure DataFrame transform. Zero changes anywhere else.
 
 ### Built-in metrics
 
-| Name | Operates on | Returns | Semantics |
+Every built-in metric is registered with its `level` so the user can see at a glance which gold flow it belongs to.
+
+| Name | Level | Returns | Semantics |
 |---|---|---|---|
-| `gold_score` | rows where `gold_source == "ideal_completion"` | `float` | Mean HealthBench score the judge gives to the gold response. For each (prompt_id, sample_k), reproduces the production `calculate_score` formula on the verdicts: `sum(points where observed_met) / sum(max(0, points))`, clipped to [0, 1] via `clip_score`. Averages across (prompt_id, sample_k) pairs. **A perfectly calibrated judge returns 1.0** because the physician ideal response should meet every positive rubric and avoid every penalty rubric. Mirrors production scoring exactly — same formula, same clipping, same aggregation as `aggregate_scores`. |
-| `cohens_kappa` | all rows | `float` | Collapse k passes to majority vote per (prompt_id, rubric_key, gold_source), compute Cohen's κ vs `expected_met`. Wraps `sklearn.metrics.cohen_kappa_score`. |
-| `krippendorff_alpha` | all rows | `float` | Same input, closed-form binary two-coder α. ~15 lines, no new dependency. |
-| `calibration_curve` | all rows | `dict[int, float]` | For each k in {1, 3, 5, 7}, take the first k passes, collapse to majority, return bootstrap SE of the per-(prompt_id, rubric_key) agreement rate. |
-| `per_dimension_confusion` | all rows | `dict[str, dict[str, int]]` | Group by `dimension` column → `{tp, fp, tn, fn}` per dimension. Rows where dimension is None aggregated under `"unspecified"`. |
-| `adversarial_accuracy` | rows where `gold_source ∈ {"example_meets", "example_fails"}` | `float` | Plain accuracy: fraction of rows where `observed_met == expected_met`. |
-| `adversarial_prf1` | adversarial rows | `dict[str, float]` | Precision/recall/F1/support computed by `sklearn.metrics.precision_recall_fscore_support` with `expected_met` as ground truth. Returned as `{"precision": ..., "recall": ..., "f1": ..., "support": ...}`. |
-| `per_criterion_metrics` | adversarial rows | `dict[str, dict[str, float]]` | Group by `rubric_key`, return `{"accuracy", "precision", "recall", "f1"}` per criterion. |
+| `gold_score` | `SAMPLE` | `float` | Mean HealthBench score the judge gives to the gold response. For each (prompt_id, sample_k), reproduces the production `calculate_score` formula on the verdicts: `sum(points where observed_met) / sum(max(0, points))`, clipped to [0, 1] via `clip_score`. Averages across (prompt_id, sample_k) pairs. **A perfectly calibrated judge returns 1.0** because the physician ideal response should meet every positive rubric and avoid every penalty rubric. Mirrors production scoring exactly — same formula, same clipping, same aggregation as `aggregate_scores`. |
+| `cohens_kappa` | `ANY` | `float` | Collapse k passes to majority vote per (prompt_id, rubric_key, gold_source), compute Cohen's κ vs `expected_met`. Wraps `sklearn.metrics.cohen_kappa_score`. |
+| `krippendorff_alpha` | `ANY` | `float` | Same input, closed-form binary two-coder α. ~15 lines, no new dependency. |
+| `calibration_curve` | `ANY` | `dict[int, float]` | For each k in {1, 3, 5, 7}, take the first k passes, collapse to majority, return bootstrap SE of the per-(prompt_id, rubric_key) agreement rate. |
+| `per_dimension_confusion` | `ANY` | `dict[str, dict[str, int]]` | Group by `dimension` column → `{tp, fp, tn, fn}` per dimension. Rows where dimension is None aggregated under `"unspecified"`. |
+| `adversarial_accuracy` | `RUBRIC` | `float` | Plain accuracy: fraction of rows where `observed_met == expected_met`. |
+| `adversarial_prf1` | `RUBRIC` | `dict[str, float]` | Precision/recall/F1/support computed by `sklearn.metrics.precision_recall_fscore_support` with `expected_met` as ground truth. Returned as `{"precision": ..., "recall": ..., "f1": ..., "support": ...}`. |
+| `per_criterion_metrics` | `RUBRIC` | `dict[str, dict[str, float]]` | Group by `rubric_key`, return `{"accuracy", "precision", "recall", "f1"}` per criterion. |
 
 `rubric_key` is a derived DataFrame column populated as `criterion_id or criterion` so the same metric implementation works on both HealthBench rows (no `criterion_id`) and SPEC.md rows (stable id). It is added in step 4 of `run_meta_eval` and is not persisted to parquet — readers can rebuild it.
 
 `gold_score` is the **default** built-in metric and the **default fitness** for `JudgeAgreementMetric` when sample-level gold is available. When a dataset only ships adversarial pairs (no `gold_response`), the default automatically falls back to `adversarial_prf1["f1"]`. Both metrics target 1.0 for a perfectly calibrated judge. The κ/α/calibration metrics remain available for cases where the user wants per-rubric agreement statistics rather than per-sample score calibration.
+
+#### How the runner uses `level`
+
+1. After building the verdict DataFrame, `run_meta_eval` partitions it once into `sample_rows` (where `gold_source == "ideal_completion"`), `rubric_rows` (where `gold_source ∈ {"example_meets", "example_fails"}`), and `all_rows` (the full DataFrame).
+2. For each requested metric, it looks up the `MetricSpec.level` and passes the matching subset to the metric function:
+   - `SAMPLE` → `sample_rows`
+   - `RUBRIC` → `rubric_rows`
+   - `ANY` → `all_rows`
+3. If the chosen subset is empty (e.g. user requested `gold_score` on an adversarial-only dataset), the runner logs `INFO: skipping metric 'gold_score' (level=SAMPLE) — no sample-level rows in this run` and omits the metric from `MetricResults.scores`. The run does **not** fail — other applicable metrics still produce numbers.
+4. If **every** requested metric gets skipped this way, `run_meta_eval` raises `EmptyFilterError` because the run produced nothing useful — silent empty results would be worse than a clear error.
+
+This pushes all `gold_source` filtering into one place (the runner) and out of every individual metric function, keeping metrics as pure DataFrame transforms.
+
+#### Default metric selection
+
+When the user does not pass `--metrics`, the CLI chooses defaults based on what the dataset actually contains:
+
+| Dataset has | Default metrics |
+|---|---|
+| Sample-level gold only | `gold_score`, `cohens_kappa`, `calibration_curve`, `per_dimension_confusion` |
+| Adversarial pairs only | `adversarial_prf1`, `adversarial_accuracy`, `per_criterion_metrics`, `cohens_kappa`, `per_dimension_confusion` |
+| Both | union of the above two rows |
+
+`meta-evaluate-judge --list-metrics` prints `name | level | description` for every registered metric so users discover this without reading the spec. Example output:
+
+```
+$ uv run meta-evaluate-judge --list-metrics
+NAME                       LEVEL    DESCRIPTION
+gold_score                 SAMPLE   Mean clipped HealthBench score on gold responses (target = 1.0)
+cohens_kappa               ANY      Inter-rater agreement vs expected verdicts
+krippendorff_alpha         ANY      Binary two-coder Krippendorff alpha
+calibration_curve          ANY      Bootstrap SE of agreement at k = 1, 3, 5, 7
+per_dimension_confusion    ANY      tp/fp/tn/fn per dimension (e.g. axis name)
+adversarial_accuracy       RUBRIC   Accuracy on example_meets / example_fails pairs
+adversarial_prf1           RUBRIC   Precision / recall / F1 on adversarial pairs
+per_criterion_metrics      RUBRIC   Per-criterion accuracy / precision / recall / F1
+```
 
 #### Two gold-evaluation flows
 
@@ -306,14 +394,22 @@ The conversation passed to the judge for adversarial flows is `sample.prompt + [
 #### `gold_score` reference implementation
 
 ```python
-@register_meta_metric("gold_score")
+@register_meta_metric(
+    "gold_score",
+    level=MetricLevel.SAMPLE,
+    description="Mean clipped HealthBench score on gold responses (target = 1.0)",
+)
 def gold_score(verdicts: pd.DataFrame) -> float:
     """Mean clipped HealthBench score the judge gives to gold responses.
 
+    The runner has already filtered ``verdicts`` to sample-level rows
+    (gold_source == "ideal_completion") because of level=SAMPLE, so this
+    function does not need to filter by gold_source itself.
+
     Reproduces calculate_score + clip_score + aggregate_scores from
-    domain/scoring.py over the verdicts DataFrame, treating each
-    (prompt_id, sample_k) as one conversation. A perfectly calibrated
-    judge returns 1.0.
+    domain/scoring.py over the (already filtered) DataFrame, treating
+    each (prompt_id, sample_k) as one conversation. A perfectly
+    calibrated judge returns 1.0.
     """
     def per_group(g: pd.DataFrame) -> float:
         total_possible = g.loc[g["points"] > 0, "points"].sum()
@@ -367,9 +463,12 @@ def run_meta_eval(
            gold_source, observed_met, expected_met, specialty, language,
            metadata_json. Add a derived in-memory column
            ``rubric_key = criterion_id or criterion`` used by metrics.
-        5. Run each requested metric over the DataFrame and collect results
-           into MetricResults.scores. Each metric self-restricts to the row
-           subset it operates on (see metric table above).
+           Partition once into ``sample_rows``, ``rubric_rows``, ``all_rows``.
+        5. For each requested metric, look up its ``MetricSpec.level`` and
+           pass the matching subset (SAMPLE→sample_rows, RUBRIC→rubric_rows,
+           ANY→all_rows). Skip with an INFO log if the subset is empty.
+           Collect numeric/dict scores into ``MetricResults.scores``. If
+           every requested metric was skipped, raise ``EmptyFilterError``.
         6. If output_dir is set, write verdicts.parquet (DataFrame) and
            metrics.json (dataclasses.asdict(result)).
         7. Return the MetricResults instance.
@@ -522,7 +621,7 @@ uv run meta-evaluate-judge \
 11. Optional MLflow logging (params + scalar metrics + artifacts, tagged `run_type=meta_eval`). Filter args are logged as MLflow params (`filter_axis`, `filter_metadata`) so runs are reproducible from the MLflow UI alone.
 12. Print summary.
 
-Default `--metrics` is empty, meaning "all registered metrics".
+Default `--metrics` is empty, meaning "auto-select based on what the dataset contains" using the table in the metric registry section above. `meta-evaluate-judge --list-metrics` prints `name | level | description` for every registered metric and exits — useful for discovering what is available without reading source.
 
 ### `optimize-prompt --target judge`
 
@@ -610,7 +709,7 @@ ZOMBIES coverage on the pure metric functions using synthetic verdict DataFrames
 |---|---|
 | `gold_score` on perfect verdicts (all positive rubrics met, no penalties) | 1.0 |
 | `gold_score` clips per-conversation scores to [0, 1] | conversation with negative raw score contributes 0.0 to mean |
-| `gold_score` only considers `gold_source == "ideal_completion"` rows | adversarial rows ignored |
+| `gold_score` registered with `level=SAMPLE` | runner routes only sample-level rows to it (verified via spy) |
 | Full agreement (observed == expected for all rows) | κ = 1.0, α = 1.0 |
 | Inverse (observed == not expected) | κ = -1.0 |
 | Random / orthogonal labels (50/50) | κ ≈ 0.0 |
@@ -621,7 +720,11 @@ ZOMBIES coverage on the pure metric functions using synthetic verdict DataFrames
 | `adversarial_accuracy` on a row mix where 3/4 match | 0.75 |
 | `adversarial_prf1` returns dict with precision/recall/f1/support | values match sklearn ground truth |
 | `per_criterion_metrics` groups by `criterion_id` | per-criterion dicts have all 4 keys |
-| Registry: `register_meta_metric` + `get_meta_metric` round-trip | works |
+| Registry: `register_meta_metric(name, level, description)` + `get_meta_metric` round-trip | returns `MetricSpec` with all four fields populated |
+| Registering without `level` or `description` | TypeError |
+| `run_meta_eval` partitions DataFrame by `gold_source` and routes correct subset to each metric by `level` | metric receives only matching rows (assert via spy) |
+| `run_meta_eval` skips a SAMPLE-level metric on adversarial-only data and logs INFO | metric absent from `MetricResults.scores`, log captured |
+| `run_meta_eval` raises `EmptyFilterError` when **every** requested metric is skipped due to level mismatch | error message mentions skipped metric names |
 | `run_meta_eval` with a fake `JudgeGrader` | produces verdicts.parquet and metrics.json with the requested `scores` keys |
 | `run_meta_eval` skips samples where `gold_response is None` | dropped count is correct |
 | `run_meta_eval` emits adversarial rows when `example_meets`/`example_fails` set | one row per pair, correct `gold_source` |
@@ -634,6 +737,7 @@ ZOMBIES coverage on the pure metric functions using synthetic verdict DataFrames
 | `EndToEndMetric` honours `sample_filter` + `rubric_filter` | fitness equals manually filtered run |
 | CLI smoke test: argparse → mocked `run_meta_eval` | dispatches with correct params |
 | CLI smoke test: `--rubric-axis accuracy --metadata language=en` | filter callables forwarded to `run_meta_eval` |
+| CLI smoke test: `--list-metrics` exits 0 and prints every registered metric with name + level + description | stdout contains all 8 built-ins, no judge call made |
 | CLI smoke test: `EmptyFilterError` → CLI exits non-zero with clear message | exit code != 0, message mentions both filters |
 
 ### `tests/domain/test_meta_evaluation.py`
@@ -699,6 +803,7 @@ The migration is mechanical (keyword args + a few extra `gold_response=None` def
 10. ~~Slice-restricted optimization~~ → both `JudgeAgreementMetric` and `EndToEndMetric` accept optional `sample_filter` and `rubric_filter` (Option A: two separate `Callable` parameters), exposed on the CLI as repeatable `--rubric-axis` and `--metadata KEY=VALUE` flags.
 11. ~~Empty filter behaviour~~ → `EmptyFilterError` (subclass of `ValueError`) raised by `run_meta_eval`; CLI catches and exits non-zero with the active filter names.
 12. ~~SPEC.md schema fields~~ → optional with safe defaults on both `RubricItem` and `LabelledSample`; HealthBench loaders ignore them, future SPEC.md loaders populate them.
+13. ~~Metric level discovery~~ → each metric declares `MetricLevel ∈ {SAMPLE, RUBRIC, ANY}` at registration; runner filters rows per level; CLI exposes `meta-evaluate-judge --list-metrics` so users see the level + a one-line description without reading source.
 
 ## Out of Scope (Follow-up Issues)
 
