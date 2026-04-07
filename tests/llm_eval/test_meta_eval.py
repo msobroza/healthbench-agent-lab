@@ -28,6 +28,7 @@ from healthbench_agent.llm_eval.meta_eval import (
     per_dimension_confusion,
     register_meta_metric,
     registered_meta_metrics,
+    run_meta_eval,
     specialty_filter,
 )
 
@@ -426,3 +427,107 @@ def test_demo_labelled_set_returns_three_samples_with_mixed_flows():
     )
     assert has_gold >= 1
     assert has_adversarial >= 1
+
+
+def _axis_extractor(item: RubricItem) -> str | None:
+    return item.category
+
+
+def test_run_meta_eval_with_fake_judge_produces_scores(tmp_path):
+    samples = demo_labelled_set()
+    perfect = {c: m for s in samples for c, m in s.expected.items()}
+    view = run_meta_eval(
+        FakeJudge(perfect),
+        samples,
+        dimension_extractor=_axis_extractor,
+        n_samples=2,
+        progress=False,
+    )
+    assert view.results.scores  # at least one metric computed
+    assert view.results.n_samples_graded > 0
+    assert view.results.n_rubrics_graded > 0
+
+
+def test_run_meta_eval_persists_artifacts(tmp_path):
+    samples = demo_labelled_set()
+    view = run_meta_eval(
+        FakeJudge("always_met"),
+        samples,
+        dimension_extractor=_axis_extractor,
+        n_samples=1,
+        output_dir=tmp_path,
+        progress=False,
+    )
+    assert (tmp_path / "verdicts.parquet").exists()
+    assert (tmp_path / "metrics.json").exists()
+    assert view.results.verdicts_path == tmp_path / "verdicts.parquet"
+
+
+def test_run_meta_eval_sample_filter_rejects_all_raises_empty_filter(tmp_path):
+    samples = demo_labelled_set()
+    with pytest.raises(EmptyFilterError):
+        run_meta_eval(
+            FakeJudge("always_met"),
+            samples,
+            dimension_extractor=_axis_extractor,
+            sample_filter=lambda s: False,
+            n_samples=1,
+            progress=False,
+        )
+
+
+def test_run_meta_eval_rubric_filter_rejects_all_raises_empty_filter():
+    samples = demo_labelled_set()
+    with pytest.raises(EmptyFilterError):
+        run_meta_eval(
+            FakeJudge("always_met"),
+            samples,
+            dimension_extractor=_axis_extractor,
+            rubric_filter=lambda r: False,
+            n_samples=1,
+            progress=False,
+        )
+
+
+def test_run_meta_eval_skips_sample_metrics_when_only_adversarial(caplog):
+    """Sample-level metrics are dropped (with INFO log) on adversarial-only data."""
+    sample = LabelledSample(
+        prompt_id="adv_only",
+        prompt=[{"role": "user", "content": "?"}],
+        rubrics=[
+            RubricItem(
+                criterion="x",
+                points=1.0,
+                example_meets="positive",
+                example_fails="negative",
+                category="accuracy",
+            )
+        ],
+    )
+    view = run_meta_eval(
+        FakeJudge("always_met"),
+        [sample],
+        dimension_extractor=_axis_extractor,
+        metric_names=["gold_score", "adversarial_accuracy"],
+        n_samples=1,
+        progress=False,
+    )
+    assert "gold_score" not in view.results.scores
+    assert "adversarial_accuracy" in view.results.scores
+
+
+def test_run_meta_eval_raises_when_every_metric_skipped():
+    sample = LabelledSample(
+        prompt_id="adv_only",
+        prompt=[{"role": "user", "content": "?"}],
+        rubrics=[RubricItem(criterion="x", points=1.0, example_meets="ok", example_fails="bad")],
+    )
+    with pytest.raises(EmptyFilterError, match="gold_score"):
+        run_meta_eval(
+            FakeJudge("always_met"),
+            [sample],
+            dimension_extractor=_axis_extractor,
+            metric_names=["gold_score"],
+            n_samples=1,
+            progress=False,
+        )

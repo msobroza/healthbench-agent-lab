@@ -10,21 +10,31 @@ and the pure DataFrame transform. Zero changes anywhere else.
 
 from __future__ import annotations
 
+import json
+import logging
+import sys
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from statistics import fmean
 from typing import TYPE_CHECKING, Any, cast
 
 from healthbench_agent.domain.conversation import MessageList
 from healthbench_agent.domain.evaluation import CriterionVerdict
 from healthbench_agent.domain.judge import JudgeGrader
-from healthbench_agent.domain.meta_evaluation import LabelledSample
+from healthbench_agent.domain.meta_evaluation import LabelledSample, MetricResults
 from healthbench_agent.domain.rubric import RubricItem
 from healthbench_agent.domain.scoring import calculate_score, clip_score
 
 if TYPE_CHECKING:
     import pandas as pd
+
+    from healthbench_agent.llm_eval.meta_eval_results import MetricResultsView
+    from healthbench_agent.llm_eval.verdict_cache import VerdictCache
+
+logger = logging.getLogger(__name__)
 
 
 class MetricLevel(StrEnum):
@@ -459,3 +469,356 @@ def demo_labelled_set() -> list[LabelledSample]:
             language="en",
         ),
     ]
+
+
+def _row(
+    sample: LabelledSample,
+    rubric: RubricItem,
+    verdict: CriterionVerdict,
+    k: int,
+    gold_source: str,
+    expected_met: bool,
+    dimension_extractor: Callable[[RubricItem], str | None],
+) -> dict[str, Any]:
+    """Build one verdict-row dict matching the run_meta_eval schema.
+
+    Args:
+        sample: Source labelled sample.
+        rubric: Rubric item being graded.
+        verdict: Judge verdict for this rubric on this sample.
+        k: Index of the k-pass that produced the verdict (1-indexed).
+        gold_source: One of ``ideal_completion`` / ``example_meets`` /
+            ``example_fails``.
+        expected_met: Ground-truth label for this row.
+        dimension_extractor: Maps a rubric item to its dimension tag.
+
+    Returns:
+        Dict of column values, matching the verdict DataFrame schema.
+    """
+    return {
+        "prompt_id": sample.prompt_id,
+        "criterion_id": rubric.criterion_id,
+        "criterion": rubric.criterion[:200],
+        "rubric_key": rubric.criterion_id or rubric.criterion,
+        "dimension": dimension_extractor(rubric),
+        "points": rubric.points,
+        "sample_k": k,
+        "gold_source": gold_source,
+        "observed_met": bool(verdict.criteria_met),
+        "expected_met": bool(expected_met),
+        "specialty": sample.specialty,
+        "language": sample.language,
+        "metadata_json": json.dumps(sample.metadata),
+    }
+
+
+def _build_verdict_rows(
+    judge: JudgeGrader,
+    samples: list[LabelledSample],
+    dimension_extractor: Callable[[RubricItem], str | None],
+    n_samples: int,
+) -> list[dict[str, Any]]:
+    """Run k passes over each (sample, flow) combination and emit verdict rows.
+
+    For each sample, runs three independent grading flows when the
+    relevant data is present:
+
+    * ``ideal_completion`` — grade the gold response against all non-zero
+      point rubrics
+    * ``example_meets`` — grade each rubric's adversarial known-good
+      example (expected True)
+    * ``example_fails`` — grade each rubric's adversarial known-bad
+      example (expected False)
+
+    Args:
+        judge: Grader to invoke for every flow.
+        samples: Filter-surviving labelled samples.
+        dimension_extractor: Maps a rubric item to its optional dimension tag.
+        n_samples: Number of repeated k passes per (sample, flow) combo.
+
+    Returns:
+        Flat list of row dicts, ready to feed into ``pd.DataFrame``.
+    """
+    rows: list[dict[str, Any]] = []
+    for k in range(1, n_samples + 1):
+        for sample in samples:
+            # Sample-level flow: grade the gold response.
+            if sample.gold_response is not None:
+                gold_rubrics = [r for r in sample.rubrics if r.points != 0]
+                if gold_rubrics:
+                    gold_turn: dict[str, Any] = {
+                        "role": "assistant",
+                        "content": sample.gold_response,
+                    }
+                    conversation = sample.prompt + [gold_turn]
+                    verdicts = judge.grade(conversation, gold_rubrics)
+                    for rubric, verdict in zip(gold_rubrics, verdicts, strict=True):
+                        rows.append(
+                            _row(
+                                sample,
+                                rubric,
+                                verdict,
+                                k,
+                                "ideal_completion",
+                                expected_met=rubric.points > 0,
+                                dimension_extractor=dimension_extractor,
+                            )
+                        )
+            # Adversarial flows: grade the known-good and known-bad examples.
+            for rubric in sample.rubrics:
+                if rubric.example_meets is not None:
+                    meets_turn: dict[str, Any] = {
+                        "role": "assistant",
+                        "content": rubric.example_meets,
+                    }
+                    conversation = sample.prompt + [meets_turn]
+                    [verdict] = judge.grade(conversation, [rubric])
+                    rows.append(
+                        _row(
+                            sample,
+                            rubric,
+                            verdict,
+                            k,
+                            "example_meets",
+                            expected_met=True,
+                            dimension_extractor=dimension_extractor,
+                        )
+                    )
+                if rubric.example_fails is not None:
+                    fails_turn: dict[str, Any] = {
+                        "role": "assistant",
+                        "content": rubric.example_fails,
+                    }
+                    conversation = sample.prompt + [fails_turn]
+                    [verdict] = judge.grade(conversation, [rubric])
+                    rows.append(
+                        _row(
+                            sample,
+                            rubric,
+                            verdict,
+                            k,
+                            "example_fails",
+                            expected_met=False,
+                            dimension_extractor=dimension_extractor,
+                        )
+                    )
+    return rows
+
+
+_VERDICT_COLUMNS: list[str] = [
+    "prompt_id",
+    "criterion_id",
+    "criterion",
+    "rubric_key",
+    "dimension",
+    "points",
+    "sample_k",
+    "gold_source",
+    "observed_met",
+    "expected_met",
+    "specialty",
+    "language",
+    "metadata_json",
+]
+
+
+def run_meta_eval(
+    judge: JudgeGrader,
+    labelled: list[LabelledSample],
+    dimension_extractor: Callable[[RubricItem], str | None],
+    metric_names: list[str] | None = None,
+    n_samples: int = 7,
+    sample_filter: Callable[[LabelledSample], bool] | None = None,
+    rubric_filter: Callable[[RubricItem], bool] | None = None,
+    output_dir: Path | None = None,
+    judge_metadata: dict[str, Any] | None = None,
+    cache: VerdictCache | None = None,
+    model_fingerprint: str | None = None,
+    judge_prompt_sha: str | None = None,
+    meta_eval_max_workers: int = 16,
+    progress: bool | None = None,
+) -> MetricResultsView:
+    """Grade labelled samples with one judge, compute metrics, and persist.
+
+    Resolves sample/rubric filters, runs ``k=1..n_samples`` grading passes
+    in parallel, dispatches each requested metric against its level-matching
+    row subset, and returns a rich-UX view of the aggregated results.
+
+    Args:
+        judge: Judge grader to evaluate. Wrapped in
+            :class:`CachedJudgeGrader` when ``cache`` is provided.
+        labelled: Dataset-agnostic labelled samples to grade.
+        dimension_extractor: Maps a rubric item to its dimension tag (e.g.
+            axis name). The returned value lands in the ``dimension``
+            column and feeds ``per_dimension_confusion``.
+        metric_names: Names of meta metrics to compute. Defaults to every
+            registered metric.
+        n_samples: Number of k-passes per (sample, flow) combination.
+        sample_filter: Keep only samples where the predicate is True.
+        rubric_filter: Within each surviving sample, keep only rubrics
+            where the predicate is True.
+        output_dir: When set, persist ``verdicts.parquet`` and
+            ``metrics.json`` under this directory.
+        judge_metadata: Extra key/value pairs to stamp on the result header.
+        cache: Verdict cache wrapper to deduplicate judge calls across runs.
+        model_fingerprint: Required when ``cache`` is set.
+        judge_prompt_sha: Required when ``cache`` is set.
+        meta_eval_max_workers: Max worker threads for the parallel grader.
+        progress: Tri-state progress bar toggle. ``None`` = auto (isatty).
+
+    Returns:
+        A :class:`MetricResultsView` wrapping a populated
+        :class:`MetricResults`.
+
+    Raises:
+        EmptyFilterError: When every sample or every rubric is filtered
+            out, or when every requested metric was skipped for lack of
+            matching rows.
+        ValueError: When ``cache`` is provided without ``model_fingerprint``
+            and ``judge_prompt_sha``.
+    """
+    import pandas as pd
+
+    from healthbench_agent.llm_eval.meta_eval_results import MetricResultsView
+    from healthbench_agent.llm_eval.verdict_cache import CachedJudgeGrader
+
+    # --- Step 1: sample filter ------------------------------------------
+    if sample_filter is not None:
+        kept = [s for s in labelled if sample_filter(s)]
+    else:
+        kept = list(labelled)
+    if not kept:
+        raise EmptyFilterError(sample_filter=sample_filter, rubric_filter=rubric_filter)
+
+    # --- Step 2: rubric filter (produces shallow-copied samples) ---------
+    if rubric_filter is not None:
+        surviving: list[LabelledSample] = []
+        for sample in kept:
+            new_rubrics = [r for r in sample.rubrics if rubric_filter(r)]
+            if not new_rubrics:
+                continue
+            surviving.append(
+                LabelledSample(
+                    prompt_id=sample.prompt_id,
+                    prompt=sample.prompt,
+                    rubrics=new_rubrics,
+                    gold_response=sample.gold_response,
+                    expected=sample.expected,
+                    language=sample.language,
+                    specialty=sample.specialty,
+                    user_persona=sample.user_persona,
+                    metadata=sample.metadata,
+                )
+            )
+    else:
+        surviving = kept
+    if not surviving:
+        raise EmptyFilterError(sample_filter=sample_filter, rubric_filter=rubric_filter)
+
+    # --- Step 3: build per-k grader factory -----------------------------
+    if cache is not None:
+        if model_fingerprint is None or judge_prompt_sha is None:
+            raise ValueError(
+                "run_meta_eval(cache=...) requires model_fingerprint and judge_prompt_sha"
+            )
+        cache_obj: VerdictCache = cache
+        fingerprint: str = model_fingerprint
+        prompt_sha: str = judge_prompt_sha
+
+        def grade_for_k(k: int) -> JudgeGrader:
+            return CachedJudgeGrader(judge, cache_obj, fingerprint, prompt_sha, k)
+    else:
+
+        def grade_for_k(k: int) -> JudgeGrader:
+            return judge
+
+    # --- Step 4: grade every (sample, k) pair in parallel ----------------
+    pairs: list[tuple[LabelledSample, int]] = [
+        (sample, k) for k in range(1, n_samples + 1) for sample in surviving
+    ]
+
+    def work(pair: tuple[LabelledSample, int]) -> list[dict[str, Any]]:
+        sample, k = pair
+        chunk = _build_verdict_rows(grade_for_k(k), [sample], dimension_extractor, 1)
+        # _build_verdict_rows emits rows with sample_k=1; rewrite to outer k.
+        for row in chunk:
+            row["sample_k"] = k
+        return chunk
+
+    show_progress = progress if progress is not None else sys.stdout.isatty()
+    chunks: list[list[dict[str, Any]]]
+    if show_progress:
+        try:
+            from tqdm.contrib.concurrent import thread_map
+
+            chunks = list(
+                thread_map(
+                    work,
+                    pairs,
+                    max_workers=meta_eval_max_workers,
+                    desc="Grading samples",
+                )
+            )
+        except ImportError:
+            with ThreadPoolExecutor(max_workers=meta_eval_max_workers) as pool:
+                chunks = list(pool.map(work, pairs))
+    else:
+        with ThreadPoolExecutor(max_workers=meta_eval_max_workers) as pool:
+            chunks = list(pool.map(work, pairs))
+
+    rows: list[dict[str, Any]] = [row for chunk in chunks for row in chunk]
+    df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=_VERDICT_COLUMNS)
+
+    # --- Step 5: partition by gold_source -------------------------------
+    sample_rows = df[df["gold_source"] == "ideal_completion"]
+    rubric_rows = df[df["gold_source"].isin(["example_meets", "example_fails"])]
+
+    # --- Step 6: dispatch metrics by level ------------------------------
+    requested = metric_names or list(_METRIC_REGISTRY.keys())
+    scores: dict[str, Any] = {}
+    skipped: list[str] = []
+    for name in requested:
+        spec = get_meta_metric(name)
+        if spec.level is MetricLevel.SAMPLE:
+            subset = sample_rows
+        elif spec.level is MetricLevel.RUBRIC:
+            subset = rubric_rows
+        else:
+            subset = df
+        if len(subset) == 0:
+            logger.info(
+                "skipping metric %s (level=%s) - no matching rows in this run",
+                name,
+                spec.level.value,
+            )
+            skipped.append(name)
+            continue
+        scores[name] = spec.fn(subset)
+
+    if not scores:
+        raise EmptyFilterError(
+            sample_filter=f"every metric skipped: {skipped}",
+            rubric_filter=rubric_filter,
+        )
+
+    # --- Step 7: build MetricResults + persist --------------------------
+    metadata = dict(judge_metadata or {})
+    cache_stats = cache.stats() if cache is not None else {"hits": 0, "misses": 0}
+    metadata.setdefault("cache_hits", cache_stats["hits"])
+    metadata.setdefault("cache_misses", cache_stats["misses"])
+
+    results = MetricResults(
+        scores=scores,
+        n_samples_graded=len(surviving),
+        n_rubrics_graded=len(df),
+        judge_metadata=metadata,
+    )
+
+    if output_dir is not None:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(output_dir / "verdicts.parquet")
+        results.verdicts_path = output_dir / "verdicts.parquet"
+        (output_dir / "metrics.json").write_text(json.dumps(results.to_dict(), indent=2))
+
+    return MetricResultsView(results=results)

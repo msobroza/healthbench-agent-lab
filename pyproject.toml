@@ -91,7 +91,7 @@ warn_unused_configs = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["sklearn.*", "seaborn.*", "mlflow.*", "dspy.*", "textgrad.*", "tabulate.*"]
+module = ["sklearn.*", "seaborn.*", "mlflow.*", "dspy.*", "textgrad.*", "tabulate.*", "tqdm.*"]
 ignore_missing_imports = true
 
 [tool.pydantic-mypy]
