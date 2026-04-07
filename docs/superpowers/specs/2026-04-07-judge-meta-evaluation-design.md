@@ -47,34 +47,43 @@ This spec adds a small, dataset-agnostic meta-evaluation module that grades a fi
 | Domain placement | `LabelledSample` and `MetricResults` live in `domain/`; `HealthBenchSample` inherits from `LabelledSample` | Pure data types belong in the domain layer; inheritance gives Liskov-clean dataset-agnosticism |
 | Prompt-opt integration | New `JudgeAgreementMetric` + `--target {agent, judge}` flag on existing `optimize-prompt` CLI | Reuses all three optimizer adapters unchanged |
 | Module placement | `src/healthbench_agent/llm_eval/meta_eval.py` (single file) | Co-located with the judge it evaluates; no new package directory |
+| Verdict cache | File-based `VerdictCache` keyed by `sha256(judge_model ‖ prompt_sha ‖ conv_hash ‖ k_index)`; OFF by default in library use, ON by default in CLI use (`--no-cache` to disable) | Calibration sweeps and prompt-opt loops re-grade the same `(judge, prompt, sample)` triple repeatedly; the cache turns the second run into a free replay. Library default OFF avoids surprising filesystem writes for first-time users |
+| Cost preview | `--dry-run` flag on the CLI prints an estimate table (samples × rubrics × n_samples × $/1k tokens) and exits before any LLM call | Inspired by `terraform plan`; the meta-eval grader is the most expensive thing in the project, so users deserve to see the bill before paying it |
+| Happy-path API | Top-level `meta_evaluate(judge_config, ...)` function that wires dataset → judge → runner → MetricResults in one call | sklearn `cross_val_score` analog: most users just want "give me the numbers", not "build the runner yourself". Power users still get `run_meta_eval` for full control |
+| MetricResults UX | Rich class with `__repr__`, `summary()`, `_repr_html_`, `to_pandas`, `to_markdown`, `to_dict`, `load()`, `verdicts()`, `compare(other)`, `plot_calibration_curve()`, `plot_dimension_confusion()` and a `SCHEMA_VERSION` constant | Following sklearn / transformers conventions: results object should be inspectable in the REPL, render nicely in Jupyter, save/load round-trip, and produce its own plots without the user touching matplotlib |
+| Test/demo helpers | `FakeJudge` (deterministic strategies) and `demo_labelled_set()` (3 hand-built samples with gold + adversarial pairs) ship in the library, not just in tests | Lets users try the API end-to-end with no API key; sklearn ships `make_classification`, transformers ships `pipeline("sentiment-analysis", model=…)` smoke samples for the same reason |
+| Progress + errors | `tqdm` progress bar (auto-disabled in non-TTY); error messages name the active filters and suggest the next action (e.g. "no rubrics matched `axis_filter('emergency')` — try `meta-evaluate-judge list-metadata-keys`") | DX polish; CI logs stay clean while interactive runs get feedback; errors that name the missing knob halve the time-to-first-success |
+| CLI verbs | `argparse` subcommands: `run` / `regenerate` / `compare` / `list-metrics` / `list-metadata-keys` / `clear-cache` | Six verbs is enough to justify subparsers over a flat flag namespace; mirrors `git`, `docker`, `mlflow` |
 
 ## Module Structure
 
 ```
 src/healthbench_agent/domain/
-    meta_evaluation.py      # NEW — LabelledSample, MetricResults
+    meta_evaluation.py      # NEW — LabelledSample, MetricResults (with summary/load/compare/plot methods + _repr_html_), SCHEMA_VERSION
     rubric.py               # EDIT — RubricItem gains optional SPEC.md fields
     dataset.py              # EDIT — HealthBenchSample now inherits from LabelledSample
 
 src/healthbench_agent/llm_eval/
-    meta_eval.py            # NEW — registry + 8 built-in metrics + run_meta_eval + composite_fitness + filter helpers + EmptyFilterError
-    cli_meta_eval.py        # NEW — argparse → run_meta_eval; HealthBench glue lives here
+    meta_eval.py            # NEW — registry + 8 built-in metrics + run_meta_eval + composite_fitness + filter helpers + EmptyFilterError + meta_evaluate() happy path + FakeJudge + demo_labelled_set
+    verdict_cache.py        # NEW — file-based VerdictCache keyed by (judge_model, prompt_sha, conv_hash, k_index)
+    cli_meta_eval.py        # NEW — argparse with subcommands: run / regenerate / compare / list-metrics / list-metadata-keys
 
 src/healthbench_agent/prompt_optimization/
     metric.py               # EDIT — add JudgeAgreementMetric, extend EndToEndMetric with sample_filter/rubric_filter, re-export EmptyFilterError
     cli.py                  # EDIT — add --target {agent, judge}, --rubric-axis, --metadata flags
 
 tests/llm_eval/
-    test_meta_eval.py       # NEW — pure-metric ZOMBIES tests + runner with fake judge
+    test_meta_eval.py       # NEW — pure-metric ZOMBIES tests + runner with FakeJudge
+    test_verdict_cache.py   # NEW — cache hit/miss/disabled paths
 
 tests/domain/
-    test_meta_evaluation.py # NEW — LabelledSample/HealthBenchSample inheritance tests
+    test_meta_evaluation.py # NEW — LabelledSample/HealthBenchSample inheritance + MetricResults UX tests
 
 notebooks/
-    04_judge_meta_evaluation.ipynb   # NEW — load parquet, plot, inter-judge join
+    04_judge_meta_evaluation.ipynb   # NEW — uses MetricResults.load + plot helpers; no manual matplotlib
 
-pyproject.toml              # EDIT — register meta-evaluate-judge console script
-CLAUDE.md                   # EDIT — add meta_evaluation.py + meta_eval.py to project layout block
+pyproject.toml              # EDIT — register meta-evaluate-judge console script; add tqdm dependency
+CLAUDE.md                   # EDIT — add meta_evaluation.py + meta_eval.py + verdict_cache.py to project layout block
 ```
 
 ## Dependency Graph
@@ -90,7 +99,11 @@ domain/dataset.py  (modified)
 
 llm_eval/meta_eval.py
     -> domain/      (LabelledSample, MetricResults, RubricItem, JudgeGrader)
-    -> llm_eval/    (sibling files: JudgeConfig, create_judge, LLMJudgeGrader)
+    -> llm_eval/    (sibling files: JudgeConfig, create_judge, LLMJudgeGrader, VerdictCache)
+
+llm_eval/verdict_cache.py
+    -> domain/evaluation     (CriterionVerdict only)
+    -> stdlib only           (hashlib, json, pathlib)
 
 llm_eval/cli_meta_eval.py
     -> llm_eval/meta_eval.py
@@ -232,14 +245,21 @@ class HealthBenchSample(LabelledSample):
 
 ### `MetricResults` — also lives in `domain/`
 
+`MetricResults` is the primary user-facing object — what you get back from `meta_evaluate()`, what you load from a stored run, what you print in a notebook. It carries the scores, the run metadata, and a small bundle of UX helpers (pretty printing, IO, comparison, and plot helpers) so users rarely need to dig into the parquet directly.
+
 ```python
 # src/healthbench_agent/domain/meta_evaluation.py  (same file as LabelledSample)
 
-@dataclass(frozen=True)
+SCHEMA_VERSION: int = 1
+"""Bumped when MetricResults persistence format changes incompatibly."""
+
+
+@dataclass
 class MetricResults:
     """Aggregate meta-evaluation result for one judge run.
 
-    Round-trips to JSON via dataclasses.asdict + json.dump.
+    Round-trips to JSON via dataclasses.asdict + json.dump. Not frozen
+    so callers can attach a verdict DataFrame post-hoc via .attach_verdicts().
 
     Attributes:
         scores: Mapping of metric name to its computed value. Value type
@@ -247,13 +267,125 @@ class MetricResults:
         n_samples_graded: Number of LabelledSamples that produced verdicts.
         n_rubrics_graded: Total (sample, rubric) pairs across all k passes.
         judge_metadata: Run-level header — judge_model, temperature,
-            judge_prompt_sha, n_samples (k), seed.
+            judge_prompt_sha, n_samples (k), seed, dataset name + size,
+            active filter reprs.
+        schema_version: Stamped from SCHEMA_VERSION at write time. Readers
+            check this on load and raise a clear error on a mismatch.
+        verdicts_path: Path of the parquet that produced these scores.
+            Populated by .load(); None for fresh in-memory results.
     """
     scores: dict[str, Any]
     n_samples_graded: int
     n_rubrics_graded: int
     judge_metadata: dict[str, Any]
+    schema_version: int = SCHEMA_VERSION
+    verdicts_path: Path | None = None
+
+    # ---- pretty printing -------------------------------------------------
+
+    def __repr__(self) -> str:
+        """Compact one-line repr — judge model + sample/rubric counts."""
+
+    def summary(self) -> str:
+        """Multi-line tabular summary for terminal printing.
+
+        Format mirrors sklearn's classification_report — fixed-width
+        columns of name / level / value, with run-level metadata above.
+        Example:
+
+            MetricResults(judge=openai/gpt-4.1-2025-04-14, k=7, n=100)
+            ────────────────────────────────────────────────────────────
+            METRIC                  LEVEL    VALUE
+            gold_score              SAMPLE   0.873
+            cohens_kappa            ANY      0.612
+            calibration_curve       ANY      {1: 0.08, 7: 0.04}
+            per_dimension_confusion ANY      {accuracy: ..., ...}
+        """
+
+    def _repr_html_(self) -> str:
+        """Jupyter HTML rendering — same content as summary() in a table.
+
+        Auto-detected by Jupyter so simply printing the result in a
+        notebook cell yields a styled table with no extra import.
+        """
+
+    # ---- conversions -----------------------------------------------------
+
+    def to_pandas(self) -> pd.DataFrame:
+        """Long-form DataFrame with columns metric, level, value.
+
+        Dict-valued scores (calibration_curve, per_dimension_confusion)
+        are exploded into one row per sub-key. Useful for joining results
+        from multiple judges.
+        """
+
+    def to_markdown(self) -> str:
+        """Markdown table suitable for pasting into a PR description or
+        issue comment. Uses pandas' to_markdown under the hood (which uses
+        tabulate, already a transitive dep)."""
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-serialisable dict — wrapper around dataclasses.asdict that
+        omits verdicts_path (paths are not portable)."""
+
+    # ---- IO --------------------------------------------------------------
+
+    @classmethod
+    def load(cls, run_dir: Path | str) -> MetricResults:
+        """Reconstruct a MetricResults from a run directory.
+
+        Reads metrics.json, validates schema_version against the current
+        SCHEMA_VERSION, and records verdicts_path so .verdicts() can lazily
+        load the parquet on demand.
+
+        Raises:
+            ValueError: If schema_version is newer than this code knows.
+        """
+
+    def verdicts(self) -> pd.DataFrame:
+        """Lazily load verdicts.parquet from the same run directory.
+
+        Returns the raw verdict DataFrame so users can rebuild any metric
+        offline. Cached on first call.
+
+        Raises:
+            FileNotFoundError: If MetricResults was constructed in-memory
+                (no verdicts_path attribute).
+        """
+
+    # ---- comparison ------------------------------------------------------
+
+    def compare(self, other: MetricResults) -> pd.DataFrame:
+        """Side-by-side diff of scores against another judge run.
+
+        Returns a DataFrame with columns metric, self, other, delta. Only
+        numeric scores are diffed; dict scores are flagged as 'see details'.
+        Useful for inter-judge comparison.
+        """
+
+    # ---- plot helpers ----------------------------------------------------
+
+    def plot_calibration_curve(self, ax: Any = None) -> Any:
+        """Plot the calibration curve as bootstrap SE vs k.
+
+        Returns a matplotlib Axes (creates one if ax is None) so plots
+        compose into subplots. Mirrors sklearn's RocCurveDisplay style.
+
+        Raises:
+            ImportError: If matplotlib is not installed (suggests `pip
+                install matplotlib`).
+            KeyError: If `calibration_curve` is not in scores.
+        """
+
+    def plot_dimension_confusion(self, ax: Any = None) -> Any:
+        """Plot per-dimension confusion counts as a stacked bar chart.
+
+        Returns a matplotlib Axes. Same composition + import handling as
+        plot_calibration_curve.
+        """
 ```
+
+The methods stay thin — pure formatting/IO/plot wrappers around the existing `scores` dict and the persisted parquet. They are sklearn-style ergonomics, not new business logic.
 
 ### Metric registry
 
@@ -438,6 +570,8 @@ def run_meta_eval(
     rubric_filter: Callable[[RubricItem], bool] | None = None,
     output_dir: Path | None = None,
     judge_metadata: dict[str, Any] | None = None,
+    cache: VerdictCache | None = None,
+    progress: bool | None = None,
 ) -> MetricResults:
     """Grade labelled samples k times with one judge, compute metrics, optionally persist.
 
@@ -448,8 +582,9 @@ def run_meta_eval(
            that should not contribute. Drop the sample if no rubrics survive.
            Raise EmptyFilterError if no (sample, rubric) pair remains.
         3. Loop k = 1..n_samples. For each k, fan out grading via a
-           ThreadPoolExecutor (same pattern as EvalRunner.run_async). For each
-           surviving sample:
+           ThreadPoolExecutor (same pattern as EvalRunner.run_async). Wrap the
+           per-sample loop in a tqdm progress bar (or no-op if progress=False
+           or stdout is not a TTY). For each surviving sample:
              a. Sample-level flow — if sample.gold_response is not None, grade
                 each surviving rubric with points != 0 against
                 (prompt + gold_response). Emit one row per rubric with
@@ -458,6 +593,10 @@ def run_meta_eval(
                 or example_fails, grade just that one rubric against
                 (prompt + example_*). Emit one row with
                 gold_source="example_meets" or "example_fails".
+           Each judge call goes through ``cache`` (if provided): cache hit
+           returns the stored verdict without an API call; cache miss calls
+           the judge and stores the result. The cache key is
+           (judge_model, judge_prompt_sha, conversation_hash, k_index).
         4. Build a single pandas DataFrame with columns:
            prompt_id, criterion_id, criterion, dimension, points, sample_k,
            gold_source, observed_met, expected_met, specialty, language,
@@ -470,8 +609,10 @@ def run_meta_eval(
            Collect numeric/dict scores into ``MetricResults.scores``. If
            every requested metric was skipped, raise ``EmptyFilterError``.
         6. If output_dir is set, write verdicts.parquet (DataFrame) and
-           metrics.json (dataclasses.asdict(result)).
-        7. Return the MetricResults instance.
+           metrics.json (dataclasses.asdict(result), with schema_version
+           stamped in).
+        7. Return the MetricResults instance, with verdicts_path populated
+           when output_dir was set so .verdicts() can lazy-load later.
 
     Args:
         judge: Any JudgeGrader implementation. The CLI builds an LLMJudgeGrader
@@ -487,13 +628,22 @@ def run_meta_eval(
         rubric_filter: Optional rubric-level predicate. None means keep all.
         output_dir: Where to write verdicts.parquet + metrics.json. None = no I/O.
         judge_metadata: Run-level header captured in MetricResults and metrics.json.
+        cache: Optional VerdictCache. None disables caching (every call hits
+            the judge). Default-on in the CLI; default-off in library use to
+            avoid surprising filesystem writes.
+        progress: Show a tqdm progress bar. None = auto (TTY-attached).
+            False to force off (CI / pipes); True to force on.
 
     Returns:
-        MetricResults with one entry per metric in scores.
+        MetricResults with one entry per metric in scores. ``verdicts_path``
+        is set when output_dir was provided so the result can be reloaded
+        later with MetricResults.load().
 
     Raises:
         EmptyFilterError: If sample_filter or rubric_filter eliminate all
-            samples or all rubrics. Error message names the active filters.
+            samples or all rubrics, or if every requested metric is skipped
+            due to level mismatch. Error message names the active filters
+            and the skipped metrics.
     """
 ```
 
@@ -555,6 +705,220 @@ def composite_fitness(
 
 The default fitness for `JudgeAgreementMetric` is the bare `gold_score` metric (not `composite`) because (i) it has a clear target value of 1.0, (ii) it directly reflects production scoring, and (iii) it's the simplest signal for the optimizer to push on. Composite remains available for users who want to combine it with κ or other metrics.
 
+### `meta_evaluate()` — top-level happy-path API
+
+`run_meta_eval` is the power-user surface; most users want a one-liner that wires the judge, the dataset, the filters, and the cache for them. `meta_evaluate()` is that one-liner.
+
+```python
+# src/healthbench_agent/llm_eval/meta_eval.py
+
+def meta_evaluate(
+    judge_config: str | Path | JudgeConfig,
+    *,
+    subset: str = "consensus",
+    sample_size: int = 100,
+    n_samples: int = 7,
+    temperature: float = 1.0,
+    metric_names: list[str] | None = None,
+    sample_filter: Callable[[LabelledSample], bool] | None = None,
+    rubric_filter: Callable[[RubricItem], bool] | None = None,
+    output_dir: Path | str | None = None,
+    cache: bool | VerdictCache = True,
+    progress: bool | None = None,
+    seed: int = 0,
+) -> MetricResults:
+    """Meta-evaluate one judge end-to-end with sensible defaults.
+
+    The hello-world entry point. Loads the named HealthBench subset,
+    stratifies + samples, populates gold-label fields from physician
+    ideal completions, builds the judge from config, runs the meta-eval,
+    and returns a MetricResults you can ``print()`` or ``.summary()``.
+
+    Mirrors sklearn.model_selection.cross_val_score in spirit: one call,
+    sensible defaults, returns a rich result object that knows how to
+    pretty-print itself.
+
+    Args:
+        judge_config: Path to a judge YAML, or a constructed JudgeConfig.
+        subset: HealthBench subset name. Default 'consensus'.
+        sample_size: How many samples to draw (stratified by theme).
+        n_samples: Independent grading passes (k).
+        temperature: Override applied to the judge model so k>1 is
+            meaningful. Production grader stays deterministic.
+        metric_names: Which metrics to compute. None = auto by dataset.
+        sample_filter / rubric_filter: Optional callables built via
+            axis_filter / metadata_filter / specialty_filter helpers,
+            or any user-supplied predicate.
+        output_dir: Where to persist verdicts.parquet + metrics.json.
+            None = no I/O (in-memory only).
+        cache: True = use the default ~/.cache/healthbench_agent cache.
+            False = no caching. Or pass a custom VerdictCache instance.
+        progress: tqdm bar control (None = auto-TTY).
+        seed: Random seed for stratified sampling.
+
+    Returns:
+        MetricResults that prints itself nicely and can be reloaded with
+        MetricResults.load(output_dir).
+
+    Example:
+        >>> results = meta_evaluate("config/judges/openai_gpt41.yaml")
+        >>> print(results)
+        MetricResults(judge=openai/gpt-4.1, k=7, n=100)
+        >>> results.summary()      # tabular text
+        >>> results.plot_calibration_curve()
+    """
+```
+
+The function is ~40 lines wrapping the existing pieces — no new logic, just a humane default-rich entry point.
+
+### `FakeJudge` and `demo_labelled_set` — try without an API key
+
+Both are exported from `meta_eval.py` so users can run the pipeline end-to-end with zero external dependencies.
+
+```python
+# src/healthbench_agent/llm_eval/meta_eval.py
+
+class FakeJudge(JudgeGrader):
+    """Deterministic JudgeGrader for tests, demos, and docs.
+
+    Implements the JudgeGrader ABC. Each call to grade() returns
+    verdicts according to a configurable strategy:
+
+      - "always_met"   — every criterion meets
+      - "always_fail"  — no criterion meets
+      - "alternating" — first met, then fail, etc.
+      - "match_expected" — read sample.expected[criterion] (perfect judge)
+      - dict[str, bool] — explicit per-criterion verdict map
+
+    Mirrors sklearn.dummy.DummyClassifier — useful for wiring tests
+    without paying for or mocking a real LLM call.
+    """
+    def __init__(self, strategy: str | dict[str, bool] = "match_expected") -> None: ...
+
+    def grade(
+        self,
+        conversation: MessageList,
+        rubric_items: list[RubricItem],
+    ) -> list[CriterionVerdict]: ...
+
+
+def demo_labelled_set() -> list[LabelledSample]:
+    """Hand-built 3-sample labelled set for examples and smoke tests.
+
+    Each sample carries a gold_response, populated `expected`, and one
+    rubric with example_meets/example_fails so both the sample-level
+    and adversarial flows are exercised. Mirrors sklearn.datasets.load_iris
+    or sklearn.datasets.make_classification — small, deterministic, no IO.
+
+    Returns:
+        Three LabelledSample instances ready to feed into meta_evaluate().
+    """
+```
+
+Combined, they make the smallest possible smoke test:
+
+```python
+from healthbench_agent.llm_eval import (
+    FakeJudge, demo_labelled_set, run_meta_eval
+)
+
+results = run_meta_eval(
+    FakeJudge("match_expected"),
+    demo_labelled_set(),
+    dimension_extractor=lambda r: r.category,
+)
+print(results)  # gold_score == 1.0, no API key needed
+```
+
+### `VerdictCache` — file-based judge call cache
+
+Lives in `llm_eval/verdict_cache.py` so the pure-data `meta_eval.py` does not gain filesystem responsibilities.
+
+```python
+# src/healthbench_agent/llm_eval/verdict_cache.py
+
+class VerdictCache:
+    """File-based cache for individual judge verdicts.
+
+    Enables iterating on metric definitions, filters, or output formats
+    without re-paying the LLM. Cache key is
+
+        sha256(judge_model || judge_prompt_sha || conversation_hash || k_index)
+
+    where conversation_hash is sha256 of the JSON-serialised MessageList +
+    rubric criterion text. Each cache entry is one tiny JSON file under
+    ``root / first2 / rest.json``, like git's loose object format.
+
+    Attributes:
+        root: Cache directory. Defaults to
+            ``$XDG_CACHE_HOME/healthbench_agent/verdicts/`` (or
+            ``~/.cache/healthbench_agent/verdicts/`` if XDG_CACHE_HOME
+            is unset).
+        enabled: When False the cache is a no-op (every get returns None,
+            put is a no-op). Useful for benchmarking and tests.
+    """
+    def __init__(
+        self,
+        root: Path | None = None,
+        enabled: bool = True,
+    ) -> None: ...
+
+    def make_key(
+        self,
+        judge_model: str,
+        judge_prompt_sha: str,
+        conversation: MessageList,
+        rubric_text: str,
+        k_index: int,
+    ) -> str: ...
+
+    def get(self, key: str) -> CriterionVerdict | None: ...
+    def put(self, key: str, verdict: CriterionVerdict) -> None: ...
+    def clear(self) -> None:
+        """Delete every cached verdict. Used by tests and ``--clear-cache``."""
+
+    def stats(self) -> dict[str, int]:
+        """Return ``{"hits": int, "misses": int, "size_bytes": int}``."""
+```
+
+The cache is **off** when `meta_eval` is called as a library (no surprising filesystem writes), and **on by default** when invoked through the CLI (the `--no-cache` flag opts out). Cache misses fall through to the judge transparently; the `MetricResults.judge_metadata` records `cache_hits` and `cache_misses` so users see the savings on each run.
+
+### Developer experience: progress bars, dry-run, error messages
+
+Three small but high-leverage UX features that touch the runner and the CLI without complicating the core types.
+
+**Progress bars (tqdm).** `run_meta_eval` and `meta_evaluate` accept `progress: bool | None = None`. The default auto-detects whether stdout is a TTY (`sys.stdout.isatty()`). The bar wraps the per-sample loop and shows `Grading samples 23/100 [k=3/7] ETA 1:23`. In CI / piped output it's silently suppressed, so logs stay clean.
+
+**Cost preview / `--dry-run`.** The CLI accepts `--dry-run`. When set, the runner stops after step 2 of `run_meta_eval` (filter resolution) and prints:
+
+```
+Dry run summary
+─────────────────────────────────────────────
+Judge:           openai/gpt-4.1-2025-04-14
+Subset:          consensus  (sample_size=100, seed=0)
+Samples:         100  (after filters: 92)
+Rubrics:         418  (after filters: 287)
+k passes:        7
+Adversarial:     43 example_meets, 39 example_fails
+Total LLM calls: (92 × 287 + 82) × 7 = 185,402
+Cache hits:      0      (use --no-cache to disable cache)
+Estimated cost:  ~$2.74  (est. 350 in / 60 out tokens per call @ openai/gpt-4.1)
+```
+
+Token estimates come from a small `_estimate_cost(judge_config, n_calls)` helper that knows per-model rates for the supported judges; unknown models print "no rate table — pass --skip-cost". `--dry-run` exits zero — it never calls the judge. Inspired by `terraform plan` and `pip install --dry-run`.
+
+**Helpful error messages.** Every error class in this feature names the next user action.
+
+| Error | Message template |
+|---|---|
+| `EmptyFilterError(sample, rubric)` | `All N samples were dropped by sample_filter=metadata_filter(language='fr'). The HealthBench consensus subset is English-only — try removing the --metadata language=fr flag. Available metadata keys: {keys}.` |
+| `EmptyFilterError` (every metric skipped) | `Requested metrics {names} are all SAMPLE-level, but the dataset has no gold_response. Use --metrics adversarial_prf1,adversarial_accuracy or load a dataset with gold responses.` |
+| Missing API key | `OPENAI_API_KEY is not set. Either export it (export OPENAI_API_KEY=sk-...) or pass --openai-api-key on the CLI, or set openai_api_key in your judge YAML.` |
+| Schema-version mismatch on `MetricResults.load` | `runs/.../metrics.json was written with schema_version=2 but this build understands up to schema_version=1. Upgrade healthbench-agent or pass an older run.` |
+| Missing matplotlib for `plot_*` | `Plotting requires matplotlib. Install with: uv sync --extra viz` |
+
+A small `_format_filter_error(sample_filter, rubric_filter, available_keys)` helper builds these messages so the runner stays terse.
+
 ## Parquet Schema (`verdicts.parquet`)
 
 | column | type | meaning |
@@ -578,8 +942,21 @@ Run-level fields (`judge_model`, `temperature`, `judge_prompt_sha`, `n_samples`,
 
 ### `meta-evaluate-judge`
 
+The CLI uses argparse subparsers so each verb has its own focused flag set. The `run` subcommand is the default — when the first positional argument starts with `-`, argparse falls back to `run` so existing scripts keep working.
+
 ```
-uv run meta-evaluate-judge \
+meta-evaluate-judge run [args]                  # grade a labelled set with one judge
+meta-evaluate-judge regenerate RUN_DIR          # recompute metrics from a stored parquet
+meta-evaluate-judge compare RUN1 RUN2           # side-by-side score diff
+meta-evaluate-judge list-metrics                # name | level | description
+meta-evaluate-judge list-metadata-keys          # discoverable filter keys + values
+meta-evaluate-judge clear-cache                 # delete the verdict cache
+```
+
+#### `run` (default)
+
+```
+uv run meta-evaluate-judge run \
     --judge-config config/judges/openai_gpt41.yaml \
     --subset consensus \
     --sample-size 100 \
@@ -589,14 +966,17 @@ uv run meta-evaluate-judge \
     --rubric-axis accuracy \
     --metadata clinical_urgency=emergency \
     --metadata language=en \
-    --output-dir runs/meta_eval/2026-04-07_openai/
+    --output-dir runs/meta_eval/2026-04-07_openai/ \
+    --dry-run                          # estimate cost, exit before any LLM call
+    --no-cache                         # disable verdict cache for this run
+    --no-progress                      # force tqdm off (default = auto-TTY)
 ```
 
 `--rubric-axis` is repeatable and builds an `axis_filter`. `--metadata KEY=VALUE` is repeatable and builds a `metadata_filter`. Both are optional; omitting them keeps every sample and rubric.
 
-`cli_meta_eval.py` flow (~100 lines):
+`cli_meta_eval.py` flow (~120 lines):
 
-1. Parse args, including repeatable `--rubric-axis` and `--metadata KEY=VALUE` flags.
+1. Parse args, including repeatable `--rubric-axis` and `--metadata KEY=VALUE` flags, and the DX flags `--dry-run`, `--no-cache`, `--no-progress`.
 2. `dataset = load_dataset("consensus")`.
 3. `sampled = stratified_sample(dataset, n=sample_size, tag_prefix="theme", seed=seed)`.
 4. **Populate gold-label fields in place** for each `HealthBenchSample` in `sampled.samples` that has `ideal_completions_data`:
@@ -615,13 +995,56 @@ uv run meta-evaluate-judge \
    - `rubric_filter = axis_filter(*args.rubric_axis) if args.rubric_axis else None`
    - `sample_filter = metadata_filter(**parsed_metadata) if parsed_metadata else None`
 7. Build a `JudgeConfig` from the YAML; override `temperature` from CLI.
-8. `judge = create_judge(config)`.
-9. `results = run_meta_eval(judge, sampled.samples, dimension_extractor=axis_extractor, sample_filter=sample_filter, rubric_filter=rubric_filter, ...)`.
-10. Catch `EmptyFilterError` → exit with a clear message naming the active filters.
-11. Optional MLflow logging (params + scalar metrics + artifacts, tagged `run_type=meta_eval`). Filter args are logged as MLflow params (`filter_axis`, `filter_metadata`) so runs are reproducible from the MLflow UI alone.
-12. Print summary.
+8. Build the cache: `cache = VerdictCache(enabled=not args.no_cache)`.
+9. If `--dry-run`: call `_estimate_cost(...)`, print the dry-run table from the Developer Experience section, exit 0.
+10. `judge = create_judge(config)`.
+11. `results = run_meta_eval(judge, sampled.samples, dimension_extractor=axis_extractor, sample_filter=sample_filter, rubric_filter=rubric_filter, cache=cache, progress=not args.no_progress, ...)`.
+12. Catch `EmptyFilterError` → exit non-zero with the helpful message described in the Developer Experience section.
+13. Optional MLflow logging (params + scalar metrics + artifacts, tagged `run_type=meta_eval`). Filter args + cache stats logged as MLflow params (`filter_axis`, `filter_metadata`, `cache_hits`, `cache_misses`) so runs are reproducible from the MLflow UI alone.
+14. `print(results.summary())`.
 
-Default `--metrics` is empty, meaning "auto-select based on what the dataset contains" using the table in the metric registry section above. `meta-evaluate-judge --list-metrics` prints `name | level | description` for every registered metric and exits — useful for discovering what is available without reading source.
+Default `--metrics` is empty, meaning "auto-select based on what the dataset contains" using the table in the metric registry section above.
+
+#### `regenerate RUN_DIR`
+
+Reads `RUN_DIR/verdicts.parquet`, re-runs the metric registry against it, and overwrites `RUN_DIR/metrics.json` (with the new `schema_version`). Never calls the LLM. The killer feature paired with persisted verdicts: a researcher who just registered a new metric can recompute it across every historical run with one command. Accepts `--metrics` to select a subset.
+
+```
+uv run meta-evaluate-judge regenerate runs/meta_eval/2026-04-07_openai/ \
+    --metrics adversarial_prf1,per_criterion_metrics
+```
+
+#### `compare RUN1 RUN2`
+
+Loads two `MetricResults` via `MetricResults.load`, calls `.compare()`, and prints the resulting DataFrame. Optional `--output FILE.md` writes a markdown table for pasting into a PR.
+
+```
+$ uv run meta-evaluate-judge compare runs/openai/ runs/gemini/
+METRIC                  OPENAI   GEMINI   Δ
+gold_score              0.873    0.812    -0.061
+cohens_kappa            0.612    0.589    -0.023
+calibration_curve@k=7   0.04     0.05     +0.01
+```
+
+#### `list-metrics`
+
+Prints `name | level | description` for every registered metric and exits. Sample output is in the metric registry section above. Discoverability without reading source — like `pytest --markers` or `pip list`.
+
+#### `list-metadata-keys`
+
+Loads the labelled set (using the same `--subset`, `--sample-size`, `--seed` flags as `run`) and prints every distinct key in `LabelledSample.metadata` plus its top-5 most common values. No judge calls. Helps users learn what filters are even possible on a given dataset.
+
+```
+$ uv run meta-evaluate-judge list-metadata-keys --subset consensus
+KEY                       N    TOP VALUES
+language                  100  en (100)
+specialty                 100  general (54), pediatrics (18), cardiology (12), ...
+clinical_urgency          100  routine (61), urgent (28), emergency (11)
+```
+
+#### `clear-cache`
+
+Deletes the verdict cache directory. Prints how many entries / MB were freed.
 
 ### `optimize-prompt --target judge`
 
@@ -739,6 +1162,17 @@ ZOMBIES coverage on the pure metric functions using synthetic verdict DataFrames
 | CLI smoke test: `--rubric-axis accuracy --metadata language=en` | filter callables forwarded to `run_meta_eval` |
 | CLI smoke test: `--list-metrics` exits 0 and prints every registered metric with name + level + description | stdout contains all 8 built-ins, no judge call made |
 | CLI smoke test: `EmptyFilterError` → CLI exits non-zero with clear message | exit code != 0, message mentions both filters |
+| CLI smoke test: `list-metadata-keys` on a labelled set with mixed `language`, `specialty`, `metadata` keys | stdout lists every observed key + a few example values, no judge call made |
+| CLI smoke test: `--dry-run` prints cost-estimate table and exits 0 before any judge call | judge mock receives 0 calls; stdout contains "DRY RUN" + token estimate |
+| CLI smoke test: `regenerate RUN_DIR` replays metrics from stored parquet | judge mock receives 0 calls; new `metrics.json` matches old |
+| CLI smoke test: `compare RUN1 RUN2` prints a diff table with both judges' scalars | stdout has both judge model names and a delta column |
+| CLI smoke test: `clear-cache` removes the cache directory and prints freed-bytes summary | directory is gone, exit code 0 |
+| `meta_evaluate(judge_config, ...)` happy-path with `FakeJudge` | returns `MetricResults` with non-empty `scores`, runs end-to-end without touching the network |
+| `meta_evaluate` with `cache=True` (default in CLI) | second call hits cache (assert via `cache.stats()`); runtime measurably shorter |
+| `meta_evaluate` with `cache=False` | every call goes to the judge; cache directory not created |
+| `tqdm` progress bar suppressed when stdout is not a TTY (`progress=None` auto-detect) | no `tqdm` instance created (assert via patch) |
+| `tqdm` progress bar enabled when `progress=True` even in non-TTY | bar instance created |
+| Helpful error: empty `axis_filter` produces an error mentioning the filter and suggesting `list-metadata-keys` | message regex matches |
 
 ### `tests/domain/test_meta_evaluation.py`
 
@@ -752,31 +1186,81 @@ ZOMBIES coverage on the pure metric functions using synthetic verdict DataFrames
 | Existing `HealthBenchSample` keyword construction still works | ok |
 | A function annotated `def foo(s: LabelledSample)` accepts a `HealthBenchSample` | mypy passes |
 | Setting `gold_response` and `expected` on a loaded `HealthBenchSample` works | mutation succeeds (dataclass not frozen) |
+| `MetricResults.__repr__` is short and includes judge model | matches regex |
+| `MetricResults.summary()` returns a multi-line string with one row per metric | line count == len(scores) + header |
+| `MetricResults._repr_html_` returns a string starting with `<table` | True |
+| `MetricResults.to_pandas()` returns a DataFrame with the score columns | columns match `scores.keys()` |
+| `MetricResults.to_dict()` round-trips through `MetricResults(**d)` | equal |
+| `MetricResults.load(run_dir)` reads `metrics.json` + sets `verdicts_path` | fields populated; `verdicts()` returns the parquet |
+| `MetricResults.load(run_dir)` raises when `schema_version` is unknown | `ValueError` mentioning the version mismatch |
+| `MetricResults.compare(other)` returns a 2-column DataFrame indexed by metric name | columns are both judge model names |
+| `MetricResults.plot_calibration_curve(ax=None)` returns a matplotlib Axes | not None |
+| `MetricResults.plot_dimension_confusion(ax=None)` returns a matplotlib Axes | not None |
+| `demo_labelled_set()` returns 3 `LabelledSample` instances with mixed gold + adversarial pairs | counts: gold=2, adversarial=1 (or whatever the demo defines) |
+| `FakeJudge(strategy="always_met")` returns `criteria_met=True` for every rubric | True for all |
+| `FakeJudge(strategy="alternating")` flips per call within one `grade()` call | even-index True, odd-index False |
+| `FakeJudge(strategy="match_expected")` reads `RubricItem.expected_correct_answer` if set | matches expected |
+| `FakeJudge(strategy={"crit_a": True, "crit_b": False})` honours dict mapping | per-criterion verdicts match |
+
+### `tests/llm_eval/test_verdict_cache.py`
+
+| Test | Expected |
+|---|---|
+| `VerdictCache(enabled=False).get(any_key)` always returns `None` | True |
+| `VerdictCache(enabled=False).put(...)` is a no-op (no file written) | directory empty |
+| `make_key` is deterministic across instances with same inputs | equal |
+| `make_key` differs when any of model / prompt_sha / conv_hash / k_index differ | all 4 distinct |
+| `put` then `get` round-trips a `CriterionVerdict` | equal |
+| `get` on a missing key returns `None` (cache miss) | True |
+| Cache files are sharded by first-2 hex characters | path matches `root/ab/cdef…json` |
+| `clear()` removes the cache root directory | directory gone |
+| `stats()` reports hits / misses / writes | counters match calls |
+| Two `VerdictCache` instances pointing at the same root see each other's writes | True |
 
 Coverage targets: 100% on pure metric functions, ≥80% module-wide per project policy.
 
 ## Notebook — `notebooks/04_judge_meta_evaluation.ipynb`
 
-Five cells:
-1. Load `verdicts.parquet` + `metrics.json` for one judge run.
-2. Plot the calibration curve (matplotlib).
-3. Plot per-dimension confusion as a heatmap (seaborn).
-4. Load a second `verdicts.parquet` (different judge), join on `(prompt_id, criterion)`, compute inter-judge κ, show the disagreement table sorted by `points`.
-5. Print `composite_fitness` for both judges.
+Five cells, all built on `MetricResults` methods so the user never touches matplotlib directly:
 
-No new analysis-registry entries — meta-eval artifacts live in `runs/meta_eval/`, not the analysis output directory.
+```python
+# Cell 1 — load
+from healthbench_agent.domain.meta_evaluation import MetricResults
+results = MetricResults.load("runs/meta_eval/2026-04-07_gpt-4-1")
+results  # rich HTML repr in Jupyter
+
+# Cell 2 — calibration
+results.plot_calibration_curve()  # returns Axes
+
+# Cell 3 — per-dimension confusion
+results.plot_dimension_confusion()  # returns Axes
+
+# Cell 4 — compare two judges
+other = MetricResults.load("runs/meta_eval/2026-04-07_gemini-2-5")
+results.compare(other)  # DataFrame indexed by metric name
+
+# Cell 5 — composite fitness for both
+from healthbench_agent.llm_eval.meta_eval import composite_fitness
+composite_fitness(results), composite_fitness(other)
+```
+
+No manual matplotlib in the notebook, no new analysis-registry entries — meta-eval artifacts live in `runs/meta_eval/`, not the analysis output directory.
 
 ## Dependencies
 
-No new third-party packages.
+One new required dependency (`tqdm`); matplotlib already ships via the analysis layer.
 
-| Need | Reuse |
+| Need | Source |
 |---|---|
 | Cohen's κ | `sklearn.metrics.cohen_kappa_score` (already a dep) |
+| Precision / recall / F1 | `sklearn.metrics.precision_recall_fscore_support` (already a dep) |
 | Bootstrap SE | `scipy.stats` + `numpy` (already deps) |
 | Krippendorff's α | Inline closed-form for binary, two-coder case (~15 lines) |
 | Concurrent grading | `concurrent.futures.ThreadPoolExecutor` (stdlib) |
 | Parquet I/O | `pandas.DataFrame.to_parquet` + `pyarrow` (already in deps for analysis) |
+| Verdict cache I/O | `hashlib` + `json` + `pathlib` (stdlib) |
+| Progress bars | **NEW** `tqdm` (small, pure-Python; auto-disables in non-TTY) |
+| Plot helpers (`plot_calibration_curve`, `plot_dimension_confusion`) | `matplotlib` (already a dep via the analysis layer) |
 
 ## Migration Risk: `HealthBenchSample` Inheritance
 
@@ -804,6 +1288,10 @@ The migration is mechanical (keyword args + a few extra `gold_response=None` def
 11. ~~Empty filter behaviour~~ → `EmptyFilterError` (subclass of `ValueError`) raised by `run_meta_eval`; CLI catches and exits non-zero with the active filter names.
 12. ~~SPEC.md schema fields~~ → optional with safe defaults on both `RubricItem` and `LabelledSample`; HealthBench loaders ignore them, future SPEC.md loaders populate them.
 13. ~~Metric level discovery~~ → each metric declares `MetricLevel ∈ {SAMPLE, RUBRIC, ANY}` at registration; runner filters rows per level; CLI exposes `meta-evaluate-judge --list-metrics` so users see the level + a one-line description without reading source.
+14. ~~Cost iteration friction~~ → file-based `VerdictCache` keyed by `sha256(judge_model ‖ prompt_sha ‖ conv_hash ‖ k_index)` (OFF in library, ON in CLI), `--dry-run` cost preview, and `regenerate RUN_DIR` subcommand let users tune metrics/filters without re-paying for verdicts.
+15. ~~Beginner ergonomics~~ → top-level `meta_evaluate(judge_config, ...)` happy-path function, `FakeJudge` + `demo_labelled_set()` for an offline smoke run, `tqdm` progress bars (auto-detected), and a rich `MetricResults` class with `__repr__` / `_repr_html_` / `summary()` / `compare()` / `plot_*` methods so beginners do not need to touch matplotlib or pandas to inspect a run.
+16. ~~Discoverability of metadata filters~~ → new CLI subcommand `list-metadata-keys` walks the dataset and prints every observed key with example values, so users can build correct `--metadata KEY=VALUE` flags without reading the dataset by hand.
+17. ~~Artifact format versioning~~ → `MetricResults.schema_version` (constant `SCHEMA_VERSION = 1`) is written to `metrics.json`; `MetricResults.load` raises a clear `ValueError` on unknown versions so future format breaks fail loud, not silent.
 
 ## Out of Scope (Follow-up Issues)
 
