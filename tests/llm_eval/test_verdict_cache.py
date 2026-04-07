@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 from healthbench_agent.domain.evaluation import CriterionVerdict
-from healthbench_agent.llm_eval.verdict_cache import VerdictCache
+from healthbench_agent.domain.rubric import RubricItem
+from healthbench_agent.llm_eval.verdict_cache import CachedJudgeGrader, VerdictCache
 
 
 @pytest.fixture
@@ -120,3 +122,78 @@ def test_two_instances_share_cache_files(tmp_path: Path):
     key = a.make_key("m", "sha", _conv(), "rt", 1)
     a.put(key, CriterionVerdict(criterion="rt", criteria_met=True, explanation=""))
     assert b.get(key) is not None
+
+
+def _make_inner(verdicts: list[CriterionVerdict]) -> MagicMock:
+    inner = MagicMock(spec=["grade"])
+    inner.grade.return_value = verdicts
+    return inner
+
+
+def test_cached_proxy_first_call_delegates(cache: VerdictCache):
+    verdict = CriterionVerdict(criterion="r1", criteria_met=True, explanation="")
+    inner = _make_inner([verdict])
+    proxy = CachedJudgeGrader(inner, cache, "openai/gpt-4.1@1.0", "sha1", k_index=1)
+    out = proxy.grade(_conv(), [RubricItem(criterion="r1", points=1.0)])
+    assert out == [verdict]
+    assert inner.grade.call_count == 1
+
+
+def test_cached_proxy_second_call_hits_cache(cache: VerdictCache):
+    verdict = CriterionVerdict(criterion="r1", criteria_met=True, explanation="")
+    inner = _make_inner([verdict])
+    proxy = CachedJudgeGrader(inner, cache, "openai/gpt-4.1@1.0", "sha1", k_index=1)
+    rubrics = [RubricItem(criterion="r1", points=1.0)]
+    proxy.grade(_conv(), rubrics)
+    proxy.grade(_conv(), rubrics)
+    assert inner.grade.call_count == 1
+
+
+def test_cached_proxy_distinct_k_index_yields_separate_entries(cache: VerdictCache):
+    verdict = CriterionVerdict(criterion="r1", criteria_met=True, explanation="")
+    inner = _make_inner([verdict])
+    rubrics = [RubricItem(criterion="r1", points=1.0)]
+    CachedJudgeGrader(inner, cache, "m", "s", k_index=1).grade(_conv(), rubrics)
+    CachedJudgeGrader(inner, cache, "m", "s", k_index=2).grade(_conv(), rubrics)
+    assert inner.grade.call_count == 2  # both missed
+
+
+def test_cached_proxy_disabled_cache_always_delegates(tmp_path: Path):
+    disabled = VerdictCache(root=tmp_path / "off", enabled=False)
+    inner = _make_inner([CriterionVerdict(criterion="r1", criteria_met=True, explanation="")])
+    proxy = CachedJudgeGrader(inner, disabled, "m", "s", k_index=1)
+    rubrics = [RubricItem(criterion="r1", points=1.0)]
+    proxy.grade(_conv(), rubrics)
+    proxy.grade(_conv(), rubrics)
+    assert inner.grade.call_count == 2
+
+
+def test_cached_proxy_batches_misses_into_one_inner_call(cache: VerdictCache):
+    v1 = CriterionVerdict(criterion="r1", criteria_met=True, explanation="")
+    v2 = CriterionVerdict(criterion="r2", criteria_met=False, explanation="")
+    inner = _make_inner([v1, v2])
+    proxy = CachedJudgeGrader(inner, cache, "m", "s", k_index=1)
+    out = proxy.grade(
+        _conv(),
+        [RubricItem(criterion="r1", points=1.0), RubricItem(criterion="r2", points=1.0)],
+    )
+    assert out == [v1, v2]
+    assert inner.grade.call_count == 1
+    args, _ = inner.grade.call_args
+    assert len(args[1]) == 2  # both rubrics passed in one delegated call
+
+
+def test_cached_proxy_preserves_input_rubric_order(cache: VerdictCache):
+    v1 = CriterionVerdict(criterion="r1", criteria_met=True, explanation="")
+    v2 = CriterionVerdict(criterion="r2", criteria_met=False, explanation="")
+    # Pre-populate r1, force a miss on r2.
+    cached_key = cache.make_key("m", "s", _conv(), "r1", 1)
+    cache.put(cached_key, v1)
+    inner = _make_inner([v2])  # only the missed one
+    proxy = CachedJudgeGrader(inner, cache, "m", "s", k_index=1)
+    out = proxy.grade(
+        _conv(),
+        [RubricItem(criterion="r1", points=1.0), RubricItem(criterion="r2", points=1.0)],
+    )
+    assert out[0] == v1
+    assert out[1] == v2
