@@ -21,6 +21,8 @@ from pathlib import Path
 from statistics import fmean
 from typing import TYPE_CHECKING, Any, cast
 
+from tqdm.contrib.concurrent import thread_map
+
 from healthbench_agent.domain.conversation import MessageList
 from healthbench_agent.domain.evaluation import CriterionVerdict
 from healthbench_agent.domain.judge import JudgeGrader
@@ -748,20 +750,14 @@ def run_meta_eval(
     show_progress = progress if progress is not None else sys.stdout.isatty()
     chunks: list[list[dict[str, Any]]]
     if show_progress:
-        try:
-            from tqdm.contrib.concurrent import thread_map
-
-            chunks = list(
-                thread_map(
-                    work,
-                    pairs,
-                    max_workers=meta_eval_max_workers,
-                    desc="Grading samples",
-                )
+        chunks = list(
+            thread_map(
+                work,
+                pairs,
+                max_workers=meta_eval_max_workers,
+                desc="Grading samples",
             )
-        except ImportError:
-            with ThreadPoolExecutor(max_workers=meta_eval_max_workers) as pool:
-                chunks = list(pool.map(work, pairs))
+        )
     else:
         with ThreadPoolExecutor(max_workers=meta_eval_max_workers) as pool:
             chunks = list(pool.map(work, pairs))
