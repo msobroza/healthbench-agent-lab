@@ -1,4 +1,5 @@
 """HealthBench rubric item domain model."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -37,7 +38,14 @@ class RubricItem:
         return f"[{self.points}] {self.criterion}"
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize to a JSON-compatible dict."""
+        """Serialize to a JSON-compatible dict.
+
+        Returns:
+            Dict that always includes ``criterion``, ``points``, and ``tags``.
+            Any of ``criterion_id``, ``category``, ``example_meets``, and
+            ``example_fails`` whose value is not None are also included;
+            None-valued optional fields are omitted.
+        """
         payload: dict[str, Any] = {
             "criterion": self.criterion,
             "points": self.points,

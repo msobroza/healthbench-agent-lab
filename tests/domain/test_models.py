@@ -113,15 +113,17 @@ def test_rubric_item_optional_spec_md_fields_default_to_none():
 
 
 def test_rubric_item_from_dict_reads_spec_md_fields():
-    item = RubricItem.from_dict({
-        "criterion": "states emergency referral",
-        "points": 5.0,
-        "tags": ["axis: emergency"],
-        "criterion_id": "C-001",
-        "category": "emergency",
-        "example_meets": "Call 911 immediately.",
-        "example_fails": "Take some aspirin.",
-    })
+    item = RubricItem.from_dict(
+        {
+            "criterion": "states emergency referral",
+            "points": 5.0,
+            "tags": ["axis: emergency"],
+            "criterion_id": "C-001",
+            "category": "emergency",
+            "example_meets": "Call 911 immediately.",
+            "example_fails": "Take some aspirin.",
+        }
+    )
     assert item.criterion_id == "C-001"
     assert item.category == "emergency"
     assert item.example_meets == "Call 911 immediately."
@@ -129,12 +131,14 @@ def test_rubric_item_from_dict_reads_spec_md_fields():
 
 
 def test_rubric_item_from_dict_ignores_unknown_keys():
-    item = RubricItem.from_dict({
-        "criterion": "x",
-        "points": 1.0,
-        "tags": [],
-        "future_key": "ignored",
-    })
+    item = RubricItem.from_dict(
+        {
+            "criterion": "x",
+            "points": 1.0,
+            "tags": [],
+            "future_key": "ignored",
+        }
+    )
     assert item.criterion == "x"
 
 
