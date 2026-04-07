@@ -128,10 +128,52 @@ uv run optimize-prompt \
     --sample-size 20 --steps 5
 ```
 
+#### 🎯 Optimizing one prompt inside a multi-agent pipeline
+
+Multi-agent pipelines contain several prompts — one per sub-agent, each
+identified by its `prompt_key` in the YAML file. Pass `--target-agent NAME`
+to pick exactly which sub-agent's instruction to optimize. Every other
+sub-agent keeps loading its own instruction from the YAML file on disk,
+so only the targeted node varies across trials.
+
+```bash
+# Optimize just the reviewer in the multi-agent pipeline
+uv run optimize-prompt \
+    --optimizer critique_refine \
+    --agent-config config/agents/multi_agent.yaml \
+    --target-agent reviewer_agent \
+    --sample-size 20 --max-trials 10
+
+# Optimize the triage classifier instead
+uv run optimize-prompt \
+    --optimizer critique_refine \
+    --agent-config config/agents/multi_agent.yaml \
+    --target-agent triage_agent
+```
+
+The output YAML is written next to the source prompt file as
+`v2_optimized_<target>.yaml`, using the target's original `prompt_key`
+(e.g. `reviewer_instruction`), so diffing or merging back into the
+source file is straightforward.
+
+> ⚠️ **When `--target-agent` is required.** A root agent whose
+> `orchestration` is `sequential`, `loop`, or `parallel` builds a pure
+> composite (`SequentialAgent` / `LoopAgent` / `ParallelAgent`) with no
+> `instruction` field, so a root-level override is silently dropped.
+> The CLI refuses to run in that case and lists the available sub-agent
+> names. Targetable nodes are either **leaf agents** or non-leaf agents
+> with `orchestration: routing`.
+
 > ✨ The critique-refine optimizer is **domain-agnostic** — its mutate / critique / refine
 > templates and thinking-styles all live in `prompts/prompt_optimization/v1_critique_refine.yaml`.
 > Specialise it for any vertical by copying the YAML, editing the templates, and pointing
-> `--prompt-path` at your file.
+> `--prompt-path` at your file:
+>
+> ```bash
+> uv run optimize-prompt --optimizer critique_refine \
+>     --agent-config config/agents/baseline_agent.yaml \
+>     --prompt-path prompts/prompt_optimization/v1_legal.yaml
+> ```
 
 ### 📓 Explore the Dataset
 
@@ -179,21 +221,24 @@ uv run pytest tests/ --cov=src/healthbench_agent --cov-report=term-missing
 
 **🟢 Baseline Agent** (`agents/baseline_pipeline.py`)
 - Single `LlmAgent` with `gemini-2.5-flash`
-- Minimal health instruction from `prompts/v1_baseline.yaml`
+- Minimal health instruction from `prompts/baseline_agent/v1_baseline.yaml`
 - No tools — establishes the performance floor
 
 **🔧 Tool-Augmented Agent** (`agents/tool_pipeline.py`)
-- Same model + clinical prompt from `prompts/v1_clinical.yaml`
+- Same model + clinical prompt from `prompts/tool_agent/v1_clinical.yaml`
 - Three medical reference tools:
   - 💊 `drug_reference()` — drug interaction and information lookup
   - 🩺 `symptom_checker()` — symptom analysis and differential suggestions
   - 🚨 `emergency_flag()` — emergency condition detection
 
 **🤝 Multi-Agent Pipeline** (`agents/multi_pipeline.py`)
-- `SequentialAgent` orchestration:
-  - 🔀 **Triage** — classifies urgency and routes
-  - 🎯 **Coordinator** — routes to Emergency or General Health specialist
-  - 📋 **Reviewer** — validates response quality and safety
+- `SequentialAgent` orchestration wired from `prompts/multi_agent/v1_structured.yaml`:
+  - 🔀 **Triage** — classifies urgency and routes (`triage_instruction`)
+  - 🎯 **Coordinator** — routes to Emergency or General Health specialist (`coordinator_instruction`)
+  - 🚨 **Emergency specialist** — high-urgency referral guidance (`emergency_instruction`)
+  - 💊 **General Health specialist** — tool-backed answers (`general_health_instruction`)
+  - 📋 **Reviewer** — validates response quality and safety (`reviewer_instruction`)
+- Optimize any one of the five instructions via `--target-agent` (see below).
 
 ### ⚙️ Orchestration Modes
 

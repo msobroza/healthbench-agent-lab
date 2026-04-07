@@ -9,6 +9,15 @@ Usage::
         --max-trials 50 \
         --subset consensus \
         --seed 42
+
+Multi-agent pipelines contain several prompts (one per sub-agent,
+identified by ``prompt_key``). Optimize a specific sub-agent with
+``--target-agent``::
+
+    uv run optimize-prompt \
+        --agent-config config/agents/multi_agent.yaml \
+        --target-agent reviewer_agent \
+        --optimizer critique_refine
 """
 
 from __future__ import annotations
@@ -18,6 +27,7 @@ import json
 import logging
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -39,6 +49,14 @@ def main() -> None:
         "--agent-config",
         required=True,
         help="Path to agent YAML config (e.g. config/agents/baseline_agent.yaml).",
+    )
+    parser.add_argument(
+        "--target-agent",
+        default=None,
+        help=(
+            "Name of the sub-agent whose prompt should be optimized. "
+            "Required when the pipeline has multiple prompts (e.g. multi_agent)."
+        ),
     )
     parser.add_argument(
         "--optimizer",
@@ -75,6 +93,15 @@ def main() -> None:
         action="store_true",
         help="Run critique-refine in mutation-only mode (no evaluation).",
     )
+    parser.add_argument(
+        "--prompt-path",
+        default=None,
+        help=(
+            "Path to a YAML file with critique-refine templates + "
+            "thinking-styles (critique_refine optimizer only). "
+            "Defaults to prompts/prompt_optimization/v1_critique_refine.yaml."
+        ),
+    )
     args = parser.parse_args()
 
     from healthbench_agent.agent import RootAgentPipelineConfig
@@ -84,21 +111,67 @@ def main() -> None:
         create_prompt_optimizer,
         get_optimizer_config_class,
     )
+    from healthbench_agent.prompt_optimization.metric import (
+        accepts_instruction_override,
+        list_agent_names,
+        locate_target,
+    )
 
-    # Load agent config and extract current prompt
+    # Load agent config and resolve the prompt to optimize
     agent_config = RootAgentPipelineConfig.from_yaml(args.agent_config)
-    current_prompt = load_instruction(agent_config.prompt_path, agent_config.prompt_key)
+
+    if args.target_agent is not None:
+        target_node, effective_prompt_path = locate_target(agent_config, args.target_agent)
+        current_prompt = load_instruction(effective_prompt_path, target_node.prompt_key)
+        target_prompt_key = target_node.prompt_key
+        target_prompt_path = effective_prompt_path
+        logger.info(
+            "Optimizing sub-agent %r (prompt_key=%s, prompt_path=%s)",
+            target_node.name,
+            target_node.prompt_key,
+            effective_prompt_path,
+        )
+    else:
+        # Refuse to optimize a composite root: its instruction_override
+        # is silently dropped at build time and no sub-agent would ever
+        # see the candidate prompt. Force the caller to pick a concrete
+        # target so every trial exercises a real instruction.
+        if not accepts_instruction_override(agent_config):
+            available = ", ".join(list_agent_names(agent_config))
+            parser.error(
+                f"Root agent '{agent_config.name}' has orchestration "
+                f"'{agent_config.orchestration}' with sub_agents — its "
+                "instruction_override is silently dropped at build time. "
+                "Pass --target-agent to pick a concrete sub-agent to "
+                f"optimize. Available: {available}"
+            )
+        current_prompt = load_instruction(agent_config.prompt_path, agent_config.prompt_key)
+        target_prompt_key = agent_config.prompt_key
+        target_prompt_path = agent_config.prompt_path
+
     logger.info("Agent: %s, model: %s", agent_config.name, agent_config.model)
     logger.info("Current prompt length: %d chars", len(current_prompt))
 
     # Build optimizer config — registry is the single source of truth.
+    # --prompt-path only applies to critique_refine; reject it otherwise
+    # so typos against the wrong optimizer fail loudly instead of being
+    # silently ignored.
+    config_kwargs: dict[str, Any] = {
+        "optimizer": args.optimizer,
+        "max_trials": args.max_trials,
+        "sample_size": args.sample_size,
+        "seed": args.seed,
+    }
+    if args.prompt_path is not None:
+        if args.optimizer != "critique_refine":
+            parser.error(
+                f"--prompt-path is only supported for --optimizer critique_refine "
+                f"(got {args.optimizer!r})"
+            )
+        config_kwargs["prompt_path"] = args.prompt_path
+
     config_class = get_optimizer_config_class(args.optimizer)
-    optim_config = config_class(
-        optimizer=args.optimizer,
-        max_trials=args.max_trials,
-        sample_size=args.sample_size,
-        seed=args.seed,
-    )
+    optim_config = config_class(**config_kwargs)
 
     # Build optimizer
     optimizer = create_prompt_optimizer(optim_config)
@@ -122,6 +195,7 @@ def main() -> None:
             agent_config=agent_config,
             judge=judge,
             samples=samples,
+            target_agent_name=args.target_agent,
         )
 
     # Run optimization
@@ -141,13 +215,22 @@ def main() -> None:
     )
     logger.info("Trials evaluated: %d", result.num_trials)
 
-    # Save optimized prompt
-    prompt_dir = Path(agent_config.prompt_path).parent
-    output_path = prompt_dir / "v2_optimized.yaml"
+    # Save optimized prompt under the target's original prompt_key so that
+    # the output YAML can be diffed/merged against the source file. When a
+    # target agent is specified its name is included in the filename to
+    # avoid clobbering other sub-agent optimizations in the same directory.
+    prompt_dir = Path(target_prompt_path).parent
+    if args.target_agent is not None:
+        output_path = prompt_dir / f"v2_optimized_{args.target_agent}.yaml"
+    else:
+        output_path = prompt_dir / "v2_optimized.yaml"
+
     prompt_data = {
         "version": "2.0.0",
         "created": date.today().isoformat(),
         "parent_version": agent_config.prompt_version,
+        "parent_prompt_path": target_prompt_path,
+        "target_agent": args.target_agent or agent_config.name,
         "architecture": "Optimized via APE",
         "rationale": (
             f"Automatically optimized using {result.optimizer_name}. "
@@ -155,15 +238,21 @@ def main() -> None:
             f"({result.improvement:+.4f}). "
             f"Trials: {result.num_trials}."
         ),
-        "instruction": result.optimized_prompt,
+        target_prompt_key: result.optimized_prompt,
     }
     output_path.write_text(yaml.dump(prompt_data, default_flow_style=False, sort_keys=False))
     logger.info("Optimized prompt saved to %s", output_path)
 
     # Save trial history
-    trials_path = prompt_dir / "optimization_trials.json"
+    trials_path = prompt_dir / (
+        f"optimization_trials_{args.target_agent}.json"
+        if args.target_agent is not None
+        else "optimization_trials.json"
+    )
     trials_data = {
         "optimizer": result.optimizer_name,
+        "target_agent": args.target_agent or agent_config.name,
+        "target_prompt_key": target_prompt_key,
         "baseline_score": result.baseline_score,
         "optimized_score": result.optimized_score,
         "improvement": result.improvement,
