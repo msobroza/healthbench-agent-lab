@@ -13,8 +13,10 @@ from healthbench_agent.llm_eval.meta_eval import (
     MetricLevel,
     MetricSpec,
     axis_filter,
+    cohens_kappa,
     get_meta_metric,
     gold_score,
+    krippendorff_alpha,
     metadata_filter,
     register_meta_metric,
     registered_meta_metrics,
@@ -177,3 +179,41 @@ def test_gold_score_empty_dataframe_returns_zero():
 def test_gold_score_registered_with_sample_level():
     spec = get_meta_metric("gold_score")
     assert spec.level is MetricLevel.SAMPLE
+
+
+def _agreement_rows(observed: list[bool], expected: list[bool]) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "prompt_id": [f"p{i}" for i in range(len(observed))],
+            "rubric_key": [f"r{i}" for i in range(len(observed))],
+            "gold_source": ["ideal_completion"] * len(observed),
+            "sample_k": [1] * len(observed),
+            "observed_met": observed,
+            "expected_met": expected,
+        }
+    )
+
+
+def test_cohens_kappa_full_agreement():
+    df = _agreement_rows([True, False, True, False], [True, False, True, False])
+    assert cohens_kappa(df) == pytest.approx(1.0)
+
+
+def test_cohens_kappa_full_disagreement():
+    df = _agreement_rows([True, False, True, False], [False, True, False, True])
+    assert cohens_kappa(df) == pytest.approx(-1.0)
+
+
+def test_cohens_kappa_random_is_near_zero():
+    df = _agreement_rows([True, True, False, False], [True, False, True, False])
+    assert abs(cohens_kappa(df)) < 0.5
+
+
+def test_krippendorff_alpha_full_agreement():
+    df = _agreement_rows([True, False, True, False], [True, False, True, False])
+    assert krippendorff_alpha(df) == pytest.approx(1.0)
+
+
+def test_krippendorff_alpha_random_is_near_zero():
+    df = _agreement_rows([True, True, False, False], [True, False, True, False])
+    assert abs(krippendorff_alpha(df)) < 0.5
