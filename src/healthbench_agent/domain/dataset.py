@@ -1,69 +1,38 @@
-"""HealthBench dataset domain types.
-
-Defines DatasetSubset, HealthBenchSample, and HealthBenchDataset — the types
-that represent a loaded HealthBench JSONL dataset. Mirrors the JSONL row schema
-from simple-evals healthbench_eval.py.
-
-Depends only on rubric types within this package.
-"""
+"""HealthBench dataset domain types."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from .conversation import MessageList
+from .meta_evaluation import LabelledSample
 from .rubric import RubricItem
-
-# ---------------------------------------------------------------------------
-# Dataset subset type alias
-# ---------------------------------------------------------------------------
 
 DatasetSubset = Literal["main", "hard", "consensus"]
 
 
-# ---------------------------------------------------------------------------
-# JSONL row and dataset container
-# ---------------------------------------------------------------------------
-
-
 @dataclass
-class HealthBenchSample:
+class HealthBenchSample(LabelledSample):
     """One sample loaded from a HealthBench JSONL dataset file.
 
-    Field names match the JSONL keys used in simple-evals healthbench_eval.py.
+    Inherits prompt_id, prompt, rubrics, gold_response, expected,
+    language, specialty, user_persona, and metadata from LabelledSample.
+    Adds HealthBench-specific fields.
 
     Attributes:
-        prompt_id: Unique identifier for this prompt.
-        prompt: Conversation history as a MessageList (role + content dicts).
-        rubrics: Graded criteria used to score a response to this prompt.
-        example_tags: Dataset-level tags for stratified scoring (themes, axes).
-        ideal_completions_data: Physician ideal completion data when available,
-            including the completion group and reference responses. None for
-            samples without physician annotations.
-        canary: Dataset integrity signature embedded by the benchmark authors.
-            Format: 'healthbench:<uuid>'. Present in all records; not used for
-            scoring.
+        example_tags: Dataset-level tags for stratified scoring.
+        ideal_completions_data: Physician ideal completion data when
+            available. Used to populate gold_response/expected at
+            meta-eval time via the CLI.
+        canary: Dataset integrity signature.
     """
 
-    prompt_id: str
-    prompt: MessageList
-    rubrics: list[RubricItem]
-    example_tags: list[str]
+    example_tags: list[str] = field(default_factory=list)
     ideal_completions_data: dict[str, Any] | None = None
     canary: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> HealthBenchSample:
-        """Deserialize from a JSONL row dict.
-
-        Args:
-            data: Parsed JSONL row with keys prompt_id, prompt, rubrics,
-                example_tags, and optionally ideal_completions_data and canary.
-
-        Returns:
-            A HealthBenchSample instance with rubrics deserialized as RubricItem.
-        """
         return cls(
             prompt_id=data["prompt_id"],
             prompt=data["prompt"],
@@ -76,13 +45,7 @@ class HealthBenchSample:
 
 @dataclass
 class HealthBenchDataset:
-    """A loaded HealthBench dataset subset with its samples and metadata.
-
-    Attributes:
-        subset: Which subset was loaded — 'main', 'hard', or 'consensus'.
-        samples: All samples in the dataset, one per JSONL row.
-        source_path: Absolute path to the JSONL file that was loaded.
-    """
+    """A loaded HealthBench dataset subset with its samples and metadata."""
 
     subset: DatasetSubset
     samples: list[HealthBenchSample]
