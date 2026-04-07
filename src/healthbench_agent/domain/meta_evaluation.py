@@ -6,6 +6,7 @@ Both are stdlib-only — no matplotlib, pandas, or pyarrow imports — so the
 domain layer keeps its narrow dependency policy. The rich UX wrapper for
 ``MetricResults`` lives one layer out in ``llm_eval/meta_eval_results.py``.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
