@@ -197,3 +197,55 @@ def gold_score(verdicts: pd.DataFrame) -> float:
         per_sample_scores.append(clip_score(raw))
 
     return fmean(per_sample_scores) if per_sample_scores else 0.0
+
+
+def _majority_vote_columns(df: pd.DataFrame) -> tuple[list[bool], list[bool]]:
+    """Collapse k passes per (prompt_id, rubric_key, gold_source) to majority vote."""
+    if len(df) == 0:
+        return [], []
+    grouped = df.groupby(["prompt_id", "rubric_key", "gold_source"], sort=False)
+    observed: list[bool] = []
+    expected: list[bool] = []
+    for _, group in grouped:
+        observed.append(bool(group["observed_met"].mean() > 0.5))
+        expected.append(bool(group["expected_met"].iloc[0]))
+    return observed, expected
+
+
+@register_meta_metric(
+    "cohens_kappa",
+    level=MetricLevel.ANY,
+    description="Inter-rater agreement vs expected verdicts",
+)
+def cohens_kappa(verdicts: pd.DataFrame) -> float:
+    """Cohen's kappa between judge majority vote and expected verdicts."""
+    from sklearn.metrics import cohen_kappa_score
+
+    observed, expected = _majority_vote_columns(verdicts)
+    if not observed:
+        return 0.0
+    return float(cohen_kappa_score(expected, observed))
+
+
+@register_meta_metric(
+    "krippendorff_alpha",
+    level=MetricLevel.ANY,
+    description="Binary two-coder Krippendorff alpha",
+)
+def krippendorff_alpha(verdicts: pd.DataFrame) -> float:
+    """Closed-form Krippendorff's alpha for binary, two-coder data.
+
+    α = 1 - D_o / D_e where D_o is the observed disagreement (Hamming
+    distance) and D_e is the expected disagreement under chance.
+    """
+    observed, expected = _majority_vote_columns(verdicts)
+    n = len(observed)
+    if n == 0:
+        return 0.0
+    disagreements = sum(1 for o, e in zip(observed, expected, strict=True) if o != e)
+    do_metric = disagreements / n
+    p1 = (sum(observed) + sum(expected)) / (2 * n)
+    de_metric = 2 * p1 * (1 - p1)
+    if de_metric == 0:
+        return 1.0 if do_metric == 0 else 0.0
+    return float(1.0 - do_metric / de_metric)
