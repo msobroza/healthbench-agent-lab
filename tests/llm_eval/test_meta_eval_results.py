@@ -63,3 +63,19 @@ def test_load_raises_on_unknown_schema_version(tmp_path: Path, view):
 def test_load_missing_metrics_json_raises(tmp_path: Path):
     with pytest.raises(FileNotFoundError):
         MetricResultsView.load(tmp_path)
+
+
+def test_to_markdown_raises_helpful_error_when_tabulate_missing(monkeypatch, view):
+    """to_markdown should raise a clear ImportError naming tabulate."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "tabulate":
+            raise ImportError("No module named 'tabulate'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    with pytest.raises(ImportError, match="tabulate"):
+        view.to_markdown()

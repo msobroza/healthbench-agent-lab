@@ -121,7 +121,26 @@ class MetricResultsView:
         return pd.DataFrame(rows)
 
     def to_markdown(self) -> str:
-        """Render the scores as a Markdown table via :meth:`to_pandas`."""
+        """Render the per-metric table as a GitHub-flavoured Markdown table.
+
+        Requires the ``tabulate`` package (not a hard dependency). Install with
+        ``uv add tabulate`` or ``pip install tabulate`` before calling.
+
+        Returns:
+            A Markdown string with one row per metric entry (dict-valued metrics
+            are expanded by :meth:`to_pandas`).
+
+        Raises:
+            ImportError: When ``tabulate`` is not installed. The message names
+                the missing package and the install command.
+        """
+        try:
+            import tabulate  # noqa: F401
+        except ImportError as exc:
+            raise ImportError(
+                "MetricResultsView.to_markdown() requires the 'tabulate' package. "
+                "Install with: uv add tabulate"
+            ) from exc
         return self.to_pandas().to_markdown(index=False)
 
     # ---- IO --------------------------------------------------------------
