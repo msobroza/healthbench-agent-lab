@@ -249,3 +249,35 @@ def krippendorff_alpha(verdicts: pd.DataFrame) -> float:
     if de_metric == 0:
         return 1.0 if do_metric == 0 else 0.0
     return float(1.0 - do_metric / de_metric)
+
+
+@register_meta_metric(
+    "calibration_curve",
+    level=MetricLevel.ANY,
+    description="Bootstrap SE of agreement at k = 1, 3, 5, 7",
+)
+def calibration_curve(verdicts: pd.DataFrame) -> dict[int, float]:
+    """Bootstrap SE of per-(prompt_id, rubric_key) agreement at k in {1,3,5,7}."""
+    import math
+
+    if len(verdicts) == 0:
+        return {}
+
+    curve: dict[int, float] = {}
+    for k in (1, 3, 5, 7):
+        subset = verdicts[verdicts["sample_k"] <= k]
+        if len(subset) == 0:
+            continue
+        grouped = subset.groupby(["prompt_id", "rubric_key", "gold_source"], sort=False)
+        agreements: list[float] = []
+        for _, group in grouped:
+            majority = bool(group["observed_met"].mean() > 0.5)
+            expected = bool(group["expected_met"].iloc[0])
+            agreements.append(1.0 if majority == expected else 0.0)
+        n = len(agreements)
+        if n == 0:
+            continue
+        mean = sum(agreements) / n
+        variance = sum((a - mean) ** 2 for a in agreements) / max(n - 1, 1)
+        curve[k] = math.sqrt(variance / n)
+    return curve
