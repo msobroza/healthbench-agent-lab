@@ -204,3 +204,116 @@ class MetricResultsView:
             )
         self._verdicts_cache = pd.read_parquet(self.results.verdicts_path)
         return self._verdicts_cache
+
+    # ---- comparison ------------------------------------------------------
+
+    def compare(self, other: MetricResultsView) -> pd.DataFrame:
+        """Diff two MetricResultsView instances into a row-per-metric DataFrame.
+
+        Scalar metrics get a numeric ``delta = other - self``; dict-valued
+        metrics (e.g. ``per_dimension_confusion``, ``calibration_curve``)
+        get the sentinel string ``"see details"`` so the column stays
+        present without mixing shapes.
+
+        Args:
+            other: The other view to compare against.
+
+        Returns:
+            A DataFrame with columns ``metric``, ``self``, ``other``,
+            ``delta``, one row per distinct metric name across both views,
+            sorted alphabetically.
+        """
+        import pandas as pd
+
+        rows: list[dict[str, Any]] = []
+        all_keys = sorted(set(self.results.scores) | set(other.results.scores))
+        for name in all_keys:
+            self_val = self.results.scores.get(name)
+            other_val = other.results.scores.get(name)
+            if isinstance(self_val, int | float) and isinstance(other_val, int | float):
+                delta: float | str = float(other_val) - float(self_val)
+            else:
+                delta = "see details"
+            rows.append({"metric": name, "self": self_val, "other": other_val, "delta": delta})
+        return pd.DataFrame(rows)
+
+    # ---- plot helpers ----------------------------------------------------
+
+    def plot_calibration_curve(self, ax: Any = None) -> Any:
+        """Plot the bootstrap SE calibration curve over k.
+
+        Args:
+            ax: Existing matplotlib Axes to draw into. When None, a new
+                figure and axes are created via ``plt.subplots()``.
+
+        Returns:
+            The matplotlib Axes used for plotting.
+
+        Raises:
+            KeyError: When ``calibration_curve`` is not in ``results.scores``.
+            ImportError: When matplotlib is not installed.
+        """
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError as exc:  # pragma: no cover - environment specific
+            raise ImportError(
+                "Plotting requires matplotlib. Install with: uv sync --extra viz"
+            ) from exc
+
+        if "calibration_curve" not in self.results.scores:
+            raise KeyError("calibration_curve is not in results.scores")
+        curve = self.results.scores["calibration_curve"]
+        if ax is None:
+            _, ax = plt.subplots()
+        ks = sorted(curve.keys())
+        ax.plot(ks, [curve[k] for k in ks], marker="o")
+        ax.set_xlabel("k (number of judge passes)")
+        ax.set_ylabel("Bootstrap SE of agreement")
+        ax.set_title("Calibration curve")
+        return ax
+
+    def plot_dimension_confusion(self, ax: Any = None) -> Any:
+        """Stacked bar chart of per-dimension confusion counts.
+
+        Args:
+            ax: Existing matplotlib Axes to draw into. When None, a new
+                figure and axes are created via ``plt.subplots()``.
+
+        Returns:
+            The matplotlib Axes used for plotting.
+
+        Raises:
+            KeyError: When ``per_dimension_confusion`` is not in
+                ``results.scores``.
+            ImportError: When matplotlib is not installed.
+        """
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError as exc:  # pragma: no cover
+            raise ImportError(
+                "Plotting requires matplotlib. Install with: uv sync --extra viz"
+            ) from exc
+
+        if "per_dimension_confusion" not in self.results.scores:
+            raise KeyError("per_dimension_confusion is not in results.scores")
+        confusion = self.results.scores["per_dimension_confusion"]
+        if ax is None:
+            _, ax = plt.subplots()
+        dims = list(confusion.keys())
+        tp = [confusion[d]["tp"] for d in dims]
+        fp = [confusion[d]["fp"] for d in dims]
+        tn = [confusion[d]["tn"] for d in dims]
+        fn = [confusion[d]["fn"] for d in dims]
+        ax.bar(dims, tp, label="tp")
+        ax.bar(dims, fp, bottom=tp, label="fp")
+        ax.bar(dims, tn, bottom=[a + b for a, b in zip(tp, fp, strict=True)], label="tn")
+        ax.bar(
+            dims,
+            fn,
+            bottom=[a + b + c for a, b, c in zip(tp, fp, tn, strict=True)],
+            label="fn",
+        )
+        ax.legend()
+        ax.set_ylabel("count")
+        ax.set_title("Per-dimension confusion")
+        return ax

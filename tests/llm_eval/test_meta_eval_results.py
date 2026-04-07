@@ -79,3 +79,51 @@ def test_to_markdown_raises_helpful_error_when_tabulate_missing(monkeypatch, vie
     monkeypatch.setattr(builtins, "__import__", fake_import)
     with pytest.raises(ImportError, match="tabulate"):
         view.to_markdown()
+
+
+def test_compare_two_views_returns_diff_dataframe(view):
+    other = MetricResultsView(
+        results=MetricResults(
+            scores={"gold_score": 0.812, "cohens_kappa": 0.589},
+            n_samples_graded=100,
+            n_rubrics_graded=287,
+            judge_metadata={"judge_model": "google/gemini-2.5"},
+        )
+    )
+    diff = view.compare(other)
+    assert "metric" in diff.columns
+    assert "self" in diff.columns
+    assert "other" in diff.columns
+    assert "delta" in diff.columns
+    assert len(diff) == 2
+
+
+def test_plot_calibration_curve_returns_axes_when_data_present():
+    view = MetricResultsView(
+        results=MetricResults(
+            scores={"calibration_curve": {1: 0.08, 3: 0.06, 5: 0.05, 7: 0.04}},
+            n_samples_graded=10,
+            n_rubrics_graded=10,
+            judge_metadata={},
+        )
+    )
+    ax = view.plot_calibration_curve()
+    assert ax is not None
+
+
+def test_plot_dimension_confusion_returns_axes_when_data_present():
+    view = MetricResultsView(
+        results=MetricResults(
+            scores={"per_dimension_confusion": {"accuracy": {"tp": 1, "fp": 0, "tn": 1, "fn": 0}}},
+            n_samples_graded=2,
+            n_rubrics_graded=2,
+            judge_metadata={},
+        )
+    )
+    ax = view.plot_dimension_confusion()
+    assert ax is not None
+
+
+def test_plot_calibration_curve_raises_keyerror_when_missing(view):
+    with pytest.raises(KeyError):
+        view.plot_calibration_curve()
