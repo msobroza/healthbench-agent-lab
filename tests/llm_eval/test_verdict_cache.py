@@ -75,6 +75,19 @@ def test_get_missing_key_returns_none(cache: VerdictCache):
     assert cache.get("nonexistent") is None
 
 
+def test_corrupt_cache_file_returns_none_and_logs(cache: VerdictCache, caplog):
+    """A corrupt JSON entry must be treated as a miss and logged as a warning."""
+    import logging
+
+    key = cache.make_key("m", "sha", _conv(), "rt", 1)
+    path = cache._path_for(key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("not valid json {")
+    with caplog.at_level(logging.WARNING, logger="healthbench_agent.llm_eval.verdict_cache"):
+        assert cache.get(key) is None
+    assert any("Corrupt cache entry" in record.message for record in caplog.records)
+
+
 def test_files_are_sharded_by_first_two_hex_chars(cache: VerdictCache):
     key = cache.make_key("m", "sha", _conv(), "rt", 1)
     cache.put(key, CriterionVerdict(criterion="rt", criteria_met=True, explanation=""))
