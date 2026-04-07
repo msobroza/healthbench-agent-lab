@@ -5,11 +5,13 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from healthbench_agent.domain.evaluation import CriterionVerdict
 from healthbench_agent.domain.meta_evaluation import LabelledSample
 from healthbench_agent.domain.rubric import RubricItem
 from healthbench_agent.llm_eval.meta_eval import (
     AXIS_TAG_PREFIX,
     EmptyFilterError,
+    FakeJudge,
     MetricLevel,
     MetricSpec,
     adversarial_accuracy,
@@ -17,6 +19,7 @@ from healthbench_agent.llm_eval.meta_eval import (
     axis_filter,
     calibration_curve,
     cohens_kappa,
+    demo_labelled_set,
     get_meta_metric,
     gold_score,
     krippendorff_alpha,
@@ -370,3 +373,56 @@ def test_per_criterion_metrics_grouped_by_rubric_key():
     assert set(out["c1"].keys()) == {"accuracy", "precision", "recall", "f1"}
     assert out["c1"]["accuracy"] == pytest.approx(1.0, abs=1e-9)
     assert out["c2"]["accuracy"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_fake_judge_always_met_returns_true_for_all():
+    judge = FakeJudge("always_met")
+    items = [RubricItem(criterion="a", points=1.0), RubricItem(criterion="b", points=1.0)]
+    out = judge.grade([], items)
+    assert all(isinstance(v, CriterionVerdict) for v in out)
+    assert all(v.criteria_met for v in out)
+
+
+def test_fake_judge_always_fail_returns_false_for_all():
+    judge = FakeJudge("always_fail")
+    items = [RubricItem(criterion="a", points=1.0)]
+    out = judge.grade([], items)
+    assert not out[0].criteria_met
+
+
+def test_fake_judge_alternating_flips_per_call():
+    judge = FakeJudge("alternating")
+    out = judge.grade(
+        [], [RubricItem(criterion="a", points=1.0), RubricItem(criterion="b", points=1.0)]
+    )
+    assert out[0].criteria_met is True
+    assert out[1].criteria_met is False
+
+
+def test_fake_judge_dict_strategy_honours_mapping():
+    judge = FakeJudge({"a": True, "b": False})
+    out = judge.grade(
+        [], [RubricItem(criterion="a", points=1.0), RubricItem(criterion="b", points=1.0)]
+    )
+    assert out[0].criteria_met is True
+    assert out[1].criteria_met is False
+
+
+def test_fake_judge_callable_strategy():
+    judge = FakeJudge(lambda item: item.points > 0)
+    out = judge.grade(
+        [], [RubricItem(criterion="a", points=1.0), RubricItem(criterion="b", points=-1.0)]
+    )
+    assert out[0].criteria_met is True
+    assert out[1].criteria_met is False
+
+
+def test_demo_labelled_set_returns_three_samples_with_mixed_flows():
+    samples = demo_labelled_set()
+    assert len(samples) == 3
+    has_gold = sum(1 for s in samples if s.gold_response is not None)
+    has_adversarial = sum(
+        1 for s in samples for r in s.rubrics if r.example_meets or r.example_fails
+    )
+    assert has_gold >= 1
+    assert has_adversarial >= 1
