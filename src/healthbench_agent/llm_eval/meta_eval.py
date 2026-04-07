@@ -281,3 +281,24 @@ def calibration_curve(verdicts: pd.DataFrame) -> dict[int, float]:
         variance = sum((a - mean) ** 2 for a in agreements) / (n - 1)
         curve[k] = math.sqrt(variance / n)
     return curve
+
+
+@register_meta_metric(
+    "per_dimension_confusion",
+    level=MetricLevel.ANY,
+    description="tp/fp/tn/fn per dimension (e.g. axis name)",
+)
+def per_dimension_confusion(verdicts: pd.DataFrame) -> dict[str, dict[str, int]]:
+    """Group by ``dimension`` column and return tp/fp/tn/fn per dimension."""
+    result: dict[str, dict[str, int]] = {}
+    if len(verdicts) == 0:
+        return result
+    df = verdicts.copy()
+    df["dimension"] = df["dimension"].fillna("unspecified")
+    for dim, group in df.groupby("dimension", sort=False):
+        tp = int(((group["observed_met"]) & (group["expected_met"])).sum())
+        fp = int(((group["observed_met"]) & (~group["expected_met"])).sum())
+        tn = int(((~group["observed_met"]) & (~group["expected_met"])).sum())
+        fn = int(((~group["observed_met"]) & (group["expected_met"])).sum())
+        result[str(dim)] = {"tp": tp, "fp": fp, "tn": tn, "fn": fn}
+    return result

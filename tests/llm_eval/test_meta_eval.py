@@ -19,6 +19,7 @@ from healthbench_agent.llm_eval.meta_eval import (
     gold_score,
     krippendorff_alpha,
     metadata_filter,
+    per_dimension_confusion,
     register_meta_metric,
     registered_meta_metrics,
     specialty_filter,
@@ -294,3 +295,26 @@ def test_calibration_curve_closed_form_se_for_four_groups():
     df = pd.DataFrame(rows)
     curve = calibration_curve(df)
     assert curve[1] == pytest.approx(0.25, abs=1e-9)
+
+
+def test_per_dimension_confusion_two_dimensions():
+    df = pd.DataFrame(
+        [
+            {"dimension": "accuracy", "observed_met": True, "expected_met": True},
+            {"dimension": "accuracy", "observed_met": True, "expected_met": False},
+            {"dimension": "emergency", "observed_met": False, "expected_met": False},
+            {"dimension": "emergency", "observed_met": False, "expected_met": True},
+        ]
+    )
+    result = per_dimension_confusion(df)
+    assert result["accuracy"] == {"tp": 1, "fp": 1, "tn": 0, "fn": 0}
+    assert result["emergency"] == {"tp": 0, "fp": 0, "tn": 1, "fn": 1}
+
+
+def test_per_dimension_confusion_unspecified_for_none():
+    df = pd.DataFrame(
+        [
+            {"dimension": None, "observed_met": True, "expected_met": True},
+        ]
+    )
+    assert per_dimension_confusion(df)["unspecified"]["tp"] == 1
