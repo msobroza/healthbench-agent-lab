@@ -302,3 +302,69 @@ def per_dimension_confusion(verdicts: pd.DataFrame) -> dict[str, dict[str, int]]
         fn = int(((~group["observed_met"]) & (group["expected_met"])).sum())
         result[str(dim)] = {"tp": tp, "fp": fp, "tn": tn, "fn": fn}
     return result
+
+
+@register_meta_metric(
+    "adversarial_accuracy",
+    level=MetricLevel.RUBRIC,
+    description="Accuracy on example_meets / example_fails pairs",
+)
+def adversarial_accuracy(verdicts: pd.DataFrame) -> float:
+    """Plain accuracy: fraction of rows where observed_met == expected_met."""
+    if len(verdicts) == 0:
+        return 0.0
+    matches = (verdicts["observed_met"] == verdicts["expected_met"]).sum()
+    return float(matches / len(verdicts))
+
+
+@register_meta_metric(
+    "adversarial_prf1",
+    level=MetricLevel.RUBRIC,
+    description="Precision / recall / F1 on adversarial pairs",
+)
+def adversarial_prf1(verdicts: pd.DataFrame) -> dict[str, float]:
+    """Precision / recall / F1 / support via sklearn."""
+    from sklearn.metrics import precision_recall_fscore_support
+
+    if len(verdicts) == 0:
+        return {"precision": 0.0, "recall": 0.0, "f1": 0.0, "support": 0.0}
+    precision, recall, f1, support = precision_recall_fscore_support(
+        verdicts["expected_met"].astype(bool),
+        verdicts["observed_met"].astype(bool),
+        average="binary",
+        zero_division=0,
+    )
+    return {
+        "precision": float(precision),
+        "recall": float(recall),
+        "f1": float(f1),
+        "support": float(support if support is not None else len(verdicts)),
+    }
+
+
+@register_meta_metric(
+    "per_criterion_metrics",
+    level=MetricLevel.RUBRIC,
+    description="Per-criterion accuracy / precision / recall / F1",
+)
+def per_criterion_metrics(verdicts: pd.DataFrame) -> dict[str, dict[str, float]]:
+    """Group by rubric_key and return accuracy/precision/recall/f1 per criterion."""
+    from sklearn.metrics import precision_recall_fscore_support
+
+    result: dict[str, dict[str, float]] = {}
+    if len(verdicts) == 0:
+        return result
+    for key, group in verdicts.groupby("rubric_key", sort=False):
+        observed = group["observed_met"].astype(bool)
+        expected = group["expected_met"].astype(bool)
+        accuracy = float((observed == expected).mean())
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            expected, observed, average="binary", zero_division=0
+        )
+        result[str(key)] = {
+            "accuracy": accuracy,
+            "precision": float(precision),
+            "recall": float(recall),
+            "f1": float(f1),
+        }
+    return result
