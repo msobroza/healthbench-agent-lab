@@ -98,6 +98,46 @@ def test_rubric_item_from_dict_accepts_any_point_value(points):
     assert item.points == points
 
 
+def test_rubric_item_from_dict_tolerates_missing_tags():
+    """SPEC.md rows can omit `tags`; from_dict must default to []."""
+    item = RubricItem.from_dict({"criterion": "says hi", "points": 1.0})
+    assert item.tags == []
+
+
+def test_rubric_item_optional_spec_md_fields_default_to_none():
+    item = RubricItem(criterion="says hi", points=1.0)
+    assert item.criterion_id is None
+    assert item.category is None
+    assert item.example_meets is None
+    assert item.example_fails is None
+
+
+def test_rubric_item_from_dict_reads_spec_md_fields():
+    item = RubricItem.from_dict({
+        "criterion": "states emergency referral",
+        "points": 5.0,
+        "tags": ["axis: emergency"],
+        "criterion_id": "C-001",
+        "category": "emergency",
+        "example_meets": "Call 911 immediately.",
+        "example_fails": "Take some aspirin.",
+    })
+    assert item.criterion_id == "C-001"
+    assert item.category == "emergency"
+    assert item.example_meets == "Call 911 immediately."
+    assert item.example_fails == "Take some aspirin."
+
+
+def test_rubric_item_from_dict_ignores_unknown_keys():
+    item = RubricItem.from_dict({
+        "criterion": "x",
+        "points": 1.0,
+        "tags": [],
+        "future_key": "ignored",
+    })
+    assert item.criterion == "x"
+
+
 # ---------------------------------------------------------------------------
 # HealthBenchSample
 # ---------------------------------------------------------------------------
