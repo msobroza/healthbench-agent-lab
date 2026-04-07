@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from healthbench_agent.domain.dataset import HealthBenchSample
 from healthbench_agent.domain.meta_evaluation import (
     SCHEMA_VERSION,
     LabelledSample,
@@ -92,3 +93,52 @@ def test_metric_results_carries_no_ux_methods():
     """Domain dataclass must stay stdlib-only — no plot_* / to_pandas / load."""
     forbidden = {"plot_calibration_curve", "plot_dimension_confusion", "to_pandas", "load"}
     assert forbidden.isdisjoint(set(dir(MetricResults)))
+
+
+def test_health_bench_sample_is_labelled_sample():
+    sample = HealthBenchSample(
+        prompt_id="p1",
+        prompt=[{"role": "user", "content": "hi"}],
+        rubrics=[],
+        example_tags=["theme: general"],
+    )
+    assert isinstance(sample, LabelledSample)
+
+
+def test_health_bench_sample_keyword_construction_still_works():
+    sample = HealthBenchSample(
+        prompt_id="p1",
+        prompt=[],
+        rubrics=[],
+        example_tags=["theme: emergency"],
+        ideal_completions_data={"ideal_completion": "..."},
+        canary="healthbench:abc",
+    )
+    assert sample.example_tags == ["theme: emergency"]
+    assert sample.canary == "healthbench:abc"
+    # Inherited defaults present.
+    assert sample.gold_response is None
+    assert sample.expected == {}
+
+
+def test_health_bench_sample_from_dict_populates_all_fields():
+    row = {
+        "prompt_id": "p9",
+        "prompt": [{"role": "user", "content": "hi"}],
+        "rubrics": [{"criterion": "c", "points": 1.0, "tags": []}],
+        "example_tags": ["theme: general"],
+        "ideal_completions_data": {"ideal_completion": "x"},
+        "canary": "healthbench:1",
+    }
+    sample = HealthBenchSample.from_dict(row)
+    assert sample.prompt_id == "p9"
+    assert sample.example_tags == ["theme: general"]
+    assert sample.gold_response is None  # populated later by CLI
+
+
+def test_loaded_health_bench_sample_can_set_gold_fields():
+    sample = HealthBenchSample(prompt_id="p1", prompt=[], rubrics=[], example_tags=[])
+    sample.gold_response = "the ideal answer"
+    sample.expected = {"c1": True}
+    assert sample.gold_response == "the ideal answer"
+    assert sample.expected == {"c1": True}
