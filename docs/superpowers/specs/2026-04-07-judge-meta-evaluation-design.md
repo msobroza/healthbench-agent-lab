@@ -3,7 +3,7 @@
 **Date:** 2026-04-07
 **Status:** Draft
 **Issue:** [msobroza/healthbench-agent-lab#5](https://github.com/msobroza/healthbench-agent-lab/issues/5)
-**Scope:** New `meta_eval.py` module inside `src/healthbench_agent/llm_eval/`, a new `LabelledSample` parent class for `HealthBenchSample` in `domain/`, plus a small extension to `prompt_optimization/` so the grader prompt itself can be optimized.
+**Scope:** New `meta_eval.py` module inside `src/healthbench_agent/llm_eval/`, a new `LabelledSample` parent class for `HealthBenchSample` in `domain/`, optional SPEC.md schema fields on `RubricItem` and `LabelledSample` (adversarial `example_meets`/`example_fails`, conversation metadata), and a small extension to `prompt_optimization/` so both the grader prompt and agent prompts can be optimized with arbitrary sample-level and rubric-level filters.
 
 ## Goal
 
@@ -16,6 +16,8 @@ This spec adds a small, dataset-agnostic meta-evaluation module that grades a fi
 - **Reuse first.** Use the existing `EvalRunner`, `JudgeConfig`, `create_judge`, `stratified_sample`, and `evaluation/stats.py` helpers. Add the smallest possible amount of new code.
 - **Domain types live in `domain/`.** Pure data types belong in the domain layer alongside `RubricItem`, `CriterionVerdict`, `HealthBenchSample`. The `meta_eval.py` module imports them but does not own them.
 - **One generic input type via inheritance.** `LabelledSample` is the parent class. `HealthBenchSample` inherits from it and adds HealthBench-specific fields. Any function that accepts `LabelledSample` automatically accepts `HealthBenchSample` (Liskov). No `labelled_from_*` builder functions.
+- **Optional SPEC.md fields, backwards compatible.** `RubricItem` and `LabelledSample` accept the SPEC.md schema fields (`criterion_id`, `category`, `example_meets`, `example_fails`, `language`, `specialty`, `metadata`) as **optional** with safe defaults. HealthBench loaders ignore them; SPEC.md-format loaders populate them. No existing call site breaks.
+- **Filters compose, metrics stay pure.** Sample-level (`Callable[[LabelledSample], bool]`) and rubric-level (`Callable[[RubricItem], bool]`) filters are applied **upstream** of the metric registry, never inside metric functions. Metric functions remain pure DataFrame operations and stay reusable across any combination of filters.
 - **Dataset-agnostic core.** `meta_eval.py` knows nothing about HealthBench. It operates on `list[LabelledSample]`. The HealthBench-specific glue (loading the consensus subset, populating the meta-eval fields from `ideal_completions_data`, extracting axis tags) lives in the CLI, not the library module.
 - **Pluggable metrics.** Metrics are functions registered with a `@register_meta_metric` decorator (mirroring `@register_tool`, `@register_callback`, `@register_prompt_optimizer`, `@register_analysis`). Adding a new metric is one decorated function — no changes to the runner, the result type, the CLI, or the artifact schema.
 - **Single judge per artifact.** A meta-eval run targets one judge, produces one parquet + one JSON. Cross-judge comparison is done offline by joining two parquets on `(prompt_id, criterion)`. The runner never mixes judges.
@@ -33,7 +35,9 @@ This spec adds a small, dataset-agnostic meta-evaluation module that grades a fi
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Ground-truth source | Physician-ideal completion proxy (primary); the future hand-label loader populates the same `expected` field on `LabelledSample` | Zero-cost gold available today; the typed parent class accommodates real labels later with no API change |
+| Ground-truth source | Two flows: (1) sample-level via `gold_response` populated from physician ideal completion or hand labels; (2) rubric-level via `example_meets` / `example_fails` adversarial pairs from the SPEC.md schema | Adversarial gold (one positive + one negative example per criterion) yields precision/recall/F1 directly without needing a full ideal response, and works on datasets that don't ship physician completions |
+| Filters | Two optional callables: `sample_filter: LabelledSample -> bool` and `rubric_filter: RubricItem -> bool`. Helper builders: `axis_filter`, `metadata_filter`, `specialty_filter` | Lets prompt-opt drive fitness on a specific axis × specialty × metadata slice without changing metric code |
+| Empty post-filter set | Hard error with a message naming the active filters | Catches typos in CLI flags early; silent per-sample drops are still allowed |
 | Judges per run | One | Cleaner artifacts, reproducible, cross-judge comparison done offline |
 | Calibration sampling | Override `temperature` → 1.0 for the meta-eval grader; sweep `n_samples ∈ {1..k}` | Production grader stays deterministic at 0.0; meta-eval temperature is explicit and visible in MLflow |
 | Artifact format | Raw `verdicts.parquet` + summary `metrics.json` | New metrics become reanalyses, not re-runs |
@@ -49,15 +53,16 @@ This spec adds a small, dataset-agnostic meta-evaluation module that grades a fi
 ```
 src/healthbench_agent/domain/
     meta_evaluation.py      # NEW — LabelledSample, MetricResults
+    rubric.py               # EDIT — RubricItem gains optional SPEC.md fields
     dataset.py              # EDIT — HealthBenchSample now inherits from LabelledSample
 
 src/healthbench_agent/llm_eval/
-    meta_eval.py            # NEW — registry + 4 metrics + run_meta_eval + composite_fitness
+    meta_eval.py            # NEW — registry + 8 built-in metrics + run_meta_eval + composite_fitness + filter helpers + EmptyFilterError
     cli_meta_eval.py        # NEW — argparse → run_meta_eval; HealthBench glue lives here
 
 src/healthbench_agent/prompt_optimization/
-    metric.py               # EDIT — add JudgeAgreementMetric (~30 lines)
-    cli.py                  # EDIT — add --target {agent, judge} flag
+    metric.py               # EDIT — add JudgeAgreementMetric, extend EndToEndMetric with sample_filter/rubric_filter, re-export EmptyFilterError
+    cli.py                  # EDIT — add --target {agent, judge}, --rubric-axis, --metadata flags
 
 tests/llm_eval/
     test_meta_eval.py       # NEW — pure-metric ZOMBIES tests + runner with fake judge
@@ -116,7 +121,9 @@ class LabelledSample:
 
     The gold-label fields (`gold_response` and `expected`) default to
     "unlabelled" — they are populated only when the sample is being used
-    for meta-evaluation. Regular agent-evaluation runs leave them empty.
+    for meta-evaluation with a sample-level gold response. The SPEC.md
+    metadata fields are also optional so that HealthBench loaders work
+    unchanged.
 
     Attributes:
         prompt_id: Unique identifier for joining samples across runs.
@@ -129,13 +136,62 @@ class LabelledSample:
         expected: Expected verdict per rubric criterion text. True = the
             criterion should be met by `gold_response`, False = should not.
             Empty for unlabelled samples.
+        language: ISO language code from SPEC.md schema. Optional.
+        specialty: Medical specialty from SPEC.md schema. Optional.
+        user_persona: 'patient' | 'healthcare professional' from SPEC.md.
+            Optional.
+        metadata: Free-form per-sample metadata dict (clinical_urgency,
+            health_literacy_level, cultural_context, etc. — any keys from
+            the SPEC.md `metadata` block, or any extension a future dataset
+            adds). Used by `metadata_filter`.
     """
     prompt_id: str
     prompt: MessageList
     rubrics: list[RubricItem]
     gold_response: str | None = None
     expected: dict[str, bool] = field(default_factory=dict)
+    language: str | None = None
+    specialty: str | None = None
+    user_persona: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 ```
+
+### `RubricItem` — gains optional SPEC.md fields
+
+```python
+# src/healthbench_agent/domain/rubric.py  (edited)
+
+@dataclass
+class RubricItem:
+    """One graded criterion within a rubric.
+
+    The original HealthBench fields (`criterion`, `points`, `tags`) are
+    unchanged and still required. The SPEC.md schema fields below are
+    optional with safe defaults so HealthBench loaders work unchanged.
+
+    Attributes:
+        criterion: Human-readable statement of what the criterion checks.
+        points: Points awarded (positive) or deducted (negative) when met.
+        tags: HealthBench-style tag list (e.g. ['axis:accuracy', 'level:cluster']).
+        criterion_id: Stable id from the SPEC.md schema. None for HealthBench.
+        category: Explicit category/axis name from SPEC.md (parallel to the
+            `axis:*` tag convention used by HealthBench). The default
+            `axis_filter` helper checks both this field and the `tags` list.
+        example_meets: Adversarial known-good response text. When present,
+            meta-eval grades it and expects criteria_met=True.
+        example_fails: Adversarial known-bad response text. When present,
+            meta-eval grades it and expects criteria_met=False.
+    """
+    criterion: str
+    points: float
+    tags: list[str] = field(default_factory=list)
+    criterion_id: str | None = None
+    category: str | None = None
+    example_meets: str | None = None
+    example_fails: str | None = None
+```
+
+`from_dict` is extended to read the new fields when present and ignore them when absent.
 
 ### `HealthBenchSample` — now inherits from `LabelledSample`
 
@@ -218,12 +274,58 @@ Adding a new metric (e.g. Fleiss' κ, ROC-AUC, judge-vs-judge agreement) is one 
 
 ### Built-in metrics
 
-| Name | Returns | Semantics |
-|---|---|---|
-| `cohens_kappa` | `float` | Collapse k passes to majority vote per (prompt_id, criterion), compute Cohen's κ vs `expected_met`. Wraps `sklearn.metrics.cohen_kappa_score`. |
-| `krippendorff_alpha` | `float` | Same input, closed-form binary two-coder α. ~15 lines, no new dependency. |
-| `calibration_curve` | `dict[int, float]` | For each k in {1, 3, 5, 7}, take the first k passes, collapse to majority, return bootstrap SE of the per-criterion agreement rate. |
-| `per_dimension_confusion` | `dict[str, dict[str, int]]` | Group by `dimension` column → `{tp, fp, tn, fn}` per dimension. Rows where dimension is None aggregated under `"unspecified"`. |
+| Name | Operates on | Returns | Semantics |
+|---|---|---|---|
+| `gold_score` | rows where `gold_source == "ideal_completion"` | `float` | Mean HealthBench score the judge gives to the gold response. For each (prompt_id, sample_k), reproduces the production `calculate_score` formula on the verdicts: `sum(points where observed_met) / sum(max(0, points))`, clipped to [0, 1] via `clip_score`. Averages across (prompt_id, sample_k) pairs. **A perfectly calibrated judge returns 1.0** because the physician ideal response should meet every positive rubric and avoid every penalty rubric. Mirrors production scoring exactly — same formula, same clipping, same aggregation as `aggregate_scores`. |
+| `cohens_kappa` | all rows | `float` | Collapse k passes to majority vote per (prompt_id, rubric_key, gold_source), compute Cohen's κ vs `expected_met`. Wraps `sklearn.metrics.cohen_kappa_score`. |
+| `krippendorff_alpha` | all rows | `float` | Same input, closed-form binary two-coder α. ~15 lines, no new dependency. |
+| `calibration_curve` | all rows | `dict[int, float]` | For each k in {1, 3, 5, 7}, take the first k passes, collapse to majority, return bootstrap SE of the per-(prompt_id, rubric_key) agreement rate. |
+| `per_dimension_confusion` | all rows | `dict[str, dict[str, int]]` | Group by `dimension` column → `{tp, fp, tn, fn}` per dimension. Rows where dimension is None aggregated under `"unspecified"`. |
+| `adversarial_accuracy` | rows where `gold_source ∈ {"example_meets", "example_fails"}` | `float` | Plain accuracy: fraction of rows where `observed_met == expected_met`. |
+| `adversarial_prf1` | adversarial rows | `dict[str, float]` | Precision/recall/F1/support computed by `sklearn.metrics.precision_recall_fscore_support` with `expected_met` as ground truth. Returned as `{"precision": ..., "recall": ..., "f1": ..., "support": ...}`. |
+| `per_criterion_metrics` | adversarial rows | `dict[str, dict[str, float]]` | Group by `rubric_key`, return `{"accuracy", "precision", "recall", "f1"}` per criterion. |
+
+`rubric_key` is a derived DataFrame column populated as `criterion_id or criterion` so the same metric implementation works on both HealthBench rows (no `criterion_id`) and SPEC.md rows (stable id). It is added in step 4 of `run_meta_eval` and is not persisted to parquet — readers can rebuild it.
+
+`gold_score` is the **default** built-in metric and the **default fitness** for `JudgeAgreementMetric` when sample-level gold is available. When a dataset only ships adversarial pairs (no `gold_response`), the default automatically falls back to `adversarial_prf1["f1"]`. Both metrics target 1.0 for a perfectly calibrated judge. The κ/α/calibration metrics remain available for cases where the user wants per-rubric agreement statistics rather than per-sample score calibration.
+
+#### Two gold-evaluation flows
+
+`run_meta_eval` runs two complementary flows over the same labelled set, emitting one DataFrame:
+
+| Flow | Triggered when | What gets graded | `gold_source` value | `expected_met` |
+|---|---|---|---|---|
+| Sample-level | `sample.gold_response is not None` | Each rubric on the sample with `points != 0`, against `(prompt + gold_response)` | `"ideal_completion"` | True for `points > 0`, False for `points < 0`. Zero-point rubrics are skipped. |
+| Adversarial — meets | `rubric.example_meets is not None` | Just that one rubric, against `(prompt + example_meets)` | `"example_meets"` | always True |
+| Adversarial — fails | `rubric.example_fails is not None` | Just that one rubric, against `(prompt + example_fails)` | `"example_fails"` | always False |
+
+A sample with both a `gold_response` and rubrics carrying `example_meets`/`example_fails` produces rows for all three flows, joinable by `(prompt_id, rubric_key)`. A sample with only adversarial pairs produces only flow rows 2-3 — and the metric set automatically restricts to those rows.
+
+The conversation passed to the judge for adversarial flows is `sample.prompt + [{"role": "assistant", "content": example_text}]` — the original user prompt is preserved so context-dependent criteria stay evaluable.
+
+#### `gold_score` reference implementation
+
+```python
+@register_meta_metric("gold_score")
+def gold_score(verdicts: pd.DataFrame) -> float:
+    """Mean clipped HealthBench score the judge gives to gold responses.
+
+    Reproduces calculate_score + clip_score + aggregate_scores from
+    domain/scoring.py over the verdicts DataFrame, treating each
+    (prompt_id, sample_k) as one conversation. A perfectly calibrated
+    judge returns 1.0.
+    """
+    def per_group(g: pd.DataFrame) -> float:
+        total_possible = g.loc[g["points"] > 0, "points"].sum()
+        if total_possible == 0:
+            return float("nan")
+        achieved = g.loc[g["observed_met"], "points"].sum()
+        return achieved / total_possible
+
+    raw = verdicts.groupby(["prompt_id", "sample_k"]).apply(per_group)
+    clipped = raw.dropna().clip(0.0, 1.0)
+    return float(clipped.mean()) if len(clipped) > 0 else 0.0
+```
 
 ### `run_meta_eval` — the only function with I/O
 
@@ -236,44 +338,104 @@ def run_meta_eval(
     dimension_extractor: Callable[[RubricItem], str | None],
     metric_names: list[str] | None = None,
     n_samples: int = 7,
+    sample_filter: Callable[[LabelledSample], bool] | None = None,
+    rubric_filter: Callable[[RubricItem], bool] | None = None,
     output_dir: Path | None = None,
     judge_metadata: dict[str, Any] | None = None,
 ) -> MetricResults:
     """Grade labelled samples k times with one judge, compute metrics, optionally persist.
 
     Steps:
-        1. Filter to samples where gold_response is not None and expected is non-empty.
-           Log how many were dropped.
-        2. Loop k = 1..n_samples. Each iteration grades every sample by calling
-           judge.grade(prompt + [{"role": "assistant", "content": gold_response}], rubrics)
-           using a ThreadPoolExecutor (the same fan-out pattern as EvalRunner.run_async).
-        3. Build a single pandas DataFrame with columns:
-           prompt_id, criterion, dimension, points, sample_k, observed_met, expected_met.
-        4. Run each requested metric over the DataFrame and collect results
-           into MetricResults.scores.
-        5. If output_dir is set, write verdicts.parquet (DataFrame) and
+        1. Apply ``sample_filter`` to drop samples that should not contribute.
+           Log per-sample drops; raise EmptyFilterError if zero remain.
+        2. For each surviving sample, apply ``rubric_filter`` to drop rubrics
+           that should not contribute. Drop the sample if no rubrics survive.
+           Raise EmptyFilterError if no (sample, rubric) pair remains.
+        3. Loop k = 1..n_samples. For each k, fan out grading via a
+           ThreadPoolExecutor (same pattern as EvalRunner.run_async). For each
+           surviving sample:
+             a. Sample-level flow — if sample.gold_response is not None, grade
+                each surviving rubric with points != 0 against
+                (prompt + gold_response). Emit one row per rubric with
+                gold_source="ideal_completion".
+             b. Adversarial flow — for each surviving rubric with example_meets
+                or example_fails, grade just that one rubric against
+                (prompt + example_*). Emit one row with
+                gold_source="example_meets" or "example_fails".
+        4. Build a single pandas DataFrame with columns:
+           prompt_id, criterion_id, criterion, dimension, points, sample_k,
+           gold_source, observed_met, expected_met, specialty, language,
+           metadata_json. Add a derived in-memory column
+           ``rubric_key = criterion_id or criterion`` used by metrics.
+        5. Run each requested metric over the DataFrame and collect results
+           into MetricResults.scores. Each metric self-restricts to the row
+           subset it operates on (see metric table above).
+        6. If output_dir is set, write verdicts.parquet (DataFrame) and
            metrics.json (dataclasses.asdict(result)).
-        6. Return the MetricResults instance.
+        7. Return the MetricResults instance.
 
     Args:
         judge: Any JudgeGrader implementation. The CLI builds an LLMJudgeGrader
             with temperature overridden to >0 for k>1 to be meaningful.
-        labelled: Dataset-agnostic input. Caller is responsible for sampling,
-            stratification, and populating gold_response/expected.
+        labelled: Dataset-agnostic input. Caller is responsible for sampling
+            and stratification.
         dimension_extractor: Required. Function mapping a RubricItem to a
             dimension label (e.g. axis name). The CLI passes its own — no
             HealthBench-specific default lives in this module.
         metric_names: Names of registered metrics to compute. None = all registered.
         n_samples: How many independent grading passes to run per sample.
+        sample_filter: Optional sample-level predicate. None means keep all.
+        rubric_filter: Optional rubric-level predicate. None means keep all.
         output_dir: Where to write verdicts.parquet + metrics.json. None = no I/O.
         judge_metadata: Run-level header captured in MetricResults and metrics.json.
 
     Returns:
         MetricResults with one entry per metric in scores.
+
+    Raises:
+        EmptyFilterError: If sample_filter or rubric_filter eliminate all
+            samples or all rubrics. Error message names the active filters.
     """
 ```
 
 The `dimension_extractor` parameter is **required, no default**, so `meta_eval.py` carries no HealthBench knowledge.
+
+### Filter helpers
+
+```python
+# src/healthbench_agent/llm_eval/meta_eval.py
+
+class EmptyFilterError(ValueError):
+    """Raised when a sample/rubric filter combination eliminates all rows.
+
+    Carries the names (or repr) of the active filters so the CLI can show
+    the user exactly which flags caused the empty result.
+    """
+    def __init__(self, sample_filter: Any, rubric_filter: Any) -> None: ...
+
+
+def axis_filter(*axes: str) -> Callable[[RubricItem], bool]:
+    """Keep rubrics whose `category` field or `axis:*` tag matches any of *axes*.
+
+    Checks both the SPEC.md `category` field and the HealthBench `axis:*` tag
+    convention so the same helper works on both schemas.
+    """
+
+def metadata_filter(**conditions: Any) -> Callable[[LabelledSample], bool]:
+    """Keep samples where every metadata key equals the given value.
+
+    Top-level fields (`language`, `specialty`, `user_persona`) are checked
+    against attributes; other keys are looked up in `sample.metadata`.
+
+    Example:
+        metadata_filter(clinical_urgency="emergency", language="en")
+    """
+
+def specialty_filter(*specialties: str) -> Callable[[LabelledSample], bool]:
+    """Keep samples whose `specialty` field is in *specialties*."""
+```
+
+Each helper is ~5 lines of code. They are conveniences for CLI use; users can write arbitrary lambdas for anything more complex. `EmptyFilterError` is re-exported from `prompt_optimization/metric.py` so callers of `JudgeAgreementMetric` and `EndToEndMetric` see the same exception type.
 
 ### `composite_fitness` — single scalar for prompt-optimization
 
@@ -286,24 +448,32 @@ def composite_fitness(
 ) -> float:
     """Weighted sum over numeric scores in MetricResults.
 
-    Default weights privilege correctness over consistency:
-        {"cohens_kappa": 0.6, "krippendorff_alpha": 0.4}
+    Default weights anchor on the calibration target (gold_score == 1.0)
+    and use κ as a tie-breaker for per-rubric agreement:
+        {"gold_score": 0.7, "cohens_kappa": 0.3}
     """
 ```
+
+The default fitness for `JudgeAgreementMetric` is the bare `gold_score` metric (not `composite`) because (i) it has a clear target value of 1.0, (ii) it directly reflects production scoring, and (iii) it's the simplest signal for the optimizer to push on. Composite remains available for users who want to combine it with κ or other metrics.
 
 ## Parquet Schema (`verdicts.parquet`)
 
 | column | type | meaning |
 |---|---|---|
 | `prompt_id` | str | from `LabelledSample.prompt_id` |
+| `criterion_id` | str \| None | from `RubricItem.criterion_id` (None for HealthBench) |
 | `criterion` | str | rubric criterion text, truncated to 200 chars on write |
 | `dimension` | str \| None | output of `dimension_extractor(rubric)` |
 | `points` | float | rubric points |
 | `sample_k` | int | which of the n_samples passes (1..n_samples) |
+| `gold_source` | str | one of `"ideal_completion"`, `"example_meets"`, `"example_fails"` |
 | `observed_met` | bool | judge verdict |
-| `expected_met` | bool | from `LabelledSample.expected[criterion]` |
+| `expected_met` | bool | True for `points > 0` on sample-level rows, True/False on adversarial rows |
+| `specialty` | str \| None | from `LabelledSample.specialty` |
+| `language` | str \| None | from `LabelledSample.language` |
+| `metadata_json` | str | `json.dumps(LabelledSample.metadata)` for downstream filtering and joins |
 
-Run-level fields (`judge_model`, `temperature`, `judge_prompt_sha`, `n_samples`, `seed`) live in `metrics.json`'s `judge_metadata`, not on every row.
+Run-level fields (`judge_model`, `temperature`, `judge_prompt_sha`, `n_samples`, `seed`) live in `metrics.json`'s `judge_metadata`, not on every row. `metadata` is serialised as JSON text rather than a struct column to keep the parquet schema flat and tolerant of evolving keys.
 
 ## CLI
 
@@ -316,13 +486,18 @@ uv run meta-evaluate-judge \
     --sample-size 100 \
     --n-samples 7 \
     --temperature 1.0 \
-    --metrics cohens_kappa,krippendorff_alpha,calibration_curve,per_dimension_confusion \
+    --metrics gold_score,cohens_kappa,adversarial_prf1,per_dimension_confusion \
+    --rubric-axis accuracy \
+    --metadata clinical_urgency=emergency \
+    --metadata language=en \
     --output-dir runs/meta_eval/2026-04-07_openai/
 ```
 
-`cli_meta_eval.py` flow (~80 lines):
+`--rubric-axis` is repeatable and builds an `axis_filter`. `--metadata KEY=VALUE` is repeatable and builds a `metadata_filter`. Both are optional; omitting them keeps every sample and rubric.
 
-1. Parse args.
+`cli_meta_eval.py` flow (~100 lines):
+
+1. Parse args, including repeatable `--rubric-axis` and `--metadata KEY=VALUE` flags.
 2. `dataset = load_dataset("consensus")`.
 3. `sampled = stratified_sample(dataset, n=sample_size, tag_prefix="theme", seed=seed)`.
 4. **Populate gold-label fields in place** for each `HealthBenchSample` in `sampled.samples` that has `ideal_completions_data`:
@@ -335,13 +510,17 @@ uv run meta-evaluate-judge \
        for tag in item.tags:
            if tag.startswith("axis:"):
                return tag[len("axis:"):]
-       return None
+       return item.category
    ```
-6. Build a `JudgeConfig` from the YAML; override `temperature` from CLI.
-7. `judge = create_judge(config)`.
-8. `results = run_meta_eval(judge, sampled.samples, dimension_extractor=axis_extractor, ...)`.
-9. Optional MLflow logging (params + scalar metrics + artifacts, tagged `run_type=meta_eval`).
-10. Print summary.
+6. Build filter callables:
+   - `rubric_filter = axis_filter(*args.rubric_axis) if args.rubric_axis else None`
+   - `sample_filter = metadata_filter(**parsed_metadata) if parsed_metadata else None`
+7. Build a `JudgeConfig` from the YAML; override `temperature` from CLI.
+8. `judge = create_judge(config)`.
+9. `results = run_meta_eval(judge, sampled.samples, dimension_extractor=axis_extractor, sample_filter=sample_filter, rubric_filter=rubric_filter, ...)`.
+10. Catch `EmptyFilterError` → exit with a clear message naming the active filters.
+11. Optional MLflow logging (params + scalar metrics + artifacts, tagged `run_type=meta_eval`). Filter args are logged as MLflow params (`filter_axis`, `filter_metadata`) so runs are reproducible from the MLflow UI alone.
+12. Print summary.
 
 Default `--metrics` is empty, meaning "all registered metrics".
 
@@ -351,14 +530,20 @@ Default `--metrics` is empty, meaning "all registered metrics".
 uv run optimize-prompt --target judge \
     --judge-config config/judges/openai_gpt41.yaml \
     --optimizer critique_refine \
-    --fitness cohens_kappa \
+    --fitness gold_score \
     --sample-size 50 \
-    --max-trials 10
+    --max-trials 10 \
+    --rubric-axis accuracy \
+    --metadata clinical_urgency=emergency
 ```
 
 `--target agent` (default) keeps today's behaviour (`EndToEndMetric`). `--target judge` requires `--judge-config`, loads + populates a labelled set the same way `cli_meta_eval.py` does, builds a `JudgeAgreementMetric`, and hands it to the chosen optimizer adapter unchanged. The three adapters (DSPy, TextGrad, critique-refine) are not modified.
 
-The labelled-set construction is shared between `cli_meta_eval.py` and `cli.py --target judge`. To avoid duplication, the population step (steps 2-5 above) is extracted into a small helper inside `cli_meta_eval.py` (`load_consensus_labelled(sample_size, seed) -> tuple[list[LabelledSample], Callable]`) which `cli.py` imports.
+The same `--rubric-axis` and `--metadata` flags accepted by `meta-evaluate-judge` are accepted here. They are forwarded into `JudgeAgreementMetric` (via `sample_filter` / `rubric_filter`) so that the optimizer's fitness signal is restricted to the slice of interest. This is what enables **per-axis / per-specialty / per-metadata judge prompt optimization** without any optimizer changes.
+
+For `--target agent`, `EndToEndMetric` also gains the same two filter parameters so that agent prompts can be optimised on the same slice the user expects to evaluate them on. The CLI passes them to whichever metric `--target` selects, so the user-facing flag set is identical for both targets.
+
+The labelled-set construction is shared between `cli_meta_eval.py` and `cli.py --target judge`. To avoid duplication, the population step (steps 2-5 above) is extracted into a small helper inside `cli_meta_eval.py` (`load_consensus_labelled(sample_size, seed) -> tuple[list[LabelledSample], Callable]`) which `cli.py` imports. Filter parsing (`--rubric-axis`, `--metadata`) is extracted into a second helper (`build_filters(args) -> tuple[sample_filter, rubric_filter]`) shared between both CLIs.
 
 ### `JudgeAgreementMetric`
 
@@ -370,7 +555,10 @@ class JudgeAgreementMetric:
     meta-evaluation against a fixed labelled set.
 
     Mirrors the EndToEndMetric callable shape so any registered
-    PromptOptimizer works without modification.
+    PromptOptimizer works without modification. Optional sample/rubric
+    filters restrict the fitness signal to a slice (e.g. "accuracy axis,
+    emergency cases") so the optimizer specialises the judge prompt for
+    that slice.
     """
     def __init__(
         self,
@@ -378,13 +566,16 @@ class JudgeAgreementMetric:
         labelled: list[LabelledSample],
         dimension_extractor: Callable[[RubricItem], str | None],
         n_samples: int = 3,
-        fitness: str = "cohens_kappa",
+        fitness: str = "gold_score",
         weights: dict[str, float] | None = None,
+        sample_filter: Callable[[LabelledSample], bool] | None = None,
+        rubric_filter: Callable[[RubricItem], bool] | None = None,
     ) -> None: ...
 
     def __call__(self, candidate_template: str) -> float:
         """Build a one-off LLMJudgeGrader using the candidate template,
-        call run_meta_eval, return the configured fitness scalar.
+        call run_meta_eval with the configured filters, return the
+        fitness scalar.
         """
 ```
 
@@ -392,12 +583,18 @@ When `fitness == "composite"`, the call returns `composite_fitness(results, weig
 
 `n_samples` defaults to 3 here (vs 7 in the meta-eval CLI default) because each optimizer trial calls the metric once and the fitness signal needs to be cheap; the meta-eval CLI runs once and can afford 7.
 
+### `EndToEndMetric` extension
+
+`prompt_optimization/metric.py::EndToEndMetric` gains the **same two filter parameters** (`sample_filter` and `rubric_filter`). The agent pipeline still runs against every sample in the input set, but the per-rubric scoring step skips rubrics that fail `rubric_filter`, and the aggregate skips samples that fail `sample_filter`. This is what lets `optimize-prompt --target agent` produce a per-axis or per-metadata-slice fitness signal without changing any optimizer adapter.
+
+Both metrics raise `EmptyFilterError` (re-exported from `meta_eval.py`) if a filter combination eliminates every (sample, rubric) pair, so the user sees a clear failure rather than silently optimising against an empty signal.
+
 ## MLflow Logging
 
 `cli_meta_eval.py` (default ON; `--no-mlflow` to disable):
 - `mlflow.set_experiment("meta_eval")`
 - `mlflow.log_params({"judge_model", "temperature", "n_samples", "sample_size", "seed", "judge_prompt_sha"})`
-- For numeric scores: `mlflow.log_metric("cohens_kappa", v)`, `mlflow.log_metric("krippendorff_alpha", v)`. Calibration-curve dict flattened as `cal_se_k1`, `cal_se_k3`, etc. Non-numeric scores (e.g. `per_dimension_confusion`) are NOT logged as metrics — they live in `metrics.json` and the parquet artifact.
+- For numeric scores: `mlflow.log_metric("gold_score", v)`, `mlflow.log_metric("cohens_kappa", v)`, `mlflow.log_metric("krippendorff_alpha", v)`. Calibration-curve dict flattened as `cal_se_k1`, `cal_se_k3`, etc. Non-numeric scores (e.g. `per_dimension_confusion`) are NOT logged as metrics — they live in `metrics.json` and the parquet artifact.
 - `mlflow.log_artifact(verdicts.parquet)`, `mlflow.log_artifact(metrics.json)`
 - `mlflow.set_tag("run_type", "meta_eval")` — keeps these out of agent-comparison views.
 
@@ -411,6 +608,9 @@ ZOMBIES coverage on the pure metric functions using synthetic verdict DataFrames
 
 | Test | Expected |
 |---|---|
+| `gold_score` on perfect verdicts (all positive rubrics met, no penalties) | 1.0 |
+| `gold_score` clips per-conversation scores to [0, 1] | conversation with negative raw score contributes 0.0 to mean |
+| `gold_score` only considers `gold_source == "ideal_completion"` rows | adversarial rows ignored |
 | Full agreement (observed == expected for all rows) | κ = 1.0, α = 1.0 |
 | Inverse (observed == not expected) | κ = -1.0 |
 | Random / orthogonal labels (50/50) | κ ≈ 0.0 |
@@ -418,19 +618,33 @@ ZOMBIES coverage on the pure metric functions using synthetic verdict DataFrames
 | Empty DataFrame | each metric returns sensible default or raises with a clear message |
 | Calibration curve at k=1 vs k=7 with synthetic noisy verdicts | SE@7 < SE@1 |
 | `per_dimension_confusion` with two dimensions | correct tp/fp/tn/fn per dimension |
+| `adversarial_accuracy` on a row mix where 3/4 match | 0.75 |
+| `adversarial_prf1` returns dict with precision/recall/f1/support | values match sklearn ground truth |
+| `per_criterion_metrics` groups by `criterion_id` | per-criterion dicts have all 4 keys |
 | Registry: `register_meta_metric` + `get_meta_metric` round-trip | works |
 | `run_meta_eval` with a fake `JudgeGrader` | produces verdicts.parquet and metrics.json with the requested `scores` keys |
 | `run_meta_eval` skips samples where `gold_response is None` | dropped count is correct |
+| `run_meta_eval` emits adversarial rows when `example_meets`/`example_fails` set | one row per pair, correct `gold_source` |
+| `run_meta_eval` with `sample_filter` that rejects all samples | raises `EmptyFilterError` mentioning the filter |
+| `run_meta_eval` with `rubric_filter` that rejects all rubrics | raises `EmptyFilterError` mentioning the filter |
+| `run_meta_eval` with `axis_filter("accuracy")` | only accuracy-tagged rubrics graded; row count matches expected |
+| `metadata_filter(clinical_urgency="emergency")` keeps only matching samples | filtered count is correct |
 | `JudgeAgreementMetric.__call__` with a fake judge | returns expected scalar |
+| `JudgeAgreementMetric` honours `sample_filter` + `rubric_filter` | fitness equals manually filtered run |
+| `EndToEndMetric` honours `sample_filter` + `rubric_filter` | fitness equals manually filtered run |
 | CLI smoke test: argparse → mocked `run_meta_eval` | dispatches with correct params |
+| CLI smoke test: `--rubric-axis accuracy --metadata language=en` | filter callables forwarded to `run_meta_eval` |
+| CLI smoke test: `EmptyFilterError` → CLI exits non-zero with clear message | exit code != 0, message mentions both filters |
 
 ### `tests/domain/test_meta_evaluation.py`
 
 | Test | Expected |
 |---|---|
 | `LabelledSample` constructs with required fields, defaults populate | ok |
+| `LabelledSample` constructs with full SPEC.md fields (language, specialty, user_persona, metadata) | values round-trip |
 | `HealthBenchSample` is a `LabelledSample` (`isinstance` check) | True |
 | `HealthBenchSample.from_dict(jsonl_row)` populates inherited + own fields | matches expected |
+| `RubricItem.from_dict` reads optional `criterion_id`, `category`, `example_meets`, `example_fails` when present | values populated; defaults remain `None` when absent |
 | Existing `HealthBenchSample` keyword construction still works | ok |
 | A function annotated `def foo(s: LabelledSample)` accepts a `HealthBenchSample` | mypy passes |
 | Setting `gold_response` and `expected` on a loaded `HealthBenchSample` works | mutation succeeds (dataclass not frozen) |
@@ -473,15 +687,18 @@ The migration is mechanical (keyword args + a few extra `gold_response=None` def
 
 ## Open Questions (resolved during brainstorming)
 
-1. ~~Ground-truth source~~ → physician-ideal completion proxy primary; the same `expected` field on `LabelledSample` accommodates a future hand-labels loader.
+1. ~~Ground-truth source~~ → two flows: sample-level via physician ideal completion (or future hand labels) populating `gold_response`, plus rubric-level adversarial pairs via `example_meets`/`example_fails` from the SPEC.md schema.
 2. ~~How many judges per run~~ → exactly one; cross-judge done offline by joining parquets.
 3. ~~Calibration temperature~~ → meta-eval overrides judge to temperature=1.0; production grader stays at 0.0.
 4. ~~Artifact format~~ → raw parquet + metrics.json.
 5. ~~Sampling strategy~~ → stratified by theme (sample-level), default 100.
-6. ~~Prompt-optimization integration~~ → grader prompt is also optimisable via `--target judge`.
-7. ~~Fitness function~~ → configurable, default `cohens_kappa`, composite available with weights.
+6. ~~Prompt-optimization integration~~ → grader prompt is also optimisable via `--target judge`; agent prompt optimization gains the same filter flags.
+7. ~~Fitness function~~ → configurable, default `gold_score` (falls back to `adversarial_prf1["f1"]` when no sample-level gold exists), composite available with weights.
 8. ~~Module placement~~ → single file inside `llm_eval/`; pure data types in `domain/`.
 9. ~~Type relationships~~ → `HealthBenchSample` inherits from `LabelledSample`; no `labelled_from_*` builder functions.
+10. ~~Slice-restricted optimization~~ → both `JudgeAgreementMetric` and `EndToEndMetric` accept optional `sample_filter` and `rubric_filter` (Option A: two separate `Callable` parameters), exposed on the CLI as repeatable `--rubric-axis` and `--metadata KEY=VALUE` flags.
+11. ~~Empty filter behaviour~~ → `EmptyFilterError` (subclass of `ValueError`) raised by `run_meta_eval`; CLI catches and exits non-zero with the active filter names.
+12. ~~SPEC.md schema fields~~ → optional with safe defaults on both `RubricItem` and `LabelledSample`; HealthBench loaders ignore them, future SPEC.md loaders populate them.
 
 ## Out of Scope (Follow-up Issues)
 
