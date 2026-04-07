@@ -255,3 +255,42 @@ def test_calibration_curve_empty_dataframe_returns_empty_dict():
         ]
     )
     assert calibration_curve(df) == {}
+
+
+def test_calibration_curve_single_group_bucket_skipped():
+    df = pd.DataFrame(
+        [
+            {
+                "prompt_id": "p0",
+                "rubric_key": "r0",
+                "gold_source": "ideal_completion",
+                "sample_k": 1,
+                "observed_met": True,
+                "expected_met": True,
+            }
+        ]
+    )
+    curve = calibration_curve(df)
+    assert 1 not in curve
+
+
+def test_calibration_curve_closed_form_se_for_four_groups():
+    # Four groups, three agree and one disagrees, all at k=1.
+    # agreements = [1, 1, 1, 0], mean = 0.75, sample variance = 0.25/3 * 4 / 3
+    # actually: (3 * (1-0.75)^2 + (0-0.75)^2) / (4 - 1)
+    #         = (3 * 0.0625 + 0.5625) / 3 = 0.75 / 3 = 0.25
+    # SE = sqrt(0.25 / 4) = 0.25
+    rows = [
+        {
+            "prompt_id": f"p{i}",
+            "rubric_key": "r0",
+            "gold_source": "ideal_completion",
+            "sample_k": 1,
+            "observed_met": True,
+            "expected_met": (i != 3),
+        }
+        for i in range(4)
+    ]
+    df = pd.DataFrame(rows)
+    curve = calibration_curve(df)
+    assert curve[1] == pytest.approx(0.25, abs=1e-9)
