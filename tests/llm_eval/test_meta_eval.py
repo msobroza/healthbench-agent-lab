@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pandas as pd
 import pytest
 
 from healthbench_agent.domain.meta_evaluation import LabelledSample
@@ -13,6 +14,7 @@ from healthbench_agent.llm_eval.meta_eval import (
     MetricSpec,
     axis_filter,
     get_meta_metric,
+    gold_score,
     metadata_filter,
     register_meta_metric,
     registered_meta_metrics,
@@ -107,3 +109,71 @@ def test_specialty_filter_matches_any():
 def test_empty_filter_error_carries_filter_reprs():
     err = EmptyFilterError(sample_filter="metadata_filter(language='fr')", rubric_filter=None)
     assert "language='fr'" in str(err)
+
+
+def _sample_rows(rows: list[dict]) -> pd.DataFrame:
+    return pd.DataFrame(rows)
+
+
+def test_gold_score_perfect_judge_returns_one():
+    df = _sample_rows(
+        [
+            {
+                "prompt_id": "p1",
+                "sample_k": 1,
+                "criterion": "c1",
+                "points": 1.0,
+                "observed_met": True,
+            },
+            {
+                "prompt_id": "p1",
+                "sample_k": 1,
+                "criterion": "c2",
+                "points": 2.0,
+                "observed_met": True,
+            },
+        ]
+    )
+    assert gold_score(df) == pytest.approx(1.0)
+
+
+def test_gold_score_clips_per_conversation_to_zero_when_negative():
+    df = _sample_rows(
+        [
+            # raw = -3 / 1 = -3 → clipped to 0
+            {
+                "prompt_id": "p1",
+                "sample_k": 1,
+                "criterion": "c1",
+                "points": 1.0,
+                "observed_met": False,
+            },
+            {
+                "prompt_id": "p1",
+                "sample_k": 1,
+                "criterion": "c2",
+                "points": -3.0,
+                "observed_met": True,
+            },
+            # second conversation: perfect, raw = 1
+            {
+                "prompt_id": "p2",
+                "sample_k": 1,
+                "criterion": "c3",
+                "points": 1.0,
+                "observed_met": True,
+            },
+        ]
+    )
+    # mean(0.0, 1.0) == 0.5
+    assert gold_score(df) == pytest.approx(0.5)
+
+
+def test_gold_score_empty_dataframe_returns_zero():
+    df = pd.DataFrame(columns=["prompt_id", "sample_k", "criterion", "points", "observed_met"])
+    assert gold_score(df) == 0.0
+
+
+def test_gold_score_registered_with_sample_level():
+    spec = get_meta_metric("gold_score")
+    assert spec.level is MetricLevel.SAMPLE
