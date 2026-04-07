@@ -13,10 +13,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from statistics import fmean
+from typing import TYPE_CHECKING, Any, cast
 
+from healthbench_agent.domain.evaluation import CriterionVerdict
 from healthbench_agent.domain.meta_evaluation import LabelledSample
 from healthbench_agent.domain.rubric import RubricItem
+from healthbench_agent.domain.scoring import calculate_score, clip_score
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -153,3 +156,44 @@ def specialty_filter(*specialties: str) -> Callable[[LabelledSample], bool]:
         return sample.specialty in wanted
 
     return predicate
+
+
+@register_meta_metric(
+    "gold_score",
+    level=MetricLevel.SAMPLE,
+    description="Mean clipped HealthBench score on gold responses (target = 1.0)",
+)
+def gold_score(verdicts: pd.DataFrame) -> float:
+    """Mean clipped HealthBench score the judge gives to gold responses.
+
+    Rebuilds (rubrics, verdicts) lists per (prompt_id, sample_k) group
+    and delegates to ``calculate_score`` + ``clip_score`` so meta-eval
+    cannot drift from production scoring.
+    """
+    if len(verdicts) == 0:
+        return 0.0
+
+    per_sample_scores: list[float] = []
+    for _, group in verdicts.groupby(["prompt_id", "sample_k"], sort=False):
+        rubric_items = [
+            RubricItem(
+                criterion=str(row.criterion),
+                points=float(cast(float, row.points)),
+                tags=[],
+            )
+            for row in group.itertuples(index=False)
+        ]
+        criterion_verdicts = [
+            CriterionVerdict(
+                criterion=str(row.criterion),
+                criteria_met=bool(row.observed_met),
+                explanation="",
+            )
+            for row in group.itertuples(index=False)
+        ]
+        raw = calculate_score(rubric_items, criterion_verdicts)
+        if raw is None:
+            continue
+        per_sample_scores.append(clip_score(raw))
+
+    return fmean(per_sample_scores) if per_sample_scores else 0.0
