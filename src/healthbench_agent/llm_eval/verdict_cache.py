@@ -10,6 +10,31 @@ where conversation_hash is sha256 of the JSON-serialised MessageList.
 Includes ``CachedJudgeGrader``, a thin proxy that wraps any
 ``JudgeGrader`` and consults the cache before delegating, so the
 ``JudgeGrader`` ABC stays unchanged.
+
+Thread safety
+-------------
+``VerdictCache`` is safe to share across worker threads under the
+following contract:
+
+* Hit/miss counter mutations are guarded by an internal ``threading.Lock``
+  so :meth:`VerdictCache.stats` returns consistent values when called from
+  any thread.
+* On-disk reads in :meth:`VerdictCache.get` are unlocked: small JSON
+  files are read with a single ``Path.read_text`` call and the OS-level
+  read is already atomic.
+* On-disk writes in :meth:`VerdictCache.put` use a temp-file +
+  ``os.replace`` dance, which is atomic on POSIX and Windows.
+
+The :class:`CachedJudgeGrader` wrapper executes a
+``get -> inner.grade -> put`` sequence per cache key. This sequence is
+**not** atomic across threads: when two workers race on the same
+``(conversation, rubric, k)`` key, both will miss, both will call
+``inner.grade``, and the later ``put`` will overwrite the earlier one.
+The race causes redundant LLM calls for that key but never stale or
+torn reads, and cross-run deduplication — the primary purpose of the
+cache — is preserved because ``put`` writes via ``os.replace``. In
+practice the key space (samples × rubrics × k passes) dwarfs the
+worker count, so collisions are rare and acceptable.
 """
 
 from __future__ import annotations
@@ -19,6 +44,7 @@ import json
 import logging
 import os
 import shutil
+import threading
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any  # noqa: F401
@@ -70,6 +96,7 @@ class VerdictCache:
         self.enabled = enabled
         self._hits = 0
         self._misses = 0
+        self._lock = threading.Lock()
 
     def make_key(
         self,
@@ -118,15 +145,18 @@ class VerdictCache:
             return None
         path = self._path_for(key)
         if not path.exists():
-            self._misses += 1
+            with self._lock:
+                self._misses += 1
             return None
         try:
             data = json.loads(path.read_text())
         except (OSError, json.JSONDecodeError):
             logger.warning("Corrupt cache entry at %s — treating as miss", path)
-            self._misses += 1
+            with self._lock:
+                self._misses += 1
             return None
-        self._hits += 1
+        with self._lock:
+            self._hits += 1
         return CriterionVerdict(
             criterion=data["criterion"],
             criteria_met=data["criteria_met"],
@@ -166,7 +196,10 @@ class VerdictCache:
                 if shard.is_dir():
                     for entry in shard.iterdir():
                         size += entry.stat().st_size
-        return {"hits": self._hits, "misses": self._misses, "size_bytes": size}
+        with self._lock:
+            hits = self._hits
+            misses = self._misses
+        return {"hits": hits, "misses": misses, "size_bytes": size}
 
 
 class CachedJudgeGrader(JudgeGrader):
@@ -178,6 +211,14 @@ class CachedJudgeGrader(JudgeGrader):
     construction time so the proxy can compute the full key from just
     the (conversation, rubric_text) tuple — no introspection of the
     inner grader required.
+
+    Thread safety:
+        Safe to share across worker threads. The ``get -> inner.grade
+        -> put`` sequence inside :meth:`grade` is **not** atomic per
+        cache key — see the module docstring for the full contract.
+        Cross-run deduplication is preserved; within-run duplicate
+        ``inner.grade`` calls for the same key are possible but rare
+        when the key space dwarfs the worker count.
     """
 
     def __init__(
