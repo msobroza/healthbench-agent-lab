@@ -246,6 +246,14 @@ class MetricResultsView:
             ax: Existing matplotlib Axes to draw into. When None, a new
                 figure and axes are created via ``plt.subplots()``.
 
+        Note:
+            When ``ax`` is None, this creates a new matplotlib Figure
+            and registers it with pyplot's global state. The Figure is
+            accessible via ``ax.figure``; long-running callers should
+            call ``plt.close(ax.figure)`` (or ``plt.close('all')``) to
+            release it. To avoid this entirely, pass an existing
+            ``ax`` from your own ``plt.subplots()`` call.
+
         Returns:
             The matplotlib Axes used for plotting.
 
@@ -265,7 +273,11 @@ class MetricResultsView:
         curve = self.results.scores["calibration_curve"]
         if ax is None:
             _, ax = plt.subplots()
-        ks = sorted(curve.keys())
+        ks_raw = list(curve.keys())
+        try:
+            ks = sorted(ks_raw, key=lambda k: int(k))
+        except (TypeError, ValueError):
+            ks = sorted(ks_raw)
         ax.plot(ks, [curve[k] for k in ks], marker="o")
         ax.set_xlabel("k (number of judge passes)")
         ax.set_ylabel("Bootstrap SE of agreement")
@@ -278,6 +290,14 @@ class MetricResultsView:
         Args:
             ax: Existing matplotlib Axes to draw into. When None, a new
                 figure and axes are created via ``plt.subplots()``.
+
+        Note:
+            When ``ax`` is None, this creates a new matplotlib Figure
+            and registers it with pyplot's global state. The Figure is
+            accessible via ``ax.figure``; long-running callers should
+            call ``plt.close(ax.figure)`` (or ``plt.close('all')``) to
+            release it. To avoid this entirely, pass an existing
+            ``ax`` from your own ``plt.subplots()`` call.
 
         Returns:
             The matplotlib Axes used for plotting.

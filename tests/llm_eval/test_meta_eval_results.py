@@ -96,6 +96,7 @@ def test_compare_two_views_returns_diff_dataframe(view):
     assert "other" in diff.columns
     assert "delta" in diff.columns
     assert len(diff) == 2
+    assert diff["metric"].tolist() == ["cohens_kappa", "gold_score"]
 
 
 def test_plot_calibration_curve_returns_axes_when_data_present():
@@ -127,3 +128,26 @@ def test_plot_dimension_confusion_returns_axes_when_data_present():
 def test_plot_calibration_curve_raises_keyerror_when_missing(view):
     with pytest.raises(KeyError):
         view.plot_calibration_curve()
+
+
+def test_plot_calibration_curve_after_save_load_round_trip_uses_numeric_order(tmp_path: Path):
+    """After save→load, calibration curve keys are str. Plot must sort numerically."""
+    view = MetricResultsView(
+        results=MetricResults(
+            scores={"calibration_curve": {1: 0.04, 3: 0.08, 5: 0.06, 7: 0.05, 10: 0.03}},
+            n_samples_graded=10,
+            n_rubrics_graded=10,
+            judge_metadata={},
+        )
+    )
+    view.save(tmp_path)
+    reloaded = MetricResultsView.load(tmp_path)
+    ax = reloaded.plot_calibration_curve()
+    xdata = list(ax.lines[0].get_xdata())
+    # Coerce x values to int so that lex-sorted str keys ('1','10','3','5','7')
+    # become the numerically-misordered [1,10,3,5,7] and the assertion fails.
+    numeric_x = [int(x) for x in xdata]
+    # If sorted numerically, the values should be monotonically increasing.
+    assert numeric_x == sorted(numeric_x)
+    # And the count must include all 5 k values, not just the lex-sortable subset.
+    assert len(xdata) == 5
