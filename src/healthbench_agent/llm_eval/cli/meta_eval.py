@@ -1,8 +1,13 @@
 """``meta-evaluate-judge`` CLI.
 
-argparse entry point. Only the ``run`` subcommand is wired in this task;
-``regenerate``, ``compare``, ``list-metrics``, ``list-metadata-keys``, and
-``clear-cache`` are added in follow-up tasks.
+argparse entry point for the meta-evaluation harness.  Subcommands:
+
+* ``run``                — grade a labelled set with one judge and compute metrics.
+* ``regenerate``         — recompute metrics from an existing ``verdicts.parquet``.
+* ``compare``            — side-by-side metric diff between two run directories.
+* ``list-metrics``       — dump every registered meta metric with level/description.
+* ``list-metadata-keys`` — discover metadata keys present in the consensus subset.
+* ``clear-cache``        — wipe the on-disk verdict cache.
 """
 
 from __future__ import annotations
@@ -106,6 +111,16 @@ def _build_filters(
     return sf, rf
 
 
+def _default_cache_for_cli() -> VerdictCache:
+    """Return the default verdict cache for CLI operations.
+
+    Returns:
+        A :class:`VerdictCache` pointing at the default XDG cache root,
+        with caching enabled.
+    """
+    return VerdictCache(enabled=True)
+
+
 def _add_run_parser(subparsers: Any) -> None:
     p = subparsers.add_parser("run", help="Grade a labelled set with one judge")
     p.add_argument("--judge-config", required=True)
@@ -122,6 +137,43 @@ def _add_run_parser(subparsers: Any) -> None:
     p.add_argument("--no-progress", action="store_true")
     p.add_argument("--no-mlflow", action="store_true")
     p.add_argument("--dry-run", action="store_true")
+
+
+def _add_other_parsers(subparsers: Any) -> None:
+    # list-metrics
+    subparsers.add_parser("list-metrics", help="Print all registered meta metrics")
+
+    # clear-cache
+    subparsers.add_parser("clear-cache", help="Wipe the on-disk verdict cache")
+
+    # regenerate
+    regen = subparsers.add_parser(
+        "regenerate",
+        help="Recompute metrics from an existing verdicts.parquet",
+    )
+    regen.add_argument("run_dir", help="Directory containing verdicts.parquet and metrics.json")
+
+    # compare
+    cmp = subparsers.add_parser(
+        "compare",
+        help="Side-by-side metric diff between two run directories",
+    )
+    cmp.add_argument("run_dir_a", help="First run directory")
+    cmp.add_argument("run_dir_b", help="Second run directory")
+    cmp.add_argument(
+        "--output",
+        default=None,
+        help="Optional path to write a markdown comparison table",
+    )
+
+    # list-metadata-keys
+    lmk = subparsers.add_parser(
+        "list-metadata-keys",
+        help="Discover metadata keys present in the consensus subset",
+    )
+    lmk.add_argument("--subset", default="consensus")
+    lmk.add_argument("--sample-size", type=int, default=100)
+    lmk.add_argument("--seed", type=int, default=0)
 
 
 def _cmd_run(args: argparse.Namespace) -> None:
@@ -163,13 +215,119 @@ def _cmd_run(args: argparse.Namespace) -> None:
     print(view.summary())
 
 
+def _cmd_list_metrics(args: argparse.Namespace) -> None:  # noqa: ARG001
+    from healthbench_agent.llm_eval.meta_eval.registry import registered_meta_metrics
+
+    registry = registered_meta_metrics()
+    print(f"{'NAME':<30} {'LEVEL':<8} DESCRIPTION")
+    print("-" * 70)
+    for name, spec in sorted(registry.items()):
+        print(f"{name:<30} {spec.level.value:<8} {spec.description}")
+
+
+def _cmd_clear_cache(args: argparse.Namespace) -> None:  # noqa: ARG001
+    cache = _default_cache_for_cli()
+    cache.clear()
+    print(f"Cleared cache at {cache.root}")
+
+
+def _cmd_regenerate(args: argparse.Namespace) -> None:
+    import pandas as pd
+
+    from healthbench_agent.llm_eval.meta_eval.registry import (
+        MetricLevel,
+        registered_meta_metrics,
+    )
+    from healthbench_agent.llm_eval.meta_eval.results_io import load_results, save_results
+
+    run_dir = Path(args.run_dir)
+    parquet_path = run_dir / "verdicts.parquet"
+    if not parquet_path.exists():
+        sys.stderr.write(f"verdicts.parquet not found in {run_dir}\n")
+        raise SystemExit(2)
+
+    df = pd.read_parquet(parquet_path)
+    sample_rows = df[df["gold_source"] == "ideal_completion"]
+    rubric_rows = df[df["gold_source"].isin(["example_meets", "example_fails"])]
+
+    registry = registered_meta_metrics()
+    scores: dict[str, Any] = {}
+    for name, spec in registry.items():
+        if spec.level is MetricLevel.SAMPLE:
+            subset = sample_rows
+        elif spec.level is MetricLevel.RUBRIC:
+            subset = rubric_rows
+        else:
+            subset = df
+        if len(subset) == 0:
+            logger.info(
+                "skipping metric %s (level=%s) — no matching rows",
+                name,
+                spec.level.value,
+            )
+            continue
+        scores[name] = spec.fn(subset)
+
+    # Load the existing results to preserve judge_metadata header, then update scores.
+    view = load_results(run_dir)
+    view.results.scores = scores
+    save_results(view.results, run_dir)
+    print(view.summary())
+
+
+def _cmd_compare(args: argparse.Namespace) -> None:
+    from healthbench_agent.llm_eval.meta_eval.results_io import load_results
+
+    a_view = load_results(args.run_dir_a)
+    b_view = load_results(args.run_dir_b)
+    diff_df = a_view.compare(b_view)
+    print(diff_df.to_string(index=False))
+    if args.output:
+        output_path = Path(args.output)
+        output_path.write_text(diff_df.to_markdown(index=False))
+        print(f"\nMarkdown table written to {output_path}")
+
+
+def _cmd_list_metadata_keys(args: argparse.Namespace) -> None:
+    import collections
+
+    samples, _ = _load_consensus_labelled(args.subset, args.sample_size, args.seed)
+    top_level_keys = ("language", "specialty", "user_persona")
+    counters: dict[str, collections.Counter[str]] = {
+        k: collections.Counter() for k in top_level_keys
+    }
+    metadata_counter: collections.Counter[str] = collections.Counter()
+
+    for sample in samples:
+        for key in top_level_keys:
+            value = getattr(sample, key, None)
+            if value is not None:
+                counters[key][str(value)] += 1
+        for meta_key in sample.metadata:
+            metadata_counter[meta_key] += 1
+
+    print("Top-level fields:")
+    for key in top_level_keys:
+        values = counters[key]
+        if values:
+            print(f"  {key}: {dict(values)}")
+        else:
+            print(f"  {key}: (none)")
+
+    print("\nmetadata dict keys:")
+    if metadata_counter:
+        for key, count in sorted(metadata_counter.items()):
+            print(f"  {key}: {count} samples")
+    else:
+        print("  (none)")
+
+
 def main(argv: list[str] | None = None) -> None:
     """Entry point for the ``meta-evaluate-judge`` CLI.
 
     Parses argv, dispatches to the matching subcommand handler, and exits.
-    Currently only the ``run`` subcommand is wired; additional subcommands
-    (regenerate/compare/list-metrics/list-metadata-keys/clear-cache) will be
-    added in follow-up tasks.
+    Subcommands: ``run``, ``regenerate``, ``compare``, ``list-metrics``,
+    ``list-metadata-keys``, ``clear-cache``.
 
     Args:
         argv: Command-line arguments to parse. Defaults to ``sys.argv[1:]``
@@ -183,12 +341,23 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="meta-evaluate-judge")
     sub = parser.add_subparsers(dest="command")
     _add_run_parser(sub)
+    _add_other_parsers(sub)
     args = parser.parse_args(argv)
-    if args.command == "run":
-        _cmd_run(args)
-    else:
+
+    handlers: dict[str, Callable[[argparse.Namespace], None]] = {
+        "run": _cmd_run,
+        "regenerate": _cmd_regenerate,
+        "compare": _cmd_compare,
+        "list-metrics": _cmd_list_metrics,
+        "list-metadata-keys": _cmd_list_metadata_keys,
+        "clear-cache": _cmd_clear_cache,
+    }
+
+    handler = handlers.get(args.command or "")
+    if handler is None:
         parser.print_help()
         raise SystemExit(1)
+    handler(args)
 
 
 if __name__ == "__main__":  # pragma: no cover
