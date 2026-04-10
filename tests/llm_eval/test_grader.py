@@ -1,7 +1,7 @@
 """Tests for healthbench_agent.llm_eval.grader — grading logic.
 
 Tests template rendering, response parsing, conversation formatting,
-LLMJudgeGrader, create_judge, and grade_sample with mocked samplers.
+LLMJudgeGrader, create_judge, and grade_sample with mocked LLM clients.
 """
 
 from __future__ import annotations
@@ -13,8 +13,8 @@ import pytest
 
 from healthbench_agent.domain.conversation import MessageList
 from healthbench_agent.domain.judge import JudgeGrader
+from healthbench_agent.domain.llm_client import LLMResponse
 from healthbench_agent.domain.rubric import RubricItem
-from healthbench_agent.domain.sampler import SamplerResponse
 from healthbench_agent.llm_eval.grader import (
     GRADER_TEMPLATE,
     LLMJudgeGrader,
@@ -170,50 +170,52 @@ class TestParseGradingResponse:
 
 
 # ---------------------------------------------------------------------------
-# grade_sample tests (mocked sampler)
+# grade_sample tests (mocked LLM client)
 # ---------------------------------------------------------------------------
 
 
-def _make_mock_sampler(responses: list[str]) -> MagicMock:
-    """Create a mock sampler that returns predetermined responses."""
-    sampler = MagicMock()
+def _make_mock_llm_client(responses: list[str]) -> MagicMock:
+    """Create a mock LLM client that returns predetermined responses."""
+    llm_client = MagicMock()
     side_effects = [
-        SamplerResponse(
+        LLMResponse(
             response_text=r,
             actual_queried_message_list=[],
             response_metadata={},
         )
         for r in responses
     ]
-    sampler.side_effect = side_effects
-    return sampler
+    llm_client.side_effect = side_effects
+    return llm_client
 
 
 class TestGradeSample:
-    """Tests for grade_sample() with mocked samplers."""
+    """Tests for grade_sample() with mocked LLM clients."""
 
     def test_single_rubric_item_met(self):
-        sampler = _make_mock_sampler(['{"explanation": "Correct", "criteria_met": true}'])
+        llm_client = _make_mock_llm_client(['{"explanation": "Correct", "criteria_met": true}'])
         rubric_items = [RubricItem("States the diagnosis", 5.0, ["axis:accuracy"])]
         conversation: MessageList = [
             {"role": "user", "content": "What's wrong?"},
             {"role": "assistant", "content": "You have condition X."},
         ]
-        verdicts = grade_sample(sampler, conversation, rubric_items)
+        verdicts = grade_sample(llm_client, conversation, rubric_items)
         assert len(verdicts) == 1
         assert verdicts[0].criteria_met is True
         assert verdicts[0].criterion == "States the diagnosis"
 
     def test_single_rubric_item_not_met(self):
-        sampler = _make_mock_sampler(['{"explanation": "Missing info", "criteria_met": false}'])
+        llm_client = _make_mock_llm_client(
+            ['{"explanation": "Missing info", "criteria_met": false}']
+        )
         rubric_items = [RubricItem("Mentions side effects", 3.0)]
         conversation: MessageList = [{"role": "user", "content": "Tell me about X."}]
-        verdicts = grade_sample(sampler, conversation, rubric_items)
+        verdicts = grade_sample(llm_client, conversation, rubric_items)
         assert len(verdicts) == 1
         assert verdicts[0].criteria_met is False
 
     def test_multiple_rubric_items(self):
-        sampler = _make_mock_sampler(
+        llm_client = _make_mock_llm_client(
             [
                 '{"explanation": "Good", "criteria_met": true}',
                 '{"explanation": "Bad", "criteria_met": false}',
@@ -226,23 +228,23 @@ class TestGradeSample:
             RubricItem("Item C", -2.0),
         ]
         conversation: MessageList = [{"role": "user", "content": "Q"}]
-        verdicts = grade_sample(sampler, conversation, rubric_items)
+        verdicts = grade_sample(llm_client, conversation, rubric_items)
         assert len(verdicts) == 3
         assert verdicts[0].criteria_met is True
         assert verdicts[1].criteria_met is False
         assert verdicts[2].criteria_met is True
 
     def test_malformed_response_defaults_to_not_met(self):
-        sampler = _make_mock_sampler(["This is not valid JSON at all"])
+        llm_client = _make_mock_llm_client(["This is not valid JSON at all"])
         rubric_items = [RubricItem("Some criterion", 5.0)]
         conversation: MessageList = [{"role": "user", "content": "Q"}]
-        verdicts = grade_sample(sampler, conversation, rubric_items)
+        verdicts = grade_sample(llm_client, conversation, rubric_items)
         assert len(verdicts) == 1
         assert verdicts[0].criteria_met is False
         assert "Failed to parse" in verdicts[0].explanation
 
-    def test_sampler_called_once_per_rubric_item(self):
-        sampler = _make_mock_sampler(
+    def test_llm_client_called_once_per_rubric_item(self):
+        llm_client = _make_mock_llm_client(
             [
                 '{"explanation": "A", "criteria_met": true}',
                 '{"explanation": "B", "criteria_met": true}',
@@ -250,12 +252,12 @@ class TestGradeSample:
         )
         rubric_items = [RubricItem("X", 1.0), RubricItem("Y", 2.0)]
         conversation: MessageList = [{"role": "user", "content": "Q"}]
-        grade_sample(sampler, conversation, rubric_items)
-        assert sampler.call_count == 2
+        grade_sample(llm_client, conversation, rubric_items)
+        assert llm_client.call_count == 2
 
     def test_empty_rubric_returns_empty_verdicts(self):
-        sampler = _make_mock_sampler([])
-        verdicts = grade_sample(sampler, [], [])
+        llm_client = _make_mock_llm_client([])
+        verdicts = grade_sample(llm_client, [], [])
         assert verdicts == []
 
 
@@ -268,13 +270,13 @@ class TestLLMJudgeGrader:
     """Tests for LLMJudgeGrader concrete class."""
 
     def test_is_judge_grader_subclass(self):
-        sampler = _make_mock_sampler([])
-        judge = LLMJudgeGrader(sampler=sampler)
+        llm_client = _make_mock_llm_client([])
+        judge = LLMJudgeGrader(llm_client=llm_client)
         assert isinstance(judge, JudgeGrader)
 
     def test_grade_single_item_met(self):
-        sampler = _make_mock_sampler(['{"explanation": "Good", "criteria_met": true}'])
-        judge = LLMJudgeGrader(sampler=sampler)
+        llm_client = _make_mock_llm_client(['{"explanation": "Good", "criteria_met": true}'])
+        judge = LLMJudgeGrader(llm_client=llm_client)
         rubric_items = [RubricItem("Correct diagnosis", 5.0)]
         conversation: MessageList = [
             {"role": "user", "content": "What do I have?"},
@@ -286,13 +288,13 @@ class TestLLMJudgeGrader:
         assert verdicts[0].criterion == "Correct diagnosis"
 
     def test_grade_multiple_items(self):
-        sampler = _make_mock_sampler(
+        llm_client = _make_mock_llm_client(
             [
                 '{"explanation": "A", "criteria_met": true}',
                 '{"explanation": "B", "criteria_met": false}',
             ]
         )
-        judge = LLMJudgeGrader(sampler=sampler)
+        judge = LLMJudgeGrader(llm_client=llm_client)
         rubric_items = [
             RubricItem("Item A", 5.0),
             RubricItem("Item B", 3.0),
@@ -304,8 +306,8 @@ class TestLLMJudgeGrader:
         assert verdicts[1].criteria_met is False
 
     def test_malformed_response_defaults_to_not_met(self):
-        sampler = _make_mock_sampler(["not json"])
-        judge = LLMJudgeGrader(sampler=sampler)
+        llm_client = _make_mock_llm_client(["not json"])
+        judge = LLMJudgeGrader(llm_client=llm_client)
         verdicts = judge.grade(
             [{"role": "user", "content": "Q"}],
             [RubricItem("X", 5.0)],
@@ -313,23 +315,23 @@ class TestLLMJudgeGrader:
         assert verdicts[0].criteria_met is False
         assert "Failed to parse" in verdicts[0].explanation
 
-    def test_sampler_called_once_per_rubric_item(self):
-        sampler = _make_mock_sampler(
+    def test_llm_client_called_once_per_rubric_item(self):
+        llm_client = _make_mock_llm_client(
             [
                 '{"explanation": "A", "criteria_met": true}',
                 '{"explanation": "B", "criteria_met": true}',
             ]
         )
-        judge = LLMJudgeGrader(sampler=sampler)
+        judge = LLMJudgeGrader(llm_client=llm_client)
         judge.grade(
             [{"role": "user", "content": "Q"}],
             [RubricItem("X", 1.0), RubricItem("Y", 2.0)],
         )
-        assert sampler.call_count == 2
+        assert llm_client.call_count == 2
 
     def test_empty_rubric_returns_empty(self):
-        sampler = _make_mock_sampler([])
-        judge = LLMJudgeGrader(sampler=sampler)
+        llm_client = _make_mock_llm_client([])
+        judge = LLMJudgeGrader(llm_client=llm_client)
         assert judge.grade([], []) == []
 
 

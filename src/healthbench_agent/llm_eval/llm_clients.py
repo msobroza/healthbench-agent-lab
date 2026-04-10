@@ -1,6 +1,6 @@
-"""LLM sampler implementations for OpenAI and Gemini providers.
+"""LLM client implementations for OpenAI and Gemini providers.
 
-Both implement SamplerBase.__call__(message_list) -> SamplerResponse,
+Both implement LLMClient.__call__(message_list) -> LLMResponse,
 making them interchangeable as the grader model without changing
 evaluation logic.
 
@@ -13,13 +13,13 @@ import os
 from typing import Any
 
 from healthbench_agent.domain.conversation import MessageList
-from healthbench_agent.domain.sampler import SamplerBase, SamplerResponse
+from healthbench_agent.domain.llm_client import LLMClient, LLMResponse
 
 from .config_grader import JudgeConfig
 
 
-class OpenAIChatSampler(SamplerBase):
-    """Sampler wrapping the OpenAI Chat Completions API.
+class OpenAIChatClient(LLMClient):
+    """LLM client wrapping the OpenAI Chat Completions API.
 
     Accepts an explicit ``api_key`` or falls back to the
     ``OPENAI_API_KEY`` environment variable.
@@ -59,14 +59,14 @@ class OpenAIChatSampler(SamplerBase):
             )
         return self._client
 
-    def __call__(self, message_list: MessageList) -> SamplerResponse:
+    def __call__(self, message_list: MessageList) -> LLMResponse:
         """Sample a response from OpenAI.
 
         Args:
             message_list: Conversation history as role/content dicts.
 
         Returns:
-            SamplerResponse with the model output and request metadata.
+            LLMResponse with the model output and request metadata.
         """
         client = self._get_client()
         response = client.chat.completions.create(
@@ -75,7 +75,7 @@ class OpenAIChatSampler(SamplerBase):
             temperature=self.temperature,
         )
         choice = response.choices[0]
-        return SamplerResponse(
+        return LLMResponse(
             response_text=choice.message.content or "",
             actual_queried_message_list=message_list,
             response_metadata={
@@ -91,8 +91,8 @@ class OpenAIChatSampler(SamplerBase):
         )
 
 
-class GeminiChatSampler(SamplerBase):
-    """Sampler wrapping the Google Gemini (GenAI) API.
+class GeminiChatClient(LLMClient):
+    """LLM client wrapping the Google Gemini (GenAI) API.
 
     Accepts an explicit ``api_key`` or falls back to the
     ``GOOGLE_API_KEY`` environment variable.
@@ -125,14 +125,14 @@ class GeminiChatSampler(SamplerBase):
             self._client = genai.Client(api_key=key)
         return self._client
 
-    def __call__(self, message_list: MessageList) -> SamplerResponse:
+    def __call__(self, message_list: MessageList) -> LLMResponse:
         """Sample a response from Gemini.
 
         Args:
             message_list: Conversation history as role/content dicts.
 
         Returns:
-            SamplerResponse with the model output and request metadata.
+            LLMResponse with the model output and request metadata.
         """
         client = self._get_client()
 
@@ -148,7 +148,7 @@ class GeminiChatSampler(SamplerBase):
             config={"temperature": self.temperature},
         )
 
-        return SamplerResponse(
+        return LLMResponse(
             response_text=response.text or "",
             actual_queried_message_list=message_list,
             response_metadata={
@@ -158,8 +158,8 @@ class GeminiChatSampler(SamplerBase):
         )
 
 
-def create_sampler(config: JudgeConfig) -> SamplerBase:
-    """Create a sampler from a JudgeConfig, injecting API keys from config.
+def create_llm_client(config: JudgeConfig) -> LLMClient:
+    """Create an LLM client from a JudgeConfig, injecting API keys from config.
 
     Falls back to environment variables if the config does not contain
     the relevant API key.
@@ -169,14 +169,14 @@ def create_sampler(config: JudgeConfig) -> SamplerBase:
             optional API keys.
 
     Returns:
-        A SamplerBase implementation matching the configured provider.
+        An LLMClient implementation matching the configured provider.
 
     Raises:
         ValueError: If the configured provider is not supported.
     """
     if config.provider == "openai":
         api_key = config.openai_api_key.get_secret_value() if config.openai_api_key else None
-        return OpenAIChatSampler(
+        return OpenAIChatClient(
             model=config.model,
             temperature=config.temperature,
             max_retries=config.max_retries,
@@ -185,7 +185,7 @@ def create_sampler(config: JudgeConfig) -> SamplerBase:
         )
     if config.provider == "gemini":
         api_key = config.google_api_key.get_secret_value() if config.google_api_key else None
-        return GeminiChatSampler(
+        return GeminiChatClient(
             model=config.model,
             temperature=config.temperature,
             max_retries=config.max_retries,

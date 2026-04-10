@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `domain/` — pure domain layer (no I/O, no external deps)
     - `rubric.py` — `RubricItem`
     - `conversation.py` — `Message`, `MessageList`, `ConversationMetadata`, `Conversation`
-    - `sampler.py` — `SamplerBase`, `SamplerResponse`
+    - `llm_client.py` — `LLMClient`, `LLMResponse`
     - `evaluation.py` — `CriterionVerdict`, `SingleEvalResult`, `EvalResult`, `Eval`
     - `dataset.py` — `DatasetSubset`, `HealthBenchSample`, `HealthBenchDataset`
     - `scoring.py` — pure scoring functions (`calculate_score`, `clip_score`, `aggregate_scores`, `stratified_scores`)
@@ -39,7 +39,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `llm_eval/` — LLM-as-judge evaluation (provider-agnostic, → domain)
     - `config_grader.py` — `JudgeConfig` (pydantic-settings `BaseSettings`), `EvalMode` enum
     - `grader.py` — `LLMJudgeGrader` (→ `JudgeGrader`), `create_judge()` factory, `GRADER_TEMPLATE`, `grade_sample()`, `format_conversation()`, `parse_grading_response()`, `load_grader_prompt()`
-    - `samplers.py` — `OpenAIChatSampler`, `GeminiChatSampler` (both → `SamplerBase`), `create_sampler()` factory
+    - `llm_clients.py` — `OpenAIChatClient`, `GeminiChatClient` (both → `LLMClient`), `create_llm_client()` factory
     - `runner.py` — `EvalRunner` (depends on `JudgeGrader` and `AgentPipeline` abstractions)
   - `prompt_optimization/` — automatic prompt engineering (→ domain, agent, llm_eval). **Domain-agnostic**: any vertical-specific text (mutate/critique/refine templates, thinking styles) lives in YAML under `prompts/prompt_optimization/`, never in Python.
     - `optimizer.py` — `PromptOptimizer` ABC, `OptimizationResult`, `TrialRecord` (frozen dataclasses), `_TrialBudget` + `_BudgetExceededError` (shared cache/history/best/budget helper for adapters), `require_optional()` (optional-dep guard)
@@ -145,7 +145,7 @@ Three agent architectures are built and compared against HealthBench:
 
 ### Prompt Optimization (`src/healthbench_agent/prompt_optimization/`)
 The module provides three optimizer backends behind a common `PromptOptimizer` ABC and a registry-based factory:
-- **Critique-refine** — PromptWizard-style mutation + critique loop. **No external dependency**, uses the meta-LLM via the existing `SamplerBase`. Templates and thinking-styles are loaded from `prompts/prompt_optimization/v1_critique_refine.yaml` so the Python is **fully domain-agnostic** — any vertical-specific phrasing belongs in YAML, never inside the adapter.
+- **Critique-refine** — PromptWizard-style mutation + critique loop. **No external dependency**, uses the meta-LLM via the existing `LLMClient`. Templates and thinking-styles are loaded from `prompts/prompt_optimization/v1_critique_refine.yaml` so the Python is **fully domain-agnostic** — any vertical-specific phrasing belongs in YAML, never inside the adapter.
 - **DSPy** — wraps COPRO/MIPROv2 teleprompters. The shared `_TrialBudget` helper caches scores per instruction (DSPy calls the metric per-example with one candidate at a time), enforces `max_trials` via `_BudgetExceededError`, and tracks the best prompt across compilation.
 - **TextGrad** — wraps text-gradient descent. Also uses `_TrialBudget` for trial bookkeeping; loop is pre-capped at `min(steps, max_trials)`.
 
@@ -470,10 +470,10 @@ See `AGENT_DECISIONS.md` for exhaustive pros/cons and design rationale for each 
 - `prompts/llm_v1_llm_grader.yaml` — verbatim simple-evals grader template with Jinja2 placeholders
 - Tests: template rendering, response parsing, grade_sample with mocked sampler
 
-### Subtask 3.2 — Samplers
-- `src/healthbench_agent/llm_eval/samplers.py` — `OpenAIChatSampler`, `GeminiChatSampler`
+### Subtask 3.2 — LLM Clients
+- `src/healthbench_agent/llm_eval/llm_clients.py` — `OpenAIChatClient`, `GeminiChatClient`
 - `src/healthbench_agent/llm_eval/config.py` — `JudgeConfig` (pydantic-settings)
-- Tests: both samplers mocked, JudgeConfig validation, env var override
+- Tests: both clients mocked, JudgeConfig validation, env var override
 
 ### Subtask 3.3 — Eval Runner
 - `src/healthbench_agent/llm_eval/runner.py` — `EvalRunner` with `mode="async"` (ThreadPool) and `mode="batch"` (OpenAI Batch API)

@@ -9,8 +9,8 @@ import pytest
 import yaml
 
 from healthbench_agent.domain.dataset import HealthBenchSample
+from healthbench_agent.domain.llm_client import LLMResponse
 from healthbench_agent.domain.rubric import RubricItem
-from healthbench_agent.domain.sampler import SamplerResponse
 from healthbench_agent.prompt_optimization.adapters.critique_refine_adapter import (
     CritiqueRefineOptimizer,
     _load_prompts,
@@ -86,16 +86,16 @@ class TestCritiqueRefineOptimizerMutationOnly:
         )
         optimizer = CritiqueRefineOptimizer(config)
 
-        mock_sampler = MagicMock()
-        mock_sampler.return_value = SamplerResponse(
+        mock_llm_client = MagicMock()
+        mock_llm_client.return_value = LLMResponse(
             response_text="Improved prompt: You are an expert health advisor.",
             actual_queried_message_list=[],
             response_metadata={},
         )
 
         with patch(
-            "healthbench_agent.prompt_optimization.adapters.critique_refine_adapter.create_sampler",
-            return_value=mock_sampler,
+            "healthbench_agent.prompt_optimization.adapters.critique_refine_adapter.create_llm_client",
+            return_value=mock_llm_client,
         ):
             result = optimizer.optimize(
                 current_prompt="You are a health assistant.",
@@ -117,16 +117,16 @@ class TestCritiqueRefineOptimizerMutationOnly:
         )
         optimizer = CritiqueRefineOptimizer(config)
 
-        mock_sampler = MagicMock()
-        mock_sampler.return_value = SamplerResponse(
+        mock_llm_client = MagicMock()
+        mock_llm_client.return_value = LLMResponse(
             response_text="Mutated prompt.",
             actual_queried_message_list=[],
             response_metadata={},
         )
 
         with patch(
-            "healthbench_agent.prompt_optimization.adapters.critique_refine_adapter.create_sampler",
-            return_value=mock_sampler,
+            "healthbench_agent.prompt_optimization.adapters.critique_refine_adapter.create_llm_client",
+            return_value=mock_llm_client,
         ):
             result = optimizer.optimize("Original.", samples=None, metric=None)
 
@@ -143,19 +143,19 @@ class TestCritiqueRefineOptimizerWithMetric:
         )
         optimizer = CritiqueRefineOptimizer(config)
 
-        mock_sampler = MagicMock()
+        mock_llm_client = MagicMock()
         call_count = 0
 
-        def sampler_side_effect(message_list):
+        def llm_client_side_effect(message_list):
             nonlocal call_count
             call_count += 1
-            return SamplerResponse(
+            return LLMResponse(
                 response_text=f"Variant {call_count}: Be a thorough health expert.",
                 actual_queried_message_list=message_list,
                 response_metadata={},
             )
 
-        mock_sampler.side_effect = sampler_side_effect
+        mock_llm_client.side_effect = llm_client_side_effect
 
         mock_metric = MagicMock()
         # Provide enough values: baseline(1) + mutations(2) + critique(1) + refine(1)
@@ -165,8 +165,8 @@ class TestCritiqueRefineOptimizerWithMetric:
         sample = _make_sample()
 
         with patch(
-            "healthbench_agent.prompt_optimization.adapters.critique_refine_adapter.create_sampler",
-            return_value=mock_sampler,
+            "healthbench_agent.prompt_optimization.adapters.critique_refine_adapter.create_llm_client",
+            return_value=mock_llm_client,
         ):
             result = optimizer.optimize(
                 current_prompt="You are a health assistant.",
@@ -185,16 +185,16 @@ class TestCritiqueRefineOptimizerWithMetric:
         )
         optimizer = CritiqueRefineOptimizer(config)
 
-        mock_sampler = MagicMock()
-        mock_sampler.return_value = SamplerResponse(
+        mock_llm_client = MagicMock()
+        mock_llm_client.return_value = LLMResponse(
             response_text="Mutated.",
             actual_queried_message_list=[],
             response_metadata={},
         )
 
         with patch(
-            "healthbench_agent.prompt_optimization.adapters.critique_refine_adapter.create_sampler",
-            return_value=mock_sampler,
+            "healthbench_agent.prompt_optimization.adapters.critique_refine_adapter.create_llm_client",
+            return_value=mock_llm_client,
         ):
             result = optimizer.optimize("prompt", samples=None, metric=None)
 
@@ -205,21 +205,21 @@ class TestCritiqueRefineOptimizerWithMetric:
 class TestCritiqueRefineOptimizerBudget:
     """Verifies max_trials early-stop in both mutation and refine phases."""
 
-    def _build_sampler(self) -> MagicMock:
-        """Sampler that returns a unique response per call so candidates differ."""
-        mock_sampler = MagicMock()
+    def _build_llm_client(self) -> MagicMock:
+        """LLM client that returns a unique response per call so candidates differ."""
+        mock_llm_client = MagicMock()
         counter = {"n": 0}
 
         def side_effect(message_list):
             counter["n"] += 1
-            return SamplerResponse(
+            return LLMResponse(
                 response_text=f"Variant {counter['n']}.",
                 actual_queried_message_list=message_list,
                 response_metadata={},
             )
 
-        mock_sampler.side_effect = side_effect
-        return mock_sampler
+        mock_llm_client.side_effect = side_effect
+        return mock_llm_client
 
     def test_max_trials_caps_mutation_phase(self):
         # 5 rounds * 5 styles = 25 mutations, but max_trials=3 caps it.
@@ -230,11 +230,11 @@ class TestCritiqueRefineOptimizerBudget:
             max_trials=3,
         )
         optimizer = CritiqueRefineOptimizer(config)
-        mock_sampler = self._build_sampler()
+        mock_llm_client = self._build_llm_client()
 
         with patch(
-            "healthbench_agent.prompt_optimization.adapters.critique_refine_adapter.create_sampler",
-            return_value=mock_sampler,
+            "healthbench_agent.prompt_optimization.adapters.critique_refine_adapter.create_llm_client",
+            return_value=mock_llm_client,
         ):
             result = optimizer.optimize(
                 current_prompt="Baseline.",
@@ -256,15 +256,15 @@ class TestCritiqueRefineOptimizerBudget:
             max_trials=2,
         )
         optimizer = CritiqueRefineOptimizer(config)
-        mock_sampler = self._build_sampler()
+        mock_llm_client = self._build_llm_client()
 
         # Mutation score, baseline score, then 1 refine score = 3 metric calls.
         end_metric = MagicMock(side_effect=[0.6, 0.5, 0.7])
         sample = _make_sample()
 
         with patch(
-            "healthbench_agent.prompt_optimization.adapters.critique_refine_adapter.create_sampler",
-            return_value=mock_sampler,
+            "healthbench_agent.prompt_optimization.adapters.critique_refine_adapter.create_llm_client",
+            return_value=mock_llm_client,
         ):
             result = optimizer.optimize(
                 current_prompt="Baseline.",

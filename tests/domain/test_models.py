@@ -11,9 +11,9 @@ from healthbench_agent.domain import (
     Eval,
     HealthBenchDataset,
     HealthBenchSample,
+    LLMClient,
+    LLMResponse,
     RubricItem,
-    SamplerBase,
-    SamplerResponse,
 )
 from tests.conftest import make_sample
 
@@ -237,24 +237,24 @@ def test_criterion_verdict_custom_confidence():
 
 
 # ---------------------------------------------------------------------------
-# SamplerBase
+# LLMClient
 # ---------------------------------------------------------------------------
 
 
-def test_sampler_base_call_raises_not_implemented():
-    sampler = SamplerBase()
+def test_llm_client_call_raises_not_implemented():
+    llm_client = LLMClient()
     with pytest.raises(NotImplementedError):
-        sampler([{"role": "user", "content": "hello"}])
+        llm_client([{"role": "user", "content": "hello"}])
 
 
 # ---------------------------------------------------------------------------
-# SamplerResponse
+# LLMResponse
 # ---------------------------------------------------------------------------
 
 
-def test_sampler_response_fields_stored_correctly():
+def test_llm_response_fields_stored_correctly():
     messages = [{"role": "user", "content": "hello"}]
-    response = SamplerResponse(
+    response = LLMResponse(
         response_text="Hi there",
         actual_queried_message_list=messages,
         response_metadata={"tokens": 10},
@@ -270,10 +270,10 @@ def test_sampler_response_fields_stored_correctly():
 
 
 def test_eval_call_raises_not_implemented():
-    sampler = SamplerBase()
+    llm_client = LLMClient()
     evaluation = Eval()
     with pytest.raises(NotImplementedError):
-        evaluation(sampler)
+        evaluation(llm_client)
 
 
 # ---------------------------------------------------------------------------

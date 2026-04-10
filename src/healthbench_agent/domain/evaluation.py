@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .conversation import MessageList
-from .sampler import SamplerBase
+from .llm_client import LLMClient
 
 
 @dataclass
@@ -89,15 +89,15 @@ class EvalResult:
 class Eval:
     """Abstract base class for a HealthBench evaluation.
 
-    Subclasses implement __call__ to score a sampler against a dataset
+    Subclasses implement __call__ to score an LLM client against a dataset
     and return an aggregate EvalResult.
     """
 
-    def __call__(self, sampler: SamplerBase) -> EvalResult:
-        """Run the evaluation against the provided sampler.
+    def __call__(self, llm_client: LLMClient) -> EvalResult:
+        """Run the evaluation against the provided LLM client.
 
         Args:
-            sampler: Model sampler to evaluate.
+            llm_client: LLM client to evaluate.
 
         Returns:
             Aggregate EvalResult with overall score and per-sample data.

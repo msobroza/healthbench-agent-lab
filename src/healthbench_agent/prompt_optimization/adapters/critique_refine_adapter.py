@@ -1,7 +1,7 @@
 """Critique-refine prompt optimizer adapter.
 
 Implements the PromptWizard-style mutation + critique-refine loop using only
-the existing SamplerBase for LLM calls. No external optimization framework
+the existing LLMClient for LLM calls. No external optimization framework
 dependencies -- the mutation and refinement logic is driven by prompt
 engineering over the meta-model.
 
@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 import yaml
 from jinja2 import Template
 
-from healthbench_agent.domain.sampler import SamplerBase
+from healthbench_agent.domain.llm_client import LLMClient
 
 from ..config import CritiqueRefineConfig
 from ..optimizer import OptimizationResult, PromptOptimizer, TrialRecord
@@ -86,10 +86,10 @@ def _load_prompts(path: str | Path) -> _CritiqueRefinePrompts:
     )
 
 
-def create_sampler(config: CritiqueRefineConfig) -> SamplerBase:
-    """Build a SamplerBase from CritiqueRefineConfig for meta-model calls.
+def create_llm_client(config: CritiqueRefineConfig) -> LLMClient:
+    """Build an LLMClient from CritiqueRefineConfig for meta-model calls.
 
-    Bridges the optimization config to the existing sampler factory by
+    Bridges the optimization config to the existing LLM client factory by
     constructing a JudgeConfig with the meta-model settings.
 
     Args:
@@ -97,10 +97,10 @@ def create_sampler(config: CritiqueRefineConfig) -> SamplerBase:
             meta_provider, meta_model, and API keys.
 
     Returns:
-        A SamplerBase instance configured for the meta-model.
+        An LLMClient instance configured for the meta-model.
     """
     from healthbench_agent.llm_eval.config_grader import JudgeConfig
-    from healthbench_agent.llm_eval.samplers import create_sampler as _create_llm_sampler
+    from healthbench_agent.llm_eval.llm_clients import create_llm_client as _create_llm_client
 
     judge_config = JudgeConfig(
         provider=config.meta_provider,
@@ -109,7 +109,7 @@ def create_sampler(config: CritiqueRefineConfig) -> SamplerBase:
         google_api_key=config.google_api_key,
         openai_api_key=config.openai_api_key,
     )
-    return _create_llm_sampler(judge_config)
+    return _create_llm_client(judge_config)
 
 
 @register_prompt_optimizer("critique_refine", CritiqueRefineConfig)
@@ -158,7 +158,7 @@ class CritiqueRefineOptimizer(PromptOptimizer):
         Returns:
             OptimizationResult with the best prompt and trial history.
         """
-        sampler = create_sampler(self.config)
+        llm_client = create_llm_client(self.config)
         trial_history: list[TrialRecord] = []
         candidates: list[str] = []
         max_trials = self.config.max_trials
@@ -174,7 +174,7 @@ class CritiqueRefineOptimizer(PromptOptimizer):
                 style = styles[
                     (round_index * self.config.style_variations + style_index) % len(styles)
                 ]
-                mutated = self._mutate_prompt(sampler, current_prompt, style)
+                mutated = self._mutate_prompt(llm_client, current_prompt, style)
                 candidates.append(mutated)
 
                 score = None
@@ -215,8 +215,8 @@ class CritiqueRefineOptimizer(PromptOptimizer):
         for _ in range(self.config.refine_iterations):
             if len(trial_history) >= max_trials:
                 break
-            critique = self._critique_prompt(sampler, best_prompt)
-            refined = self._refine_prompt(sampler, best_prompt, critique)
+            critique = self._critique_prompt(llm_client, best_prompt)
+            refined = self._refine_prompt(llm_client, best_prompt, critique)
             refined_score = metric(refined)
 
             trial_history.append(
@@ -244,32 +244,32 @@ class CritiqueRefineOptimizer(PromptOptimizer):
         )
 
     @staticmethod
-    def _call_meta(sampler: SamplerBase, content: str) -> str:
+    def _call_meta(llm_client: LLMClient, content: str) -> str:
         """Send a one-shot user message to the meta-model and return the text.
 
         Used by every mutation/critique/refine call so the message
         construction lives in one place.
 
         Args:
-            sampler: The meta-model sampler for LLM calls.
+            llm_client: The meta-model LLM client for LLM calls.
             content: The full user prompt text to send.
 
         Returns:
             The stripped response text from the meta-model.
         """
-        response = sampler([{"role": "user", "content": content}])
+        response = llm_client([{"role": "user", "content": content}])
         return response.response_text.strip()
 
     def _mutate_prompt(
         self,
-        sampler: SamplerBase,
+        llm_client: LLMClient,
         prompt: str,
         thinking_style: str,
     ) -> str:
         """Generate a mutated prompt variant using a thinking style.
 
         Args:
-            sampler: The meta-model sampler for LLM calls.
+            llm_client: The meta-model LLM client for LLM calls.
             prompt: The current prompt to mutate.
             thinking_style: A directive guiding the mutation approach.
 
@@ -277,36 +277,36 @@ class CritiqueRefineOptimizer(PromptOptimizer):
             The mutated prompt text from the meta-model.
         """
         return self._call_meta(
-            sampler,
+            llm_client,
             self._prompts.mutate.render(thinking_style=thinking_style, prompt=prompt),
         )
 
     def _critique_prompt(
         self,
-        sampler: SamplerBase,
+        llm_client: LLMClient,
         prompt: str,
     ) -> str:
         """Generate a critique of a prompt identifying weaknesses.
 
         Args:
-            sampler: The meta-model sampler for LLM calls.
+            llm_client: The meta-model LLM client for LLM calls.
             prompt: The prompt to critique.
 
         Returns:
             A text critique identifying areas for improvement.
         """
-        return self._call_meta(sampler, self._prompts.critique.render(prompt=prompt))
+        return self._call_meta(llm_client, self._prompts.critique.render(prompt=prompt))
 
     def _refine_prompt(
         self,
-        sampler: SamplerBase,
+        llm_client: LLMClient,
         prompt: str,
         critique: str,
     ) -> str:
         """Refine a prompt based on a critique.
 
         Args:
-            sampler: The meta-model sampler for LLM calls.
+            llm_client: The meta-model LLM client for LLM calls.
             prompt: The prompt to refine.
             critique: The critique to address in the refinement.
 
@@ -314,6 +314,6 @@ class CritiqueRefineOptimizer(PromptOptimizer):
             The refined prompt text.
         """
         return self._call_meta(
-            sampler,
+            llm_client,
             self._prompts.refine.render(prompt=prompt, critique=critique),
         )
