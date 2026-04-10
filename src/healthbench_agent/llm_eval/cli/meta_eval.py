@@ -258,7 +258,11 @@ def _cmd_regenerate(args: argparse.Namespace) -> None:
 
     requested = [m.strip() for m in args.metrics.split(",") if m.strip()]
     if requested:
-        selected = {name: get_meta_metric(name) for name in requested}
+        try:
+            selected = {name: get_meta_metric(name) for name in requested}
+        except KeyError as exc:
+            sys.stderr.write(f"{exc}\n")
+            raise SystemExit(2) from exc
     else:
         selected = registered_meta_metrics()
     scores: dict[str, Any] = {}
@@ -278,7 +282,10 @@ def _cmd_regenerate(args: argparse.Namespace) -> None:
             continue
         scores[name] = spec.fn(subset)
 
-    # Load the existing results to preserve judge_metadata header, then update scores.
+    # Load the existing results to preserve judge_metadata header, then
+    # mutate scores in place. save_results and summary() both read from
+    # the same MetricResults instance, so the on-disk state and the
+    # printed summary stay consistent.
     view = load_results(run_dir)
     view.results.scores = scores
     save_results(view.results, run_dir)
@@ -288,8 +295,12 @@ def _cmd_regenerate(args: argparse.Namespace) -> None:
 def _cmd_compare(args: argparse.Namespace) -> None:
     from healthbench_agent.llm_eval.meta_eval.results_io import load_results
 
-    a_view = load_results(args.run_dir_a)
-    b_view = load_results(args.run_dir_b)
+    try:
+        a_view = load_results(args.run_dir_a)
+        b_view = load_results(args.run_dir_b)
+    except FileNotFoundError as exc:
+        sys.stderr.write(f"{exc}\n")
+        raise SystemExit(2) from exc
     diff_df = a_view.compare(b_view)
     print(diff_df.to_string(index=False))
     if args.output:

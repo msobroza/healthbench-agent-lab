@@ -709,4 +709,10 @@ def test_cli_list_metadata_keys(monkeypatch, capsys):
     )
     cli_meta_eval.main(["list-metadata-keys", "--sample-size", "3"])
     out = capsys.readouterr().out
-    assert "language" in out or "specialty" in out or "clinical_urgency" in out
+    # Structural headers must be present.
+    assert "Top-level fields:" in out
+    assert "metadata dict keys:" in out
+    # demo_labelled_set() populates language='en', specialty, and
+    # metadata={'clinical_urgency': ...} — all three should surface.
+    assert "'en'" in out
+    assert "clinical_urgency" in out
