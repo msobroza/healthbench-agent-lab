@@ -266,11 +266,14 @@ class CachedJudgeGrader(JudgeGrader):
         miss_indices: list[int] = []
         miss_items: list[RubricItem] = []
         for idx, item in enumerate(rubric_items):
+            rubric_key = item.criterion_id or (
+                f"{item.criterion}|points={item.points}|tags={tuple(item.tags)}"
+            )
             key = self.cache.make_key(
                 self.model_fingerprint,
                 self.prompt_sha,
                 conversation,
-                item.criterion,
+                rubric_key,
                 self.k_index,
             )
             hit = self.cache.get(key)
@@ -283,11 +286,14 @@ class CachedJudgeGrader(JudgeGrader):
         if miss_items:
             fresh = self.inner.grade(conversation, miss_items)
             for miss_idx, item, verdict in zip(miss_indices, miss_items, fresh, strict=True):
+                rubric_key = item.criterion_id or (
+                    f"{item.criterion}|points={item.points}|tags={tuple(item.tags)}"
+                )
                 key = self.cache.make_key(
                     self.model_fingerprint,
                     self.prompt_sha,
                     conversation,
-                    item.criterion,
+                    rubric_key,
                     self.k_index,
                 )
                 self.cache.put(key, verdict)

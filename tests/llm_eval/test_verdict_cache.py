@@ -186,8 +186,9 @@ def test_cached_proxy_batches_misses_into_one_inner_call(cache: VerdictCache):
 def test_cached_proxy_preserves_input_rubric_order(cache: VerdictCache):
     v1 = CriterionVerdict(criterion="r1", criteria_met=True, explanation="")
     v2 = CriterionVerdict(criterion="r2", criteria_met=False, explanation="")
-    # Pre-populate r1, force a miss on r2.
-    cached_key = cache.make_key("m", "s", _conv(), "r1", 1)
+    # Pre-populate r1, force a miss on r2. Rubric key format must match
+    # the composite used by CachedJudgeGrader.grade().
+    cached_key = cache.make_key("m", "s", _conv(), "r1|points=1.0|tags=()", 1)
     cache.put(cached_key, v1)
     inner = _make_inner([v2])  # only the missed one
     proxy = CachedJudgeGrader(inner, cache, "m", "s", k_index=1)
@@ -197,3 +198,30 @@ def test_cached_proxy_preserves_input_rubric_order(cache: VerdictCache):
     )
     assert out[0] == v1
     assert out[1] == v2
+
+
+def test_cache_distinguishes_rubrics_with_identical_criterion_text_but_different_points(
+    cache: VerdictCache,
+):
+    """Two rubrics sharing criterion text but differing on points must not collide.
+
+    Regression test for a cache-key collision where the key was built
+    from ``item.criterion`` alone. Now the proxy falls back to
+    ``criterion|points=...|tags=...`` when ``criterion_id`` is missing,
+    so identical text with different points keeps distinct cache entries.
+    """
+    v_positive = CriterionVerdict(criterion="foo", criteria_met=True, explanation="")
+    v_penalty = CriterionVerdict(criterion="foo", criteria_met=True, explanation="")
+    inner = _make_inner([v_positive, v_penalty])
+    proxy = CachedJudgeGrader(inner, cache, "m", "s", k_index=1)
+    rubrics = [
+        RubricItem(criterion="foo", points=1.0),
+        RubricItem(criterion="foo", points=-1.0),
+    ]
+    proxy.grade(_conv(), rubrics)
+    # Both rubrics missed the cache on the first pass; had the old
+    # collision-prone key been in use the second rubric would have
+    # re-used the first entry and reported only one miss.
+    stats = cache.stats()
+    assert stats["misses"] == 2
+    assert stats["hits"] == 0

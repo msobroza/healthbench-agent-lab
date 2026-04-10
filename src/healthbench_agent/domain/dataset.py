@@ -33,6 +33,22 @@ class HealthBenchSample(LabelledSample):
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> HealthBenchSample:
+        """Deserialize a HealthBench JSONL row into a sample.
+
+        Args:
+            data: Parsed JSONL row. Must contain ``prompt_id``, ``prompt``,
+                ``rubrics``, and ``example_tags``. May optionally contain
+                ``ideal_completions_data`` and ``canary``.
+
+        Returns:
+            A populated ``HealthBenchSample``. ``gold_response`` and
+            ``expected`` are left at their ``LabelledSample`` defaults
+            (``None`` / ``{}``); they are populated downstream by the
+            meta-evaluation pipeline.
+
+        Raises:
+            KeyError: When a required JSONL key is missing.
+        """
         return cls(
             prompt_id=data["prompt_id"],
             prompt=data["prompt"],
@@ -45,7 +61,13 @@ class HealthBenchSample(LabelledSample):
 
 @dataclass
 class HealthBenchDataset:
-    """A loaded HealthBench dataset subset with its samples and metadata."""
+    """Loaded HealthBench dataset for one subset.
+
+    Attributes:
+        subset: Subset name — one of ``main``, ``hard``, ``consensus``.
+        samples: Ordered list of ``HealthBenchSample`` rows from the JSONL.
+        source_path: Local path the dataset was loaded from.
+    """
 
     subset: DatasetSubset
     samples: list[HealthBenchSample]
