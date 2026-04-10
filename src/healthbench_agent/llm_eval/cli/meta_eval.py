@@ -182,8 +182,37 @@ def _add_other_parsers(subparsers: Any) -> None:
 
 
 def _cmd_run(args: argparse.Namespace) -> None:
+    """Run judge meta-evaluation on a labelled subset.
+
+    Loads samples, applies filters, and dispatches to :func:`run_meta_eval`.
+    When ``args.dry_run`` is True, prints a cost preview (sample count and
+    estimated LLM call count) and returns immediately without constructing
+    the judge or making any LLM calls.
+
+    Args:
+        args: Parsed command-line namespace from the ``run`` subparser.
+    """
     samples, axis_extractor = _load_consensus_labelled(args.subset, args.sample_size, args.seed)
     sample_filter, rubric_filter = _build_filters(args)
+
+    if args.dry_run:
+        n_calls = (
+            sum(
+                (1 if s.gold_response else 0)
+                + sum(1 for r in s.rubrics if r.example_meets)
+                + sum(1 for r in s.rubrics if r.example_fails)
+                for s in samples
+            )
+            * args.n_samples
+        )
+        print("DRY RUN")
+        print(f"Judge:           {args.judge_config}")
+        print(f"Subset:          {args.subset}  (sample_size={args.sample_size}, seed={args.seed})")
+        print(f"Samples:         {len(samples)}")
+        print(f"k passes:        {args.n_samples}")
+        print(f"Total LLM calls: {n_calls}")
+        return
+
     judge, fingerprint, prompt_sha = _build_judge_for_cli(args.judge_config, args.temperature)
     cache = VerdictCache(enabled=not args.no_cache)
     metric_names = [m.strip() for m in args.metrics.split(",") if m.strip()] or None
@@ -350,6 +379,10 @@ def main(argv: list[str] | None = None) -> None:
     Subcommands: ``run``, ``regenerate``, ``compare``, ``list-metrics``,
     ``list-metadata-keys``, ``clear-cache``.
 
+    If no subcommand is given or the first token starts with ``-``, ``run``
+    is prepended automatically so that ``meta-evaluate-judge --judge-config
+    foo.yaml`` works without an explicit subcommand.
+
     Args:
         argv: Command-line arguments to parse. Defaults to ``sys.argv[1:]``
             when None.
@@ -363,7 +396,12 @@ def main(argv: list[str] | None = None) -> None:
     sub = parser.add_subparsers(dest="command")
     _add_run_parser(sub)
     _add_other_parsers(sub)
-    args = parser.parse_args(argv)
+    raw = list(argv) if argv is not None else sys.argv[1:]
+    if not raw or raw[0].startswith("-"):
+        raw = ["run", *raw]
+    args = parser.parse_args(raw)
+    if args.command is None:
+        args.command = "run"
 
     handlers: dict[str, Callable[[argparse.Namespace], None]] = {
         "run": _cmd_run,

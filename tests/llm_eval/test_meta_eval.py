@@ -716,3 +716,58 @@ def test_cli_list_metadata_keys(monkeypatch, capsys):
     # metadata={'clinical_urgency': ...} — all three should surface.
     assert "'en'" in out
     assert "clinical_urgency" in out
+
+
+def test_cli_dry_run_does_not_call_judge(monkeypatch, capsys):
+    from healthbench_agent.domain.judge import JudgeGrader
+    from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
+
+    judge_calls = {"n": 0}
+
+    class CountingJudge(JudgeGrader):
+        def grade(self, conversation, rubric_items):
+            judge_calls["n"] += 1
+            return [
+                CriterionVerdict(criterion=r.criterion, criteria_met=True, explanation="")
+                for r in rubric_items
+            ]
+
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.cli.meta_eval._load_consensus_labelled",
+        lambda subset, sample_size, seed: (demo_labelled_set(), lambda r: r.category),
+    )
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.cli.meta_eval._build_judge_for_cli",
+        lambda config, temperature: (CountingJudge(), "fake@1", "sha"),
+    )
+
+    cli_meta_eval.main(
+        [
+            "run",
+            "--judge-config",
+            "fake.yaml",
+            "--sample-size",
+            "3",
+            "--n-samples",
+            "1",
+            "--no-cache",
+            "--no-progress",
+            "--no-mlflow",
+            "--dry-run",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert "DRY RUN" in out.upper() or "Dry run" in out
+    assert judge_calls["n"] == 0
+
+
+def test_cli_default_subcommand_inferred_from_leading_flag(monkeypatch, capsys):
+    """Bare `meta-evaluate-judge --judge-config foo.yaml` injects 'run'."""
+    from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
+
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.cli.meta_eval._cmd_run",
+        lambda args: print("RUN_CALLED"),
+    )
+    cli_meta_eval.main(["--judge-config", "x.yaml", "--sample-size", "1"])
+    assert "RUN_CALLED" in capsys.readouterr().out
