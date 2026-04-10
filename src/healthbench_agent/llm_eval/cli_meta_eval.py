@@ -1,7 +1,8 @@
 """``meta-evaluate-judge`` CLI.
 
-argparse subcommands: run / regenerate / compare / list-metrics /
-list-metadata-keys / clear-cache.
+argparse entry point. Only the ``run`` subcommand is wired in this task;
+``regenerate``, ``compare``, ``list-metrics``, ``list-metadata-keys``, and
+``clear-cache`` are added in follow-up tasks.
 """
 
 from __future__ import annotations
@@ -11,18 +12,16 @@ import logging
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from healthbench_agent.domain.meta_evaluation import LabelledSample
 from healthbench_agent.domain.rubric import RubricItem
 from healthbench_agent.llm_eval.meta_eval import (
     EmptyFilterError,
-    FakeJudge,  # noqa: F401  -- re-exported for tests
     axis_filter,
     metadata_filter,
     run_meta_eval,
 )
-from healthbench_agent.llm_eval.meta_eval_results import MetricResultsView  # noqa: F401
 from healthbench_agent.llm_eval.verdict_cache import VerdictCache
 
 logger = logging.getLogger(__name__)
@@ -33,22 +32,31 @@ def _load_consensus_labelled(
     sample_size: int,
     seed: int,
 ) -> tuple[list[LabelledSample], Callable[[RubricItem], str | None]]:
-    """Load + populate the labelled set, return it plus a HealthBench axis_extractor."""
-    from healthbench_agent.dataset.extraction import extract_ideal_completion_text
-    from healthbench_agent.dataset.loader import load_dataset
-    from healthbench_agent.dataset.split_utils import stratified_sample
-    from healthbench_agent.llm_eval.meta_eval import AXIS_TAG_PREFIX
+    """Load labelled samples and return them with a HealthBench axis extractor.
 
-    dataset = load_dataset(subset=cast(Any, subset))
-    sampled = stratified_sample(dataset, n=sample_size, tag_prefix="theme", seed=seed)
-    samples: list[LabelledSample] = []
-    for sample in sampled.samples:
-        gold = extract_ideal_completion_text(sample.ideal_completions_data)
-        if gold is None:
-            continue
-        sample.gold_response = gold
-        sample.expected = {r.criterion: r.points > 0 for r in sample.rubrics if r.points != 0}
-        samples.append(sample)
+    Delegates dataset loading and gold-label population to
+    :func:`_load_subset_for_meta_eval`, then layers a CLI-friendly empty-check
+    and an ``axis_extractor`` closure on top.
+
+    Args:
+        subset: HealthBench subset name (e.g. ``"consensus"``).
+        sample_size: Number of samples to draw via stratified sampling.
+        seed: Random seed for reproducibility.
+
+    Returns:
+        Tuple of ``(labelled_samples, axis_extractor)`` where the extractor
+        resolves a rubric item's axis from its tags or category.
+
+    Raises:
+        SystemExit: Exits with code 2 when the subset has no ideal-completion
+            gold labels available (all samples dropped).
+    """
+    from healthbench_agent.llm_eval.meta_eval import (
+        AXIS_TAG_PREFIX,
+        _load_subset_for_meta_eval,
+    )
+
+    samples = _load_subset_for_meta_eval(subset, sample_size, seed)
     if not samples:
         sys.stderr.write(
             "All samples dropped during gold-label extraction. The selected subset may "
@@ -66,15 +74,22 @@ def _load_consensus_labelled(
 
 
 def _build_judge_for_cli(config_path: str, temperature: float) -> tuple[Any, str, str]:
-    from healthbench_agent.llm_eval.config_grader import JudgeConfig
-    from healthbench_agent.llm_eval.grader import create_judge, load_grader_prompt
+    """Build a judge from a config file path and return its caching keys.
 
-    cfg = JudgeConfig.from_yaml(config_path)
-    cfg = cfg.model_copy(update={"temperature": temperature})
-    judge = create_judge(cfg)
-    fingerprint = f"{cfg.provider}/{cfg.model}@{cfg.temperature}"
-    _, _, prompt_sha = load_grader_prompt(cfg.prompt_path)
-    return judge, fingerprint, prompt_sha
+    Thin CLI wrapper around :func:`_build_judge_for_meta_eval` that narrows the
+    accepted input to a filesystem path string (the library helper also accepts
+    a pre-built ``JudgeConfig`` instance).
+
+    Args:
+        config_path: Filesystem path to a YAML judge config.
+        temperature: Sampling temperature override.
+
+    Returns:
+        Tuple of ``(judge, model_fingerprint, prompt_sha)``.
+    """
+    from healthbench_agent.llm_eval.meta_eval import _build_judge_for_meta_eval
+
+    return _build_judge_for_meta_eval(config_path, temperature)
 
 
 def _build_filters(
