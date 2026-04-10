@@ -149,6 +149,21 @@ def _cmd_run(args: argparse.Namespace) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Entry point for the ``meta-evaluate-judge`` CLI.
+
+    Parses argv, dispatches to the matching subcommand handler, and exits.
+    Currently only the ``run`` subcommand is wired; additional subcommands
+    (regenerate/compare/list-metrics/list-metadata-keys/clear-cache) will be
+    added in follow-up tasks.
+
+    Args:
+        argv: Command-line arguments to parse. Defaults to ``sys.argv[1:]``
+            when None.
+
+    Raises:
+        SystemExit: Exits with code 1 when no subcommand is provided, or
+            code 2 when the selected run's filters produced an empty set.
+    """
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     parser = argparse.ArgumentParser(prog="meta-evaluate-judge")
     sub = parser.add_subparsers(dest="command")
