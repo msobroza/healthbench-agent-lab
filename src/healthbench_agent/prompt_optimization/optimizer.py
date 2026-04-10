@@ -10,7 +10,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from healthbench_agent.domain.dataset import HealthBenchSample
@@ -41,6 +41,26 @@ def require_optional(module: object | None, optimizer_name: str) -> None:
             f"{optimizer_name} requires the 'optimization' extra. "
             "Install with: uv sync --extra optimization"
         )
+
+
+class OptimizationMetric(Protocol):
+    """Callable contract shared by every prompt-optimization fitness function.
+
+    Both :class:`EndToEndMetric` and :class:`JudgeAgreementMetric` satisfy
+    this Protocol structurally — no inheritance required. Adapters accept
+    any callable matching this shape.
+    """
+
+    def __call__(self, prompt: str) -> float:
+        """Score a candidate prompt and return a single fitness scalar.
+
+        Args:
+            prompt: The candidate prompt text to evaluate.
+
+        Returns:
+            A scalar fitness score where higher is better.
+        """
+        ...
 
 
 @dataclass(frozen=True)
