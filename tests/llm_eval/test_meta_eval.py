@@ -610,3 +610,103 @@ def test_cli_run_dispatches_to_run_meta_eval(monkeypatch, tmp_path, capsys):
     assert called["n_samples"] == 1
     captured = capsys.readouterr()
     assert "gold_score" in captured.out
+
+
+def test_cli_list_metrics_prints_all(capsys):
+    from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
+
+    cli_meta_eval.main(["list-metrics"])
+    out = capsys.readouterr().out
+    for name in (
+        "gold_score",
+        "cohens_kappa",
+        "krippendorff_alpha",
+        "calibration_curve",
+        "per_dimension_confusion",
+        "adversarial_accuracy",
+        "adversarial_prf1",
+        "per_criterion_metrics",
+    ):
+        assert name in out
+
+
+def test_cli_clear_cache_removes_directory(tmp_path, monkeypatch):
+    from healthbench_agent.llm_eval.cache import VerdictCache
+    from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
+
+    cache = VerdictCache(root=tmp_path / "cache", enabled=True)
+    cache.put(
+        cache.make_key("m", "s", [{"role": "user", "content": "x"}], "rt", 1),
+        CriterionVerdict(criterion="rt", criteria_met=True, explanation=""),
+    )
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.cli.meta_eval._default_cache_for_cli",
+        lambda: cache,
+    )
+    cli_meta_eval.main(["clear-cache"])
+    assert not cache.root.exists() or not any(cache.root.iterdir())
+
+
+def test_cli_regenerate_replays_metrics(tmp_path):
+    from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
+    from healthbench_agent.llm_eval.meta_eval.results_io import load_results
+
+    samples = demo_labelled_set()
+    view = run_meta_eval(
+        FakeJudge({c: m for s in samples for c, m in s.expected.items()}),
+        samples,
+        dimension_extractor=lambda r: r.category,
+        n_samples=1,
+        output_dir=tmp_path,
+        progress=False,
+    )
+    # Mutate the metrics.json so we can prove regenerate overwrote it.
+    import json as _json
+
+    (tmp_path / "metrics.json").write_text(_json.dumps({**view.results.to_dict(), "scores": {}}))
+    cli_meta_eval.main(["regenerate", str(tmp_path)])
+    reloaded = load_results(tmp_path)
+    assert reloaded.results.scores  # repopulated
+
+
+def test_cli_compare_prints_diff_table(tmp_path, capsys):
+    from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
+    from healthbench_agent.llm_eval.meta_eval.results_io import save_results
+    from healthbench_agent.llm_eval.meta_eval.results_view import MetricResultsView
+
+    a_dir = tmp_path / "a"
+    b_dir = tmp_path / "b"
+    a_view = MetricResultsView(
+        results=MetricResults(
+            scores={"gold_score": 0.8},
+            n_samples_graded=1,
+            n_rubrics_graded=1,
+            judge_metadata={"judge_model": "openai"},
+        )
+    )
+    b_view = MetricResultsView(
+        results=MetricResults(
+            scores={"gold_score": 0.7},
+            n_samples_graded=1,
+            n_rubrics_graded=1,
+            judge_metadata={"judge_model": "google"},
+        )
+    )
+    save_results(a_view.results, a_dir)
+    save_results(b_view.results, b_dir)
+    cli_meta_eval.main(["compare", str(a_dir), str(b_dir)])
+    out = capsys.readouterr().out
+    assert "gold_score" in out
+    assert "delta" in out or "0.8" in out
+
+
+def test_cli_list_metadata_keys(monkeypatch, capsys):
+    from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
+
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.cli.meta_eval._load_consensus_labelled",
+        lambda subset, sample_size, seed: (demo_labelled_set(), lambda r: r.category),
+    )
+    cli_meta_eval.main(["list-metadata-keys", "--sample-size", "3"])
+    out = capsys.readouterr().out
+    assert "language" in out or "specialty" in out or "clinical_urgency" in out
