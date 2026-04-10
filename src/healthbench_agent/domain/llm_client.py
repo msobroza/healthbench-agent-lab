@@ -1,7 +1,7 @@
-"""Sampler abstraction for model interaction.
+"""LLM client abstraction for model interaction.
 
-Mirrors simple-evals SamplerBase / SamplerResponse. Nothing in this module
-imports from the rest of the project.
+Mirrors simple-evals SamplerBase / SamplerResponse under clearer names.
+Nothing in this module imports from the rest of the project.
 """
 
 from __future__ import annotations
@@ -13,8 +13,8 @@ from .conversation import MessageList
 
 
 @dataclass
-class SamplerResponse:
-    """Response returned by a model sampler.
+class LLMResponse:
+    """Response returned by an LLM client.
 
     Attributes:
         response_text: Final text output from the model.
@@ -29,20 +29,20 @@ class SamplerResponse:
     response_metadata: dict[str, Any]
 
 
-class SamplerBase:
-    """Abstract base class for a model sampler.
+class LLMClient:
+    """Abstract base class for an LLM client.
 
     Subclasses wrap a specific model provider (e.g. Gemini, OpenAI) and
     expose a uniform call interface used by all Eval implementations.
     """
 
-    def __call__(self, message_list: MessageList) -> SamplerResponse:
+    def __call__(self, message_list: MessageList) -> LLMResponse:
         """Sample a response from the model.
 
         Args:
             message_list: Conversation history to condition the response on.
 
         Returns:
-            A SamplerResponse with the model output and request metadata.
+            An LLMResponse with the model output and request metadata.
         """
         raise NotImplementedError

@@ -9,8 +9,8 @@ either the submodule or the domain package root:
 Dependency order (each module only imports from modules above it):
     rubric.py
     conversation.py      → rubric
-    sampler.py           → conversation
-    evaluation.py        → conversation, sampler
+    llm_client.py        → conversation
+    evaluation.py        → conversation, llm_client
     meta_evaluation.py   → conversation, rubric
     dataset.py           → rubric, meta_evaluation
     scoring.py           → evaluation, rubric
@@ -24,9 +24,9 @@ from .dataset import DatasetSubset, HealthBenchDataset, HealthBenchSample
 from .evaluation import CriterionVerdict, Eval, EvalResult, SingleEvalResult
 from .experiment import RunMetrics, RunParams
 from .judge import JudgeGrader
+from .llm_client import LLMClient, LLMResponse
 from .meta_evaluation import LabelledSample, MetricResults
 from .rubric import RubricItem
-from .sampler import SamplerBase, SamplerResponse
 from .scoring import aggregate_scores, calculate_score, clip_score, stratified_scores
 
 __all__ = [
@@ -38,9 +38,9 @@ __all__ = [
     "Conversation",
     # rubric
     "RubricItem",
-    # sampler
-    "SamplerBase",
-    "SamplerResponse",
+    # llm client
+    "LLMClient",
+    "LLMResponse",
     # judge
     "JudgeGrader",
     # evaluation

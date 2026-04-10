@@ -5,8 +5,8 @@ formatting, JSON response parsing, the LLMJudgeGrader concrete class,
 and a create_judge factory.
 
 Depends on domain types (RubricItem, CriterionVerdict, MessageList,
-SamplerBase, JudgeGrader) but performs no I/O beyond calling the
-provided sampler.
+LLMClient, JudgeGrader) but performs no I/O beyond calling the
+provided LLM client.
 """
 
 from __future__ import annotations
@@ -24,11 +24,11 @@ from jinja2 import Environment, Template
 from healthbench_agent.domain.conversation import MessageList
 from healthbench_agent.domain.evaluation import CriterionVerdict
 from healthbench_agent.domain.judge import JudgeGrader
+from healthbench_agent.domain.llm_client import LLMClient
 from healthbench_agent.domain.rubric import RubricItem
-from healthbench_agent.domain.sampler import SamplerBase
 
 from .config_grader import JudgeConfig
-from .samplers import create_sampler
+from .llm_clients import create_llm_client
 
 # ---------------------------------------------------------------------------
 # Grader template — verbatim from simple-evals healthbench_eval.py
@@ -205,26 +205,26 @@ def parse_grading_response(response_text: str) -> dict[str, Any]:
 class LLMJudgeGrader(JudgeGrader):
     """Grades conversations against rubric items using an LLM as judge.
 
-    Wraps a SamplerBase implementation and a Jinja2 prompt template.
+    Wraps an LLMClient implementation and a Jinja2 prompt template.
     For each rubric item, renders the prompt with the conversation and
-    rubric text, calls the sampler, and parses the response into a verdict.
+    rubric text, calls the LLM client, and parses the response into a verdict.
 
     Uses ``<<conversation>>`` and ``<<rubric_item>>`` placeholder syntax
     (matching simple-evals) via a custom Jinja2 ``Environment``.
 
     Attributes:
-        sampler: Model sampler implementing SamplerBase.
+        llm_client: LLM client implementing LLMClient.
         template: Jinja2 grader prompt template (``<<...>>`` delimiters).
         max_workers: Upper bound on concurrent threads for rubric grading.
     """
 
     def __init__(
         self,
-        sampler: SamplerBase,
+        llm_client: LLMClient,
         template: Any | None = None,
         max_workers: int = 8,
     ) -> None:
-        self.sampler = sampler
+        self.llm_client = llm_client
         self.template = template or _make_template(GRADER_TEMPLATE)
         self.max_workers = max_workers
 
@@ -254,7 +254,7 @@ class LLMJudgeGrader(JudgeGrader):
                 rubric_item=str(item),
             )
             message_list: MessageList = [{"role": "user", "content": prompt_text}]
-            response = self.sampler(message_list)
+            response = self.llm_client(message_list)
             try:
                 parsed = parse_grading_response(response.response_text)
                 return CriterionVerdict(
@@ -286,7 +286,7 @@ class LLMJudgeGrader(JudgeGrader):
 def create_judge(config: JudgeConfig) -> LLMJudgeGrader:
     """Create an LLMJudgeGrader from a JudgeConfig.
 
-    Builds the appropriate sampler from the config and loads the grader
+    Builds the appropriate LLM client from the config and loads the grader
     prompt template from the configured path.
 
     Args:
@@ -296,10 +296,10 @@ def create_judge(config: JudgeConfig) -> LLMJudgeGrader:
     Returns:
         A configured LLMJudgeGrader ready to grade samples.
     """
-    sampler = create_sampler(config)
+    llm_client = create_llm_client(config)
     template = load_grader_prompt(config.prompt_path)[0]
     return LLMJudgeGrader(
-        sampler=sampler,
+        llm_client=llm_client,
         template=template,
         max_workers=config.grader_max_workers,
     )
@@ -311,7 +311,7 @@ def create_judge(config: JudgeConfig) -> LLMJudgeGrader:
 
 
 def grade_sample(
-    sampler: SamplerBase,
+    llm_client: LLMClient,
     conversation: MessageList,
     rubric_items: list[RubricItem],
     template: Any | None = None,
@@ -323,7 +323,7 @@ def grade_sample(
     repeated grading — they avoid re-creating the grader on every call.
 
     Args:
-        sampler: Model sampler implementing SamplerBase.
+        llm_client: LLM client implementing LLMClient.
         conversation: Full conversation including the agent's response.
         rubric_items: Rubric items to grade against.
         template: Optional Jinja2 template override. Defaults to GRADER_TEMPLATE.
@@ -331,5 +331,5 @@ def grade_sample(
     Returns:
         List of CriterionVerdict, one per rubric item in the same order.
     """
-    judge = LLMJudgeGrader(sampler=sampler, template=template)
+    judge = LLMJudgeGrader(llm_client=llm_client, template=template)
     return judge.grade(conversation, rubric_items)

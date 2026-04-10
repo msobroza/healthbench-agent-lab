@@ -1,6 +1,6 @@
-"""Tests for healthbench_agent.llm_eval.samplers — mocked provider clients.
+"""Tests for healthbench_agent.llm_eval.llm_clients — mocked LLMClient implementations.
 
-Tests OpenAIChatSampler, GeminiChatSampler, and create_sampler factory
+Tests OpenAIChatClient, GeminiChatClient, and create_llm_client factory
 with mocked SDK clients. No network calls.
 """
 
@@ -11,42 +11,42 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from healthbench_agent.llm_eval.config_grader import EvalMode, JudgeConfig
-from healthbench_agent.llm_eval.samplers import (
-    GeminiChatSampler,
-    OpenAIChatSampler,
-    create_sampler,
+from healthbench_agent.llm_eval.llm_clients import (
+    GeminiChatClient,
+    OpenAIChatClient,
+    create_llm_client,
 )
 
 # ---------------------------------------------------------------------------
-# OpenAIChatSampler tests
+# OpenAIChatClient tests
 # ---------------------------------------------------------------------------
 
 
-class TestOpenAIChatSampler:
-    """Tests for OpenAIChatSampler with mocked OpenAI client."""
+class TestOpenAIChatClient:
+    """Tests for OpenAIChatClient with mocked OpenAI client."""
 
     def test_default_model(self):
-        sampler = OpenAIChatSampler()
-        assert sampler.model == "gpt-4.1-2025-04-14"
+        llm_client = OpenAIChatClient()
+        assert llm_client.model == "gpt-4.1-2025-04-14"
 
     def test_custom_model(self):
-        sampler = OpenAIChatSampler(model="gpt-4o")
-        assert sampler.model == "gpt-4o"
+        llm_client = OpenAIChatClient(model="gpt-4o")
+        assert llm_client.model == "gpt-4o"
 
     def test_default_temperature_is_zero(self):
-        sampler = OpenAIChatSampler()
-        assert sampler.temperature == 0.0
+        llm_client = OpenAIChatClient()
+        assert llm_client.temperature == 0.0
 
     def test_lazy_client_initialization(self):
-        sampler = OpenAIChatSampler()
-        assert sampler._client is None
+        llm_client = OpenAIChatClient()
+        assert llm_client._client is None
 
     def test_explicit_api_key_stored(self):
-        sampler = OpenAIChatSampler(api_key="test-key-123")
-        assert sampler._api_key == "test-key-123"
+        llm_client = OpenAIChatClient(api_key="test-key-123")
+        assert llm_client._api_key == "test-key-123"
 
     @patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"})
-    def test_call_returns_sampler_response(self):
+    def test_call_returns_llm_response(self):
         # Setup mock response
         mock_choice = MagicMock()
         mock_choice.message.content = "Test response"
@@ -64,10 +64,10 @@ class TestOpenAIChatSampler:
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value = mock_response
 
-        sampler = OpenAIChatSampler()
-        sampler._client = mock_client  # inject mock directly
+        llm_client = OpenAIChatClient()
+        llm_client._client = mock_client  # inject mock directly
 
-        result = sampler([{"role": "user", "content": "Hello"}])
+        result = llm_client([{"role": "user", "content": "Hello"}])
 
         assert result.response_text == "Test response"
         assert result.response_metadata["model"] == "gpt-4.1-2025-04-14"
@@ -76,45 +76,45 @@ class TestOpenAIChatSampler:
 
 
 # ---------------------------------------------------------------------------
-# GeminiChatSampler tests
+# GeminiChatClient tests
 # ---------------------------------------------------------------------------
 
 
-class TestGeminiChatSampler:
-    """Tests for GeminiChatSampler with mocked Gemini client."""
+class TestGeminiChatClient:
+    """Tests for GeminiChatClient with mocked Gemini client."""
 
     def test_default_model(self):
-        sampler = GeminiChatSampler()
-        assert sampler.model == "gemini-2.5-flash"
+        llm_client = GeminiChatClient()
+        assert llm_client.model == "gemini-2.5-flash"
 
     def test_custom_model(self):
-        sampler = GeminiChatSampler(model="gemini-2.5-pro")
-        assert sampler.model == "gemini-2.5-pro"
+        llm_client = GeminiChatClient(model="gemini-2.5-pro")
+        assert llm_client.model == "gemini-2.5-pro"
 
     def test_default_temperature_is_zero(self):
-        sampler = GeminiChatSampler()
-        assert sampler.temperature == 0.0
+        llm_client = GeminiChatClient()
+        assert llm_client.temperature == 0.0
 
     def test_lazy_client_initialization(self):
-        sampler = GeminiChatSampler()
-        assert sampler._client is None
+        llm_client = GeminiChatClient()
+        assert llm_client._client is None
 
     def test_explicit_api_key_stored(self):
-        sampler = GeminiChatSampler(api_key="test-key-456")
-        assert sampler._api_key == "test-key-456"
+        llm_client = GeminiChatClient(api_key="test-key-456")
+        assert llm_client._api_key == "test-key-456"
 
     @patch.dict("os.environ", {"GOOGLE_API_KEY": "test-key"})
-    def test_call_returns_sampler_response(self):
+    def test_call_returns_llm_response(self):
         mock_response = MagicMock()
         mock_response.text = "Gemini response"
 
         mock_client = MagicMock()
         mock_client.models.generate_content.return_value = mock_response
 
-        sampler = GeminiChatSampler()
-        sampler._client = mock_client  # inject mock directly
+        llm_client = GeminiChatClient()
+        llm_client._client = mock_client  # inject mock directly
 
-        result = sampler([{"role": "user", "content": "Hello"}])
+        result = llm_client([{"role": "user", "content": "Hello"}])
 
         assert result.response_text == "Gemini response"
         assert result.response_metadata["model"] == "gemini-2.5-flash"
@@ -213,34 +213,34 @@ class TestJudgeConfig:
 
 
 # ---------------------------------------------------------------------------
-# create_sampler tests
+# create_llm_client tests
 # ---------------------------------------------------------------------------
 
 
-class TestCreateSampler:
-    """Tests for the create_sampler factory function."""
+class TestCreateLLMClient:
+    """Tests for the create_llm_client factory function."""
 
-    def test_creates_openai_sampler(self):
+    def test_creates_openai_client(self):
         config = JudgeConfig(provider="openai")
-        sampler = create_sampler(config)
-        assert isinstance(sampler, OpenAIChatSampler)
-        assert sampler.model == config.model
-        assert sampler.temperature == config.temperature
+        llm_client = create_llm_client(config)
+        assert isinstance(llm_client, OpenAIChatClient)
+        assert llm_client.model == config.model
+        assert llm_client.temperature == config.temperature
 
-    def test_creates_gemini_sampler(self):
+    def test_creates_gemini_client(self):
         config = JudgeConfig(provider="gemini", model="gemini-2.5-flash")
-        sampler = create_sampler(config)
-        assert isinstance(sampler, GeminiChatSampler)
-        assert sampler.model == "gemini-2.5-flash"
+        llm_client = create_llm_client(config)
+        assert isinstance(llm_client, GeminiChatClient)
+        assert llm_client.model == "gemini-2.5-flash"
 
     @patch.dict("os.environ", {"OPENAI_API_KEY": "sk-from-config"})
     def test_passes_api_key_from_config(self):
         config = JudgeConfig(provider="openai")
-        sampler = create_sampler(config)
-        assert isinstance(sampler, OpenAIChatSampler)
-        assert sampler._api_key == "sk-from-config"
+        llm_client = create_llm_client(config)
+        assert isinstance(llm_client, OpenAIChatClient)
+        assert llm_client._api_key == "sk-from-config"
 
     def test_unknown_provider_raises(self):
         config = JudgeConfig(provider="unknown")
         with pytest.raises(ValueError, match="Unknown provider"):
-            create_sampler(config)
+            create_llm_client(config)

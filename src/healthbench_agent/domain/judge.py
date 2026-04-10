@@ -1,7 +1,7 @@
 """Judge grader abstraction for evaluating agent responses.
 
 Defines the contract that any grader (LLM-based, rule-based, human) must
-implement to be usable by the evaluation runner. Mirrors the SamplerBase
+implement to be usable by the evaluation runner. Mirrors the LLMClient
 pattern: a pure abstraction in the domain layer, with concrete
 implementations in the llm_eval layer.
 

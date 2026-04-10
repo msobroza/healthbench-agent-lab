@@ -2,7 +2,7 @@
 
 Public API re-exported from subpackages so callers import from the package root:
 
-    from healthbench_agent import HealthBenchDataset, SamplerBase, calculate_score
+    from healthbench_agent import HealthBenchDataset, LLMClient, calculate_score
     from healthbench_agent import download_dataset, load_dataset
     from healthbench_agent import sample_dataset, stratified_sample
     from healthbench_agent import run_all, run_category, run_one
@@ -53,11 +53,11 @@ from .domain import (
     EvalResult,
     HealthBenchDataset,
     HealthBenchSample,
+    LLMClient,
+    LLMResponse,
     Message,
     MessageList,
     RubricItem,
-    SamplerBase,
-    SamplerResponse,
     SingleEvalResult,
     aggregate_scores,
     calculate_score,
@@ -74,9 +74,9 @@ __all__ = [
     "Conversation",
     # rubric
     "RubricItem",
-    # sampler
-    "SamplerBase",
-    "SamplerResponse",
+    # llm client
+    "LLMClient",
+    "LLMResponse",
     # dataset domain types
     "DatasetSubset",
     "HealthBenchSample",
