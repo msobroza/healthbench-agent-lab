@@ -400,8 +400,6 @@ def main(argv: list[str] | None = None) -> None:
     if not raw or raw[0].startswith("-"):
         raw = ["run", *raw]
     args = parser.parse_args(raw)
-    if args.command is None:
-        args.command = "run"
 
     handlers: dict[str, Callable[[argparse.Namespace], None]] = {
         "run": _cmd_run,
