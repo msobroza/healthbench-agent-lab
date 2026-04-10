@@ -139,6 +139,8 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.prompt_domain == "agent" and args.agent_config is None:
         parser.error("--agent-config is required when --prompt-domain agent (the default)")
+    if args.prompt_domain == "judge" and args.judge_config is None:
+        parser.error("--judge-config is required when --prompt-domain judge")
 
     if args.prompt_domain == "judge":
         judge_result = _run_judge_optimization(args)
@@ -355,9 +357,6 @@ def _run_judge_optimization(args: argparse.Namespace) -> dict[str, Any]:
         Dict with keys ``optimized_prompt``, ``baseline_score``,
         ``optimized_score``, ``improvement``, ``num_trials``,
         ``optimizer_name``, ``trials``, and ``target_prompt_path``.
-
-    Raises:
-        SystemExit: If ``--judge-config`` is missing.
     """
     from healthbench_agent.llm_eval.cli.meta_eval import (
         _build_filters,
@@ -370,8 +369,6 @@ def _run_judge_optimization(args: argparse.Namespace) -> dict[str, Any]:
     )
     from healthbench_agent.prompt_optimization.metric import JudgeAgreementMetric
 
-    if args.judge_config is None:
-        raise SystemExit("--prompt-domain judge requires --judge-config")
     cfg = JudgeConfig.from_yaml(args.judge_config)
     samples, axis_extractor = _load_consensus_labelled(
         subset="consensus", sample_size=args.sample_size, seed=args.seed
