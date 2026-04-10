@@ -152,6 +152,11 @@ def _add_other_parsers(subparsers: Any) -> None:
         help="Recompute metrics from an existing verdicts.parquet",
     )
     regen.add_argument("run_dir", help="Directory containing verdicts.parquet and metrics.json")
+    regen.add_argument(
+        "--metrics",
+        default="",
+        help="Comma-separated metric names to recompute (default: all registered)",
+    )
 
     # compare
     cmp = subparsers.add_parser(
@@ -236,6 +241,7 @@ def _cmd_regenerate(args: argparse.Namespace) -> None:
 
     from healthbench_agent.llm_eval.meta_eval.registry import (
         MetricLevel,
+        get_meta_metric,
         registered_meta_metrics,
     )
     from healthbench_agent.llm_eval.meta_eval.results_io import load_results, save_results
@@ -250,9 +256,13 @@ def _cmd_regenerate(args: argparse.Namespace) -> None:
     sample_rows = df[df["gold_source"] == "ideal_completion"]
     rubric_rows = df[df["gold_source"].isin(["example_meets", "example_fails"])]
 
-    registry = registered_meta_metrics()
+    requested = [m.strip() for m in args.metrics.split(",") if m.strip()]
+    if requested:
+        selected = {name: get_meta_metric(name) for name in requested}
+    else:
+        selected = registered_meta_metrics()
     scores: dict[str, Any] = {}
-    for name, spec in registry.items():
+    for name, spec in selected.items():
         if spec.level is MetricLevel.SAMPLE:
             subset = sample_rows
         elif spec.level is MetricLevel.RUBRIC:
