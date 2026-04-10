@@ -531,3 +531,30 @@ def test_run_meta_eval_raises_when_every_metric_skipped():
             n_samples=1,
             progress=False,
         )
+
+
+def test_meta_evaluate_with_fake_judge_returns_view(monkeypatch, tmp_path):
+    """meta_evaluate should accept a JudgeConfig and a pre-built dataset path."""
+    from healthbench_agent.llm_eval import meta_evaluate
+
+    # We patch the judge factory + dataset loader so the test stays offline.
+    samples = demo_labelled_set()
+
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.meta_eval._load_subset_for_meta_eval",
+        lambda subset, sample_size, seed: samples,
+    )
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.meta_eval._build_judge_for_meta_eval",
+        lambda config, temperature: (FakeJudge("always_met"), "fake/model@1.0", "sha"),
+    )
+
+    view = meta_evaluate(
+        judge_config="config/judges/fake.yaml",
+        sample_size=3,
+        n_samples=1,
+        cache=False,
+        progress=False,
+        output_dir=tmp_path,
+    )
+    assert view.results.scores

@@ -15,6 +15,10 @@ Public API:
     - JudgeConfig: Type-safe judge configuration.
     - EvalMode: Execution mode enum (ASYNC, BATCH).
     - create_sampler: Factory to build a sampler from JudgeConfig.
+    - meta_evaluate: Meta-evaluate one judge end-to-end.
+    - run_meta_eval: Low-level meta-evaluation orchestrator.
+    - MetricResultsView: Rich-UX view of meta-evaluation results.
+    - VerdictCache: Thread-safe on-disk verdict cache.
 """
 
 from .config_grader import EvalMode, JudgeConfig
@@ -27,19 +31,54 @@ from .grader import (
     load_grader_prompt,
     parse_grading_response,
 )
+from .meta_eval import (
+    AXIS_TAG_PREFIX,
+    EmptyFilterError,
+    FakeJudge,
+    MetricLevel,
+    MetricSpec,
+    axis_filter,
+    demo_labelled_set,
+    get_meta_metric,
+    meta_evaluate,
+    metadata_filter,
+    register_meta_metric,
+    registered_meta_metrics,
+    run_meta_eval,
+    specialty_filter,
+)
+from .meta_eval_results import MetricResultsView
 from .runner import EvalRunner
 from .samplers import create_sampler
+from .verdict_cache import CachedJudgeGrader, VerdictCache
 
 __all__ = [
+    "AXIS_TAG_PREFIX",
     "GRADER_TEMPLATE",
+    "CachedJudgeGrader",
+    "EmptyFilterError",
+    "EvalMode",
+    "EvalRunner",
+    "FakeJudge",
+    "JudgeConfig",
     "LLMJudgeGrader",
+    "MetricLevel",
+    "MetricResultsView",
+    "MetricSpec",
+    "VerdictCache",
+    "axis_filter",
     "create_judge",
+    "create_sampler",
+    "demo_labelled_set",
     "format_conversation",
+    "get_meta_metric",
     "grade_sample",
     "load_grader_prompt",
+    "meta_evaluate",
+    "metadata_filter",
     "parse_grading_response",
-    "EvalRunner",
-    "JudgeConfig",
-    "EvalMode",
-    "create_sampler",
+    "register_meta_metric",
+    "registered_meta_metrics",
+    "run_meta_eval",
+    "specialty_filter",
 ]
