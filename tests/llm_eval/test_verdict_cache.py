@@ -9,7 +9,7 @@ import pytest
 
 from healthbench_agent.domain.evaluation import CriterionVerdict
 from healthbench_agent.domain.rubric import RubricItem
-from healthbench_agent.llm_eval.verdict_cache import CachedJudgeGrader, VerdictCache
+from healthbench_agent.llm_eval.cache import CachedJudgeGrader, VerdictCache
 
 
 @pytest.fixture
@@ -85,7 +85,7 @@ def test_corrupt_cache_file_returns_none_and_logs(cache: VerdictCache, caplog):
     path = cache._path_for(key)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("not valid json {")
-    with caplog.at_level(logging.WARNING, logger="healthbench_agent.llm_eval.verdict_cache"):
+    with caplog.at_level(logging.WARNING, logger="healthbench_agent.llm_eval.cache.store"):
         assert cache.get(key) is None
     assert any("Corrupt cache entry" in record.message for record in caplog.records)
 

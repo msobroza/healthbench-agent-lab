@@ -19,7 +19,7 @@ from evaluation.experiment_tracker import (
 )
 from healthbench_agent.agent import RootAgentPipelineConfig
 from healthbench_agent.domain.experiment import RunMetrics, RunParams
-from healthbench_agent.llm_eval.config_grader import EvalMode, JudgeConfig
+from healthbench_agent.llm_eval.grading.config import EvalMode, JudgeConfig
 
 # ---------------------------------------------------------------------------
 # Fixtures

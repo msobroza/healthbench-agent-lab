@@ -20,8 +20,8 @@ from healthbench_agent.domain.judge import JudgeGrader
 from healthbench_agent.domain.rubric import RubricItem
 from healthbench_agent.domain.scoring import calculate_score
 
-from .config_grader import EvalMode, JudgeConfig
-from .grader import create_judge
+from .grading.config import EvalMode, JudgeConfig
+from .grading.judge import create_judge
 
 
 class EvalRunner:

@@ -543,11 +543,11 @@ def test_meta_evaluate_with_fake_judge_returns_view(monkeypatch, tmp_path):
     samples = demo_labelled_set()
 
     monkeypatch.setattr(
-        "healthbench_agent.llm_eval.meta_eval._load_subset_for_meta_eval",
+        "healthbench_agent.llm_eval.meta_eval.api._load_subset_for_meta_eval",
         lambda subset, sample_size, seed: samples,
     )
     monkeypatch.setattr(
-        "healthbench_agent.llm_eval.meta_eval._build_judge_for_meta_eval",
+        "healthbench_agent.llm_eval.meta_eval.api._build_judge_for_meta_eval",
         lambda config, temperature: (FakeJudge("always_met"), "fake/model@1.0", "sha"),
     )
 
@@ -564,7 +564,7 @@ def test_meta_evaluate_with_fake_judge_returns_view(monkeypatch, tmp_path):
 
 def test_cli_run_dispatches_to_run_meta_eval(monkeypatch, tmp_path, capsys):
     """CLI run subcommand should call run_meta_eval with parsed args."""
-    from healthbench_agent.llm_eval import cli_meta_eval
+    from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
 
     called: dict[str, Any] = {}
 
@@ -576,17 +576,17 @@ def test_cli_run_dispatches_to_run_meta_eval(monkeypatch, tmp_path, capsys):
             n_rubrics_graded=1,
             judge_metadata={"judge_model": "fake"},
         )
-        from healthbench_agent.llm_eval.meta_eval_results import MetricResultsView
+        from healthbench_agent.llm_eval.meta_eval.results_view import MetricResultsView
 
         return MetricResultsView(results=results)
 
-    monkeypatch.setattr("healthbench_agent.llm_eval.cli_meta_eval.run_meta_eval", fake_run)
+    monkeypatch.setattr("healthbench_agent.llm_eval.cli.meta_eval.run_meta_eval", fake_run)
     monkeypatch.setattr(
-        "healthbench_agent.llm_eval.cli_meta_eval._load_consensus_labelled",
+        "healthbench_agent.llm_eval.cli.meta_eval._load_consensus_labelled",
         lambda subset, sample_size, seed: (demo_labelled_set(), lambda r: r.category),
     )
     monkeypatch.setattr(
-        "healthbench_agent.llm_eval.cli_meta_eval._build_judge_for_cli",
+        "healthbench_agent.llm_eval.cli.meta_eval._build_judge_for_cli",
         lambda config, temperature: (FakeJudge("always_met"), "fake@1", "sha"),
     )
 

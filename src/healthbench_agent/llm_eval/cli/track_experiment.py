@@ -26,7 +26,7 @@ def main() -> None:  # pragma: no cover
     modules (``evaluation/``, ``agents/``, ``tools/``) are importable,
     then delegates to the experiment tracker CLI.
     """
-    project_root = str(Path(__file__).resolve().parents[3])
+    project_root = str(Path(__file__).resolve().parents[4])
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
 
