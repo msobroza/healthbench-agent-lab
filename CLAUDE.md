@@ -16,6 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
     - `scoring.py` — pure scoring functions (`calculate_score`, `clip_score`, `aggregate_scores`, `stratified_scores`)
     - `judge.py` — `JudgeGrader` (ABC — grade conversation against rubric items)
     - `experiment.py` — `RunParams`, `RunMetrics` (experiment tracking metadata dataclasses)
+    - `meta_evaluation.py` — `LabelledSample` (labelled HealthBench row for judge meta-eval), `MetricResults` (scores + graded counts + judge metadata), `SCHEMA_VERSION`
   - `agent/` — agent infrastructure (pipeline ABC, config, prompt rendering, tool registry, framework adapters)
     - `__init__.py` — re-exports `AgentPipeline`, `AgentNodeConfig`, `PlannerConfig`, `RootAgentPipelineConfig`, `FrameworkAdapter`, `create_pipeline`, `format_conversation`, `load_instruction`, `render_instruction`, `register_callback`, `get_callback`, `registered_callbacks`, `register_tool`, `get_tool`, `get_tools`, `registered_tools`
     - `agent_pipeline.py` — `AgentPipeline` (ABC — async generate response from conversation)
@@ -30,6 +31,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `dataset/` — HealthBench dataset I/O (→ domain)
     - `loader.py` — `download_dataset`, `download_all_datasets`, `load_dataset`, URL/filename/path constants
     - `split_utils.py` — `sample_dataset`, `stratified_sample` (sklearn-backed proportional sampling)
+    - `extraction.py` — `extract_ideal_completion_text` (normalises HealthBench `ideal_completions_data` into a single gold response string)
   - `analysis/` — statistics layer (→ domain)
     - `registry.py` — `@register_analysis` decorator, `run_one`, `run_category`, `run_all`
     - `utils.py` — shared helpers (`series_stats`, `save_csv`, `DEFAULT_PERCENTILES`, `build_rubric_dataframe`, `build_sample_dataframe`)
@@ -63,11 +65,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
       - `results_io.py` — `save_results`, `load_results` free functions
       - `results_plots.py` — `plot_calibration_curve`, `plot_dimension_confusion` free functions
   - `prompt_optimization/` — automatic prompt engineering (→ domain, agent, llm_eval). **Domain-agnostic**: any vertical-specific text (mutate/critique/refine templates, thinking styles) lives in YAML under `prompts/prompt_optimization/`, never in Python.
-    - `optimizer.py` — `PromptOptimizer` ABC, `OptimizationResult`, `TrialRecord` (frozen dataclasses), `_TrialBudget` + `_BudgetExceededError` (shared cache/history/best/budget helper for adapters), `require_optional()` (optional-dep guard)
+    - `optimizer.py` — `PromptOptimizer` ABC, `OptimizationResult`, `TrialRecord` (frozen dataclasses), `OptimizationMetric` Protocol (structural callable contract for fitness functions), `_TrialBudget` + `_BudgetExceededError` (shared cache/history/best/budget helper for adapters), `require_optional()` (optional-dep guard)
     - `config.py` — `BaseOptimizationConfig` (pydantic-settings, prefix `OPTIM_`, `dump_safe()`), `DSPyConfig`, `TextGradConfig`, `CritiqueRefineConfig` (with `prompt_path` field pointing to a YAML template file)
-    - `metric.py` — `EndToEndMetric` (callable `metric(prompt) -> float` that runs agent + judge end-to-end via `instruction_override`)
+    - `metric.py` — `EndToEndMetric` (runs agent + judge end-to-end via `instruction_override`; supports `sample_filter`/`rubric_filter` kwargs), `JudgeAgreementMetric` (scores a candidate grader template by running `run_meta_eval` against a fixed labelled set), re-exports `EmptyFilterError`
     - `optimizer_registry.py` — `@register_prompt_optimizer` decorator, `create_prompt_optimizer()` factory, `get_optimizer_config_class()`, `registered_prompt_optimizers()`
-    - `cli.py` — `optimize-prompt` CLI entry point
+    - `cli.py` — `optimize-prompt` CLI entry point; `--prompt-domain {agent,judge}` dispatches between agent-prompt optimization (default) and judge-prompt optimization (`_run_judge_optimization` → `_save_judge_yaml` writes `v2_optimized.yaml` next to the source grader YAML)
     - `adapters/` — per-framework optimizer implementations (lazy-imported)
       - `dspy_adapter.py` — `DSPyOptimizer` (COPRO/MIPROv2; uses `_TrialBudget` for cached per-instruction metric)
       - `textgrad_adapter.py` — `TextGradOptimizer` (text-gradient descent; uses `_TrialBudget` for trial bookkeeping)
@@ -123,6 +125,31 @@ uv run optimize-prompt --optimizer textgrad \
 uv run optimize-prompt --optimizer critique_refine \
     --agent-config config/agents/baseline_agent.yaml \
     --prompt-path prompts/prompt_optimization/v1_critique_refine.yaml
+```
+
+### Meta-Evaluation (judge grader)
+```bash
+# Default run on the consensus subset, k=7 calibration passes
+uv run meta-evaluate-judge run \
+    --judge-config config/judges/openai_gpt41.yaml \
+    --sample-size 100
+
+# Show all registered meta-evaluation metrics
+uv run meta-evaluate-judge list-metrics
+
+# Discover metadata keys present in the consensus subset
+uv run meta-evaluate-judge list-metadata-keys --subset consensus
+
+# Regenerate metrics from an existing verdicts.parquet
+uv run meta-evaluate-judge regenerate runs/openai/
+
+# Compare two judges offline (optionally write markdown diff)
+uv run meta-evaluate-judge compare runs/openai/ runs/gemini/
+
+# Optimize the judge prompt itself (slice-restricted)
+uv run optimize-prompt --prompt-domain judge \
+    --judge-config config/judges/openai_gpt41.yaml \
+    --optimizer critique_refine --rubric-axis accuracy
 ```
 
 ### Code Quality
