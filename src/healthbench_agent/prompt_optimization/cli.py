@@ -34,8 +34,13 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
-def main() -> None:
-    """Run prompt optimization from the command line."""
+def main(argv: list[str] | None = None) -> None:
+    """Run prompt optimization from the command line.
+
+    Args:
+        argv: Optional command-line arguments (excluding the program name).
+            When ``None``, defaults to ``sys.argv[1:]`` via ``parse_args``.
+    """
     from dotenv import load_dotenv
 
     load_dotenv()
@@ -47,7 +52,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--agent-config",
-        required=True,
+        default=None,
         help="Path to agent YAML config (e.g. config/agents/baseline_agent.yaml).",
     )
     parser.add_argument(
@@ -102,7 +107,51 @@ def main() -> None:
             "Defaults to prompts/prompt_optimization/v1_critique_refine.yaml."
         ),
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--prompt-domain",
+        choices=("agent", "judge"),
+        default="agent",
+        help="Whether to optimize an agent prompt (default) or a judge prompt.",
+    )
+    parser.add_argument(
+        "--judge-config",
+        default=None,
+        help="Path to JudgeConfig YAML — required when --prompt-domain judge.",
+    )
+    parser.add_argument(
+        "--rubric-axis",
+        action="append",
+        default=[],
+        help="Restrict meta-eval to rubric items tagged with this axis. Can repeat.",
+    )
+    parser.add_argument(
+        "--metadata",
+        action="append",
+        default=[],
+        help="Restrict meta-eval samples by metadata KEY=VALUE. Can repeat.",
+    )
+    parser.add_argument(
+        "--fitness",
+        default="gold_score",
+        help="Name of the meta-eval metric whose score drives optimization.",
+    )
+    args = parser.parse_args(argv)
+
+    if args.prompt_domain == "agent" and args.agent_config is None:
+        parser.error("--agent-config is required when --prompt-domain agent (the default)")
+
+    if args.prompt_domain == "judge":
+        judge_result = _run_judge_optimization(args)
+        judge_output_path = _save_judge_yaml(args, judge_result)
+        logger.info(
+            "Optimized judge prompt saved to %s (%.4f -> %.4f, %+.4f across %d trials)",
+            judge_output_path,
+            judge_result["baseline_score"],
+            judge_result["optimized_score"],
+            judge_result["improvement"],
+            judge_result["num_trials"],
+        )
+        return
 
     from healthbench_agent.agent import RootAgentPipelineConfig
     from healthbench_agent.agent.prompt import load_instruction
@@ -269,3 +318,132 @@ def main() -> None:
     }
     trials_path.write_text(json.dumps(trials_data, indent=2))
     logger.info("Trial history saved to %s", trials_path)
+
+
+def main_argv(argv: list[str]) -> None:
+    """Convenience alias for tests passing an explicit argv list.
+
+    Args:
+        argv: Command-line arguments (excluding the program name).
+    """
+    main(argv)
+
+
+def _judge_save_path(judge_config_path: str) -> Path:
+    """Return the default output path for an optimized judge YAML.
+
+    Args:
+        judge_config_path: Path to the source JudgeConfig YAML.
+
+    Returns:
+        ``<same_dir>/v2_optimized.yaml``.
+    """
+    return Path(judge_config_path).parent / "v2_optimized.yaml"
+
+
+def _run_judge_optimization(args: argparse.Namespace) -> dict[str, Any]:
+    """Run the judge-prompt optimization path and return a result dict.
+
+    Mirrors the structure of the agent path but builds a
+    :class:`JudgeAgreementMetric` over a labelled HealthBench subset
+    instead of :class:`EndToEndMetric` over an agent pipeline.
+
+    Args:
+        args: Parsed CLI namespace from the ``optimize-prompt`` parser.
+
+    Returns:
+        Dict with keys ``optimized_prompt``, ``baseline_score``,
+        ``optimized_score``, ``improvement``, ``num_trials``,
+        ``optimizer_name``, ``trials``, and ``target_prompt_path``.
+
+    Raises:
+        SystemExit: If ``--judge-config`` is missing.
+    """
+    from healthbench_agent.llm_eval.cli.meta_eval import (
+        _build_filters,
+        _load_consensus_labelled,
+    )
+    from healthbench_agent.llm_eval.grading.config import JudgeConfig
+    from healthbench_agent.prompt_optimization import (
+        create_prompt_optimizer,
+        get_optimizer_config_class,
+    )
+    from healthbench_agent.prompt_optimization.metric import JudgeAgreementMetric
+
+    if args.judge_config is None:
+        raise SystemExit("--prompt-domain judge requires --judge-config")
+    cfg = JudgeConfig.from_yaml(args.judge_config)
+    samples, axis_extractor = _load_consensus_labelled(
+        subset="consensus", sample_size=args.sample_size, seed=args.seed
+    )
+    sample_filter, rubric_filter = _build_filters(args)
+    metric = JudgeAgreementMetric(
+        judge_config=cfg,
+        labelled=samples,
+        dimension_extractor=axis_extractor,
+        n_samples=3,
+        fitness=args.fitness,
+        sample_filter=sample_filter,
+        rubric_filter=rubric_filter,
+    )
+    config_class = get_optimizer_config_class(args.optimizer)
+    optim_config = config_class(
+        optimizer=args.optimizer,
+        max_trials=args.max_trials,
+        sample_size=args.sample_size,
+        seed=args.seed,
+    )
+    optimizer = create_prompt_optimizer(optim_config)
+    # JudgeAgreementMetric expects the RAW template string, not a compiled
+    # Jinja2 Template, so read the YAML directly rather than going through
+    # load_grader_prompt(). Matches what the adapters pass to metric().
+    data = yaml.safe_load(Path(cfg.prompt_path).read_text())
+    current_template = data["template"].strip()
+    # JudgeAgreementMetric satisfies the OptimizationMetric Protocol
+    # structurally; PromptOptimizer.optimize still annotates its metric
+    # parameter as EndToEndMetric | None, so cast at the call site.
+    result = optimizer.optimize(
+        current_prompt=current_template,
+        samples=None,  # labelled set lives on the metric
+        metric=metric,  # type: ignore[arg-type]
+    )
+    return {
+        "optimized_prompt": result.optimized_prompt,
+        "baseline_score": result.baseline_score,
+        "optimized_score": result.optimized_score,
+        "improvement": result.improvement,
+        "num_trials": result.num_trials,
+        "optimizer_name": result.optimizer_name,
+        "trials": result.trial_history,
+        "target_prompt_path": str(cfg.prompt_path),
+    }
+
+
+def _save_judge_yaml(args: argparse.Namespace, result: dict[str, Any]) -> Path:
+    """Write an optimized judge prompt YAML next to the source config.
+
+    Args:
+        args: Parsed CLI namespace; ``args.judge_config`` selects the
+            output directory.
+        result: Dict returned from :func:`_run_judge_optimization`.
+
+    Returns:
+        The path the YAML was written to.
+    """
+    out = _judge_save_path(args.judge_config)
+    payload = {
+        "version": "2.0.0",
+        "created": date.today().isoformat(),
+        "parent_version": "1.0.0",
+        "parent_prompt_path": result["target_prompt_path"],
+        "template": result["optimized_prompt"],
+        "rationale": (
+            f"Automatically optimized using {result['optimizer_name']}. "
+            f"Score: {result['baseline_score']:.4f} -> "
+            f"{result['optimized_score']:.4f} "
+            f"({result['improvement']:+.4f}). "
+            f"Trials: {result['num_trials']}."
+        ),
+    }
+    out.write_text(yaml.dump(payload, default_flow_style=False, sort_keys=False))
+    return out
