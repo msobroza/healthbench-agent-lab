@@ -8,13 +8,14 @@ either the submodule or the domain package root:
 
 Dependency order (each module only imports from modules above it):
     rubric.py
-    conversation.py  → rubric
-    sampler.py       → conversation
-    evaluation.py    → conversation, sampler
-    dataset.py       → rubric, conversation
-    scoring.py       → evaluation, rubric
-    judge.py         → conversation, evaluation, rubric
-    experiment.py    → (stdlib only)
+    conversation.py      → rubric
+    sampler.py           → conversation
+    evaluation.py        → conversation, sampler
+    meta_evaluation.py   → conversation, rubric
+    dataset.py           → rubric, meta_evaluation
+    scoring.py           → evaluation, rubric
+    judge.py             → conversation, evaluation, rubric
+    experiment.py        → (stdlib only)
 
 """
 
@@ -23,6 +24,7 @@ from .dataset import DatasetSubset, HealthBenchDataset, HealthBenchSample
 from .evaluation import CriterionVerdict, Eval, EvalResult, SingleEvalResult
 from .experiment import RunMetrics, RunParams
 from .judge import JudgeGrader
+from .meta_evaluation import LabelledSample, MetricResults
 from .rubric import RubricItem
 from .sampler import SamplerBase, SamplerResponse
 from .scoring import aggregate_scores, calculate_score, clip_score, stratified_scores
@@ -46,6 +48,9 @@ __all__ = [
     "SingleEvalResult",
     "EvalResult",
     "Eval",
+    # meta-evaluation
+    "LabelledSample",
+    "MetricResults",
     # experiment tracking
     "RunParams",
     "RunMetrics",

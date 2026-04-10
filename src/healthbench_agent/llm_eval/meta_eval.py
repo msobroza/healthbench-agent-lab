@@ -76,7 +76,20 @@ def register_meta_metric(
     level: MetricLevel,
     description: str,
 ) -> Callable[[Metric], Metric]:
-    """Decorator that registers a meta-evaluation metric by name + level."""
+    """Decorator that registers a meta-evaluation metric by name + level.
+
+    Args:
+        name: Unique identifier used by the CLI ``--metrics`` flag and
+            persisted under ``metrics.json``.
+        level: Which gold_source row subset (``sample`` / ``rubric`` /
+            ``any``) the runner hands to the wrapped function.
+        description: One-line human-readable summary shown by
+            ``list-metrics``.
+
+    Returns:
+        A decorator that stores the wrapped metric in the module-level
+        registry and returns it unchanged.
+    """
 
     def decorator(fn: Metric) -> Metric:
         _METRIC_REGISTRY[name] = MetricSpec(name=name, fn=fn, level=level, description=description)
@@ -88,6 +101,13 @@ def register_meta_metric(
 def get_meta_metric(name: str) -> MetricSpec:
     """Look up a registered metric by name.
 
+    Args:
+        name: Metric identifier previously passed to
+            :func:`register_meta_metric`.
+
+    Returns:
+        The :class:`MetricSpec` stored in the registry under ``name``.
+
     Raises:
         KeyError: When ``name`` is not registered.
     """
@@ -97,7 +117,13 @@ def get_meta_metric(name: str) -> MetricSpec:
 
 
 def registered_meta_metrics() -> dict[str, MetricSpec]:
-    """Return the live registry mapping (mutating it affects the registry)."""
+    """Return the live meta-metric registry.
+
+    Returns:
+        The live ``dict[str, MetricSpec]`` backing the registry. Mutating
+        the returned mapping affects global registration state — callers
+        that only need a read-only view should copy it.
+    """
     return _METRIC_REGISTRY
 
 
@@ -126,7 +152,18 @@ class EmptyFilterError(ValueError):
 
 
 def axis_filter(*axes: str) -> Callable[[RubricItem], bool]:
-    """Keep rubrics whose ``category`` or ``axis: <name>`` tag matches any of *axes*."""
+    """Keep rubrics whose ``category`` or ``axis: <name>`` tag matches any of *axes*.
+
+    Args:
+        *axes: One or more axis names to match. A rubric item is kept
+            when either its ``category`` attribute equals one of these
+            names, or one of its ``tags`` is ``"axis: <name>"`` with
+            ``<name>`` in the requested set.
+
+    Returns:
+        Predicate that accepts a :class:`RubricItem` and returns True
+        when any of the configured axes matches.
+    """
     wanted = set(axes)
 
     def predicate(item: RubricItem) -> bool:
@@ -146,6 +183,16 @@ def metadata_filter(**conditions: Any) -> Callable[[LabelledSample], bool]:
     Top-level LabelledSample attributes (``language``, ``specialty``,
     ``user_persona``) are checked against the attribute; other keys are
     looked up in ``sample.metadata``.
+
+    Args:
+        **conditions: ``key=value`` constraints to enforce. A key matching
+            one of the promoted top-level attributes is compared against
+            that attribute; every other key is looked up in
+            ``sample.metadata``.
+
+    Returns:
+        Predicate that accepts a :class:`LabelledSample` and returns True
+        only when every configured constraint matches.
     """
     top_level = {"language", "specialty", "user_persona"}
 
@@ -163,7 +210,16 @@ def metadata_filter(**conditions: Any) -> Callable[[LabelledSample], bool]:
 
 
 def specialty_filter(*specialties: str) -> Callable[[LabelledSample], bool]:
-    """Keep samples whose ``specialty`` field is in *specialties*."""
+    """Keep samples whose ``specialty`` field is in *specialties*.
+
+    Args:
+        *specialties: One or more specialty names to match against the
+            ``LabelledSample.specialty`` attribute.
+
+    Returns:
+        Predicate that accepts a :class:`LabelledSample` and returns True
+        when its specialty is in the requested set.
+    """
     wanted = set(specialties)
 
     def predicate(sample: LabelledSample) -> bool:
@@ -183,6 +239,17 @@ def gold_score(verdicts: pd.DataFrame) -> float:
     Rebuilds (rubrics, verdicts) lists per (prompt_id, sample_k) group
     and delegates to ``calculate_score`` + ``clip_score`` so meta-eval
     cannot drift from production scoring.
+
+    Args:
+        verdicts: DataFrame of verdict rows filtered to
+            ``gold_source == "ideal_completion"``. Must contain
+            ``prompt_id``, ``sample_k``, ``criterion``, ``points`` and
+            ``observed_met`` columns.
+
+    Returns:
+        Mean clipped score in ``(-inf, 1.0]`` across every
+        (prompt_id, sample_k) group. ``0.0`` when ``verdicts`` is empty
+        or every group had ``calculate_score`` return ``None``.
     """
     if len(verdicts) == 0:
         return 0.0
@@ -232,7 +299,16 @@ def _majority_vote_columns(df: pd.DataFrame) -> tuple[list[bool], list[bool]]:
     description="Inter-rater agreement vs expected verdicts",
 )
 def cohens_kappa(verdicts: pd.DataFrame) -> float:
-    """Cohen's kappa between judge majority vote and expected verdicts."""
+    """Cohen's kappa between judge majority vote and expected verdicts.
+
+    Args:
+        verdicts: DataFrame of verdict rows. Collapsed to per-(prompt_id,
+            rubric_key, gold_source) majority votes before scoring.
+
+    Returns:
+        Cohen's kappa in ``[-1.0, 1.0]``. Returns ``0.0`` when
+        ``verdicts`` is empty.
+    """
     from sklearn.metrics import cohen_kappa_score
 
     observed, expected = _majority_vote_columns(verdicts)
@@ -251,6 +327,15 @@ def krippendorff_alpha(verdicts: pd.DataFrame) -> float:
 
     α = 1 - D_o / D_e where D_o is the observed disagreement (Hamming
     distance) and D_e is the expected disagreement under chance.
+
+    Args:
+        verdicts: DataFrame of verdict rows. Collapsed to per-(prompt_id,
+            rubric_key, gold_source) majority votes before scoring.
+
+    Returns:
+        Alpha in ``(-inf, 1.0]``. Returns ``0.0`` when ``verdicts`` is
+        empty; returns ``1.0`` when observed and expected agree perfectly
+        even if the expected-disagreement denominator is zero.
     """
     observed, expected = _majority_vote_columns(verdicts)
     n = len(observed)
@@ -271,7 +356,18 @@ def krippendorff_alpha(verdicts: pd.DataFrame) -> float:
     description="Bootstrap SE of agreement at k = 1, 3, 5, 7",
 )
 def calibration_curve(verdicts: pd.DataFrame) -> dict[int, float]:
-    """Bootstrap SE of per-(prompt_id, rubric_key) agreement at k in {1,3,5,7}."""
+    """Bootstrap SE of per-(prompt_id, rubric_key) agreement at k in {1,3,5,7}.
+
+    Args:
+        verdicts: DataFrame of verdict rows. Filtered to ``sample_k <= k``
+            for each ``k`` in ``{1, 3, 5, 7}`` and collapsed to per-rubric
+            majority votes before computing agreement.
+
+    Returns:
+        Mapping of ``k`` to the standard error of per-rubric agreement
+        at that k. Empty when ``verdicts`` is empty or every k had fewer
+        than two agreement observations.
+    """
     import math
 
     if len(verdicts) == 0:
@@ -303,7 +399,17 @@ def calibration_curve(verdicts: pd.DataFrame) -> dict[int, float]:
     description="tp/fp/tn/fn per dimension (e.g. axis name)",
 )
 def per_dimension_confusion(verdicts: pd.DataFrame) -> dict[str, dict[str, int]]:
-    """Group by ``dimension`` column and return tp/fp/tn/fn per dimension."""
+    """Group by ``dimension`` column and return tp/fp/tn/fn per dimension.
+
+    Args:
+        verdicts: DataFrame of verdict rows. Must contain ``dimension``,
+            ``observed_met`` and ``expected_met`` columns. Null
+            ``dimension`` values are bucketed under ``"unspecified"``.
+
+    Returns:
+        Mapping of dimension name to a ``{"tp", "fp", "tn", "fn"}``
+        confusion-count dict. Empty when ``verdicts`` is empty.
+    """
     result: dict[str, dict[str, int]] = {}
     if len(verdicts) == 0:
         return result
@@ -324,7 +430,17 @@ def per_dimension_confusion(verdicts: pd.DataFrame) -> dict[str, dict[str, int]]
     description="Accuracy on example_meets / example_fails pairs",
 )
 def adversarial_accuracy(verdicts: pd.DataFrame) -> float:
-    """Plain accuracy: fraction of rows where observed_met == expected_met."""
+    """Plain accuracy: fraction of rows where observed_met == expected_met.
+
+    Args:
+        verdicts: DataFrame of verdict rows filtered to adversarial
+            ``example_meets`` / ``example_fails`` gold sources. Must
+            contain ``observed_met`` and ``expected_met`` columns.
+
+    Returns:
+        Accuracy in ``[0.0, 1.0]``. Returns ``0.0`` when ``verdicts`` is
+        empty.
+    """
     if len(verdicts) == 0:
         return 0.0
     matches = (verdicts["observed_met"] == verdicts["expected_met"]).sum()
@@ -337,7 +453,18 @@ def adversarial_accuracy(verdicts: pd.DataFrame) -> float:
     description="Precision / recall / F1 on adversarial pairs",
 )
 def adversarial_prf1(verdicts: pd.DataFrame) -> dict[str, float]:
-    """Precision / recall / F1 / support via sklearn."""
+    """Precision / recall / F1 / support via sklearn.
+
+    Args:
+        verdicts: DataFrame of verdict rows filtered to adversarial
+            ``example_meets`` / ``example_fails`` gold sources. Must
+            contain ``observed_met`` and ``expected_met`` columns.
+
+    Returns:
+        Dict with ``precision``, ``recall``, ``f1`` and ``support`` float
+        entries. All zero when ``verdicts`` is empty; ``support`` falls
+        back to ``len(verdicts)`` when sklearn returns ``None``.
+    """
     from sklearn.metrics import precision_recall_fscore_support
 
     if len(verdicts) == 0:
@@ -362,7 +489,17 @@ def adversarial_prf1(verdicts: pd.DataFrame) -> dict[str, float]:
     description="Per-criterion accuracy / precision / recall / F1",
 )
 def per_criterion_metrics(verdicts: pd.DataFrame) -> dict[str, dict[str, float]]:
-    """Group by rubric_key and return accuracy/precision/recall/f1 per criterion."""
+    """Group by rubric_key and return accuracy/precision/recall/f1 per criterion.
+
+    Args:
+        verdicts: DataFrame of verdict rows. Must contain ``rubric_key``,
+            ``observed_met`` and ``expected_met`` columns.
+
+    Returns:
+        Mapping of ``rubric_key`` to a dict with ``accuracy``,
+        ``precision``, ``recall`` and ``f1`` float entries. Empty when
+        ``verdicts`` is empty.
+    """
     from sklearn.metrics import precision_recall_fscore_support
 
     result: dict[str, dict[str, float]] = {}
@@ -428,7 +565,13 @@ class FakeJudge(JudgeGrader):
 
 
 def demo_labelled_set() -> list[LabelledSample]:
-    """Hand-built 3-sample labelled set for examples and smoke tests."""
+    """Hand-built 3-sample labelled set for examples and smoke tests.
+
+    Returns:
+        A list of three :class:`LabelledSample` instances with varied
+        rubric shapes (positive only, penalty, adversarial examples) for
+        offline tests, documentation snippets and demos.
+    """
     return [
         LabelledSample(
             prompt_id="demo_1",
