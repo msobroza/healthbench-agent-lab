@@ -37,10 +37,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
     - `insights.py` — 8 cross-cutting insight analyses (registered under `"insights"`)
     - `visualization.py` — 8 matplotlib visualizations (registered under `"visualization"`)
   - `llm_eval/` — LLM-as-judge evaluation (provider-agnostic, → domain)
-    - `config_grader.py` — `JudgeConfig` (pydantic-settings `BaseSettings`), `EvalMode` enum
-    - `grader.py` — `LLMJudgeGrader` (→ `JudgeGrader`), `create_judge()` factory, `GRADER_TEMPLATE`, `grade_sample()`, `format_conversation()`, `parse_grading_response()`, `load_grader_prompt()`
-    - `llm_clients.py` — `OpenAIChatClient`, `GeminiChatClient` (both → `LLMClient`), `create_llm_client()` factory
     - `runner.py` — `EvalRunner` (depends on `JudgeGrader` and `AgentPipeline` abstractions)
+    - `grading/` — prompt template loader + LLM-backed judge implementation
+      - `config.py` — `JudgeConfig` (pydantic-settings `BaseSettings`), `EvalMode` enum
+      - `judge.py` — `LLMJudgeGrader` (→ `JudgeGrader`), `create_judge()` factory, `GRADER_TEMPLATE`, `grade_sample()`, `format_conversation()`, `parse_grading_response()`, `load_grader_prompt()`
+    - `clients/` — provider-specific `LLMClient` implementations and factory
+      - `openai.py` — `OpenAIChatClient` (→ `LLMClient`)
+      - `gemini.py` — `GeminiChatClient` (→ `LLMClient`)
+      - `__init__.py` — `create_llm_client()` factory
+    - `cache/` — on-disk verdict cache and cached-judge wrapper
+      - `store.py` — `VerdictCache` (thread-safe sha256 loose-object store), `make_verdict_cache_key()` (pure free function)
+      - `cached_judge.py` — `CachedJudgeGrader` (→ `JudgeGrader`, wraps any grader with cache reads/writes)
+    - `cli/` — console script entry points
+      - `track_experiment.py` — `track-experiment` wrapper that delegates to `evaluation.experiment_tracker._cli`
+      - `meta_eval.py` — `meta-evaluate-judge` CLI for `run_meta_eval`
+    - `meta_eval/` — judge meta-evaluation registry, metrics, runner, and result view
+      - `registry.py` — `MetricLevel`, `MetricSpec`, `@register_meta_metric`, `get_meta_metric`, `registered_meta_metrics`
+      - `metrics.py` — registered metric functions (`gold_score`, `cohens_kappa`, `krippendorff_alpha`, `calibration_curve`, `per_dimension_confusion`, `adversarial_accuracy`, `adversarial_prf1`, `per_criterion_metrics`)
+      - `filters.py` — `axis_filter`, `metadata_filter`, `specialty_filter`, `EmptyFilterError`, `AXIS_TAG_PREFIX`
+      - `fixtures.py` — `FakeJudge`, `demo_labelled_set`
+      - `verdicts.py` — verdict-row builder helpers shared across runner/metrics
+      - `runner.py` — `run_meta_eval` orchestrator (caching, parquet emission, MetricResultsView wrapping)
+      - `api.py` — `meta_evaluate` high-level wrapper, `_load_subset_for_meta_eval`, `_build_judge_for_meta_eval`
+      - `results_view.py` — `MetricResultsView` (REPL ergonomics around `MetricResults`)
+      - `results_io.py` — `save_results`, `load_results` free functions
+      - `results_plots.py` — `plot_calibration_curve`, `plot_dimension_confusion` free functions
   - `prompt_optimization/` — automatic prompt engineering (→ domain, agent, llm_eval). **Domain-agnostic**: any vertical-specific text (mutate/critique/refine templates, thinking styles) lives in YAML under `prompts/prompt_optimization/`, never in Python.
     - `optimizer.py` — `PromptOptimizer` ABC, `OptimizationResult`, `TrialRecord` (frozen dataclasses), `_TrialBudget` + `_BudgetExceededError` (shared cache/history/best/budget helper for adapters), `require_optional()` (optional-dep guard)
     - `config.py` — `BaseOptimizationConfig` (pydantic-settings, prefix `OPTIM_`, `dump_safe()`), `DSPyConfig`, `TextGradConfig`, `CritiqueRefineConfig` (with `prompt_path` field pointing to a YAML template file)
@@ -466,13 +487,15 @@ See `AGENT_DECISIONS.md` for exhaustive pros/cons and design rationale for each 
 
 ### Subtask 3.1 — Grader Module
 - `src/healthbench_agent/llm_eval/__init__.py`
-- `src/healthbench_agent/llm_eval/grader.py` — `GRADER_TEMPLATE`, `grade_sample()`, `format_conversation()`, `parse_grading_response()`, `load_grader_prompt()`
+- `src/healthbench_agent/llm_eval/grading/judge.py` — `GRADER_TEMPLATE`, `grade_sample()`, `format_conversation()`, `parse_grading_response()`, `load_grader_prompt()`
 - `prompts/llm_v1_llm_grader.yaml` — verbatim simple-evals grader template with Jinja2 placeholders
 - Tests: template rendering, response parsing, grade_sample with mocked sampler
 
 ### Subtask 3.2 — LLM Clients
-- `src/healthbench_agent/llm_eval/llm_clients.py` — `OpenAIChatClient`, `GeminiChatClient`
-- `src/healthbench_agent/llm_eval/config.py` — `JudgeConfig` (pydantic-settings)
+- `src/healthbench_agent/llm_eval/clients/openai.py` — `OpenAIChatClient`
+- `src/healthbench_agent/llm_eval/clients/gemini.py` — `GeminiChatClient`
+- `src/healthbench_agent/llm_eval/clients/__init__.py` — `create_llm_client()` factory
+- `src/healthbench_agent/llm_eval/grading/config.py` — `JudgeConfig` (pydantic-settings)
 - Tests: both clients mocked, JudgeConfig validation, env var override
 
 ### Subtask 3.3 — Eval Runner

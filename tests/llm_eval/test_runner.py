@@ -15,7 +15,7 @@ from healthbench_agent.domain.conversation import MessageList
 from healthbench_agent.domain.evaluation import CriterionVerdict
 from healthbench_agent.domain.judge import JudgeGrader
 from healthbench_agent.domain.rubric import RubricItem
-from healthbench_agent.llm_eval.config_grader import EvalMode, JudgeConfig
+from healthbench_agent.llm_eval.grading.config import EvalMode, JudgeConfig
 from healthbench_agent.llm_eval.runner import EvalRunner, _compute_tag_metrics
 from tests.conftest import make_sample
 

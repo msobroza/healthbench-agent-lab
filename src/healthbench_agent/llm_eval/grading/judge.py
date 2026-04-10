@@ -27,8 +27,7 @@ from healthbench_agent.domain.judge import JudgeGrader
 from healthbench_agent.domain.llm_client import LLMClient
 from healthbench_agent.domain.rubric import RubricItem
 
-from .config_grader import JudgeConfig
-from .llm_clients import create_llm_client
+from .config import JudgeConfig
 
 # ---------------------------------------------------------------------------
 # Grader template — verbatim from simple-evals healthbench_eval.py
@@ -296,6 +295,8 @@ def create_judge(config: JudgeConfig) -> LLMJudgeGrader:
     Returns:
         A configured LLMJudgeGrader ready to grade samples.
     """
+    from ..clients import create_llm_client
+
     llm_client = create_llm_client(config)
     template = load_grader_prompt(config.prompt_path)[0]
     return LLMJudgeGrader(

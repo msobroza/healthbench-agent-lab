@@ -32,8 +32,8 @@ import mlflow
 
 from healthbench_agent.agent import RootAgentPipelineConfig
 from healthbench_agent.domain.experiment import RunMetrics, RunParams
-from healthbench_agent.llm_eval.config_grader import JudgeConfig
-from healthbench_agent.llm_eval.grader import load_grader_prompt
+from healthbench_agent.llm_eval.grading.config import JudgeConfig
+from healthbench_agent.llm_eval.grading.judge import load_grader_prompt
 
 logger = logging.getLogger(__name__)
 

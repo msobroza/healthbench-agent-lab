@@ -1,4 +1,4 @@
-"""Tests for healthbench_agent.llm_eval.llm_clients — mocked LLMClient implementations.
+"""Tests for healthbench_agent.llm_eval.clients — mocked LLMClient implementations.
 
 Tests OpenAIChatClient, GeminiChatClient, and create_llm_client factory
 with mocked SDK clients. No network calls.
@@ -10,12 +10,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from healthbench_agent.llm_eval.config_grader import EvalMode, JudgeConfig
-from healthbench_agent.llm_eval.llm_clients import (
+from healthbench_agent.llm_eval.clients import (
     GeminiChatClient,
     OpenAIChatClient,
     create_llm_client,
 )
+from healthbench_agent.llm_eval.grading.config import EvalMode, JudgeConfig
 
 # ---------------------------------------------------------------------------
 # OpenAIChatClient tests

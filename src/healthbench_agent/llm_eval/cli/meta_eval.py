@@ -16,13 +16,13 @@ from typing import Any
 
 from healthbench_agent.domain.meta_evaluation import LabelledSample
 from healthbench_agent.domain.rubric import RubricItem
+from healthbench_agent.llm_eval.cache import VerdictCache
 from healthbench_agent.llm_eval.meta_eval import (
     EmptyFilterError,
     axis_filter,
     metadata_filter,
     run_meta_eval,
 )
-from healthbench_agent.llm_eval.verdict_cache import VerdictCache
 
 logger = logging.getLogger(__name__)
 

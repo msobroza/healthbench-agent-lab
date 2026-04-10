@@ -1,4 +1,4 @@
-"""Tests for healthbench_agent.llm_eval.grader — grading logic.
+"""Tests for healthbench_agent.llm_eval.grading.judge — grading logic.
 
 Tests template rendering, response parsing, conversation formatting,
 LLMJudgeGrader, create_judge, and grade_sample with mocked LLM clients.
@@ -15,7 +15,7 @@ from healthbench_agent.domain.conversation import MessageList
 from healthbench_agent.domain.judge import JudgeGrader
 from healthbench_agent.domain.llm_client import LLMResponse
 from healthbench_agent.domain.rubric import RubricItem
-from healthbench_agent.llm_eval.grader import (
+from healthbench_agent.llm_eval.grading.judge import (
     GRADER_TEMPLATE,
     LLMJudgeGrader,
     create_judge,
@@ -344,7 +344,7 @@ class TestCreateJudge:
     """Tests for the create_judge() factory function."""
 
     def test_returns_llm_judge_grader(self):
-        from healthbench_agent.llm_eval.config_grader import JudgeConfig
+        from healthbench_agent.llm_eval.grading.config import JudgeConfig
 
         config = JudgeConfig(prompt_path="prompts/llm_grader/v1_llm_grader.yaml")
         judge = create_judge(config)
@@ -352,7 +352,7 @@ class TestCreateJudge:
         assert isinstance(judge, JudgeGrader)
 
     def test_template_loaded_from_config_path(self):
-        from healthbench_agent.llm_eval.config_grader import JudgeConfig
+        from healthbench_agent.llm_eval.grading.config import JudgeConfig
 
         config = JudgeConfig(prompt_path="prompts/llm_grader/v1_llm_grader.yaml")
         judge = create_judge(config)
@@ -362,7 +362,7 @@ class TestCreateJudge:
         assert "test item" in rendered
 
     def test_grader_max_workers_passed_through(self):
-        from healthbench_agent.llm_eval.config_grader import JudgeConfig
+        from healthbench_agent.llm_eval.grading.config import JudgeConfig
 
         config = JudgeConfig(
             prompt_path="prompts/llm_grader/v1_llm_grader.yaml",

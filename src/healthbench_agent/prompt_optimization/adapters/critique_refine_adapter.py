@@ -99,8 +99,8 @@ def create_llm_client(config: CritiqueRefineConfig) -> LLMClient:
     Returns:
         An LLMClient instance configured for the meta-model.
     """
-    from healthbench_agent.llm_eval.config_grader import JudgeConfig
-    from healthbench_agent.llm_eval.llm_clients import create_llm_client as _create_llm_client
+    from healthbench_agent.llm_eval.clients import create_llm_client as _create_llm_client
+    from healthbench_agent.llm_eval.grading.config import JudgeConfig
 
     judge_config = JudgeConfig(
         provider=config.meta_provider,

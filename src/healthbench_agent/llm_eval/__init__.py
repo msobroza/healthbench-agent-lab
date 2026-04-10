@@ -21,9 +21,12 @@ Public API:
     - VerdictCache: Thread-safe on-disk verdict cache.
 """
 
-from .config_grader import EvalMode, JudgeConfig
-from .grader import (
+from .cache import CachedJudgeGrader, VerdictCache
+from .clients import create_llm_client
+from .grading import (
     GRADER_TEMPLATE,
+    EvalMode,
+    JudgeConfig,
     LLMJudgeGrader,
     create_judge,
     format_conversation,
@@ -31,12 +34,12 @@ from .grader import (
     load_grader_prompt,
     parse_grading_response,
 )
-from .llm_clients import create_llm_client
 from .meta_eval import (
     AXIS_TAG_PREFIX,
     EmptyFilterError,
     FakeJudge,
     MetricLevel,
+    MetricResultsView,
     MetricSpec,
     axis_filter,
     demo_labelled_set,
@@ -48,9 +51,7 @@ from .meta_eval import (
     run_meta_eval,
     specialty_filter,
 )
-from .meta_eval_results import MetricResultsView
 from .runner import EvalRunner
-from .verdict_cache import CachedJudgeGrader, VerdictCache
 
 __all__ = [
     "AXIS_TAG_PREFIX",
