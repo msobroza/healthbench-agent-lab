@@ -103,3 +103,14 @@ class TestPromptOptimizerABC:
         optimizer = DummyOptimizer(BaseOptimizationConfig())
         result = optimizer.optimize("prompt", None, None)
         assert result.optimized_prompt == "prompt"
+
+
+def test_end_to_end_metric_satisfies_optimization_metric_protocol():
+    from healthbench_agent.prompt_optimization.optimizer import OptimizationMetric
+
+    class _Concrete:
+        def __call__(self, prompt: str) -> float:
+            return 0.5
+
+    obj: OptimizationMetric = _Concrete()
+    assert obj("hi") == 0.5
