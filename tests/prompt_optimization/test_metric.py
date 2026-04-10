@@ -405,3 +405,49 @@ class TestEndToEndMetricWithTargetAgent:
         assert patched.instruction_override == "New root prompt."
         # Original not mutated.
         assert config.instruction_override is None
+
+
+def test_judge_agreement_metric_returns_scalar_from_meta_eval():
+    from typing import Any
+
+    from healthbench_agent.llm_eval.meta_eval import FakeJudge, demo_labelled_set
+    from healthbench_agent.prompt_optimization.metric import JudgeAgreementMetric
+
+    samples = demo_labelled_set()
+    perfect = {c: m for s in samples for c, m in s.expected.items()}
+
+    captured: dict[str, Any] = {}
+
+    class _CapturingMetric(JudgeAgreementMetric):
+        def _build_judge(self, candidate_template: str):  # type: ignore[override]
+            captured["template"] = candidate_template
+            return FakeJudge(perfect), "fake@1", "sha"
+
+    metric = _CapturingMetric(
+        judge_config=None,  # bypassed by override
+        labelled=samples,
+        dimension_extractor=lambda r: r.category,
+        n_samples=1,
+        fitness="gold_score",
+    )
+    score = metric("CANDIDATE TEMPLATE")
+    assert isinstance(score, float)
+    assert captured["template"] == "CANDIDATE TEMPLATE"
+
+
+def test_end_to_end_metric_accepts_filter_kwargs():
+    """Just verify the kwargs reach the constructor; behaviour tested via integration."""
+    import inspect
+
+    from healthbench_agent.prompt_optimization.metric import EndToEndMetric
+
+    sig = inspect.signature(EndToEndMetric.__init__)
+    assert "sample_filter" in sig.parameters
+    assert "rubric_filter" in sig.parameters
+
+
+def test_empty_filter_error_re_exported():
+    from healthbench_agent.llm_eval.meta_eval import EmptyFilterError as RootError
+    from healthbench_agent.prompt_optimization.metric import EmptyFilterError
+
+    assert EmptyFilterError is RootError
