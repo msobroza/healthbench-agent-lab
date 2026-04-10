@@ -50,6 +50,7 @@ optimization = [
 download-healthbench = "healthbench_agent.dataset.loader:_cli"
 track-experiment = "healthbench_agent.llm_eval.cli.track_experiment:main"
 optimize-prompt = "healthbench_agent.prompt_optimization.cli:main"
+meta-evaluate-judge = "healthbench_agent.llm_eval.cli.meta_eval:main"
 
 [build-system]
 requires = ["uv_build>=0.5.15"]
