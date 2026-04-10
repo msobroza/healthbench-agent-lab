@@ -131,7 +131,7 @@ uv run optimize-prompt --optimizer critique_refine \
 ```bash
 # Default run on the consensus subset, k=7 calibration passes
 uv run meta-evaluate-judge run \
-    --judge-config config/judges/openai_gpt41.yaml \
+    --judge-config config/judges/openai.yaml \
     --sample-size 100
 
 # Show all registered meta-evaluation metrics
@@ -148,7 +148,7 @@ uv run meta-evaluate-judge compare runs/openai/ runs/gemini/
 
 # Optimize the judge prompt itself (slice-restricted)
 uv run optimize-prompt --prompt-domain judge \
-    --judge-config config/judges/openai_gpt41.yaml \
+    --judge-config config/judges/openai.yaml \
     --optimizer critique_refine --rubric-axis accuracy
 ```
 
