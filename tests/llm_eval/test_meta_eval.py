@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pandas as pd
 import pytest
 
 from healthbench_agent.domain.evaluation import CriterionVerdict
-from healthbench_agent.domain.meta_evaluation import LabelledSample
+from healthbench_agent.domain.meta_evaluation import LabelledSample, MetricResults
 from healthbench_agent.domain.rubric import RubricItem
 from healthbench_agent.llm_eval.meta_eval import (
     AXIS_TAG_PREFIX,
@@ -558,3 +560,53 @@ def test_meta_evaluate_with_fake_judge_returns_view(monkeypatch, tmp_path):
         output_dir=tmp_path,
     )
     assert view.results.scores
+
+
+def test_cli_run_dispatches_to_run_meta_eval(monkeypatch, tmp_path, capsys):
+    """CLI run subcommand should call run_meta_eval with parsed args."""
+    from healthbench_agent.llm_eval import cli_meta_eval
+
+    called: dict[str, Any] = {}
+
+    def fake_run(**kwargs):
+        called.update(kwargs)
+        results = MetricResults(
+            scores={"gold_score": 0.5},
+            n_samples_graded=1,
+            n_rubrics_graded=1,
+            judge_metadata={"judge_model": "fake"},
+        )
+        from healthbench_agent.llm_eval.meta_eval_results import MetricResultsView
+
+        return MetricResultsView(results=results)
+
+    monkeypatch.setattr("healthbench_agent.llm_eval.cli_meta_eval.run_meta_eval", fake_run)
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.cli_meta_eval._load_consensus_labelled",
+        lambda subset, sample_size, seed: (demo_labelled_set(), lambda r: r.category),
+    )
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.cli_meta_eval._build_judge_for_cli",
+        lambda config, temperature: (FakeJudge("always_met"), "fake@1", "sha"),
+    )
+
+    cli_meta_eval.main(
+        [
+            "run",
+            "--judge-config",
+            "fake.yaml",
+            "--sample-size",
+            "1",
+            "--n-samples",
+            "1",
+            "--no-cache",
+            "--no-mlflow",
+            "--no-progress",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+
+    assert called["n_samples"] == 1
+    captured = capsys.readouterr()
+    assert "gold_score" in captured.out
