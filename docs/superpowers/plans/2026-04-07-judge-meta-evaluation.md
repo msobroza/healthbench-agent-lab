@@ -12,6 +12,67 @@
 
 ---
 
+## Implementation Status (updated 2026-04-11)
+
+**Status:** All 29 tasks implemented on branch `feature/judge-meta-evaluation` across 54 commits. PR [msobroza/healthbench-agent-lab#9](https://github.com/msobroza/healthbench-agent-lab/pull/9) is open and ready for merge. Final test suite: **1050 passing, 97% total coverage**. The original `- [ ]` checkboxes in the task bodies below are left untouched so they remain a faithful record of the TDD plan as authored.
+
+### Task → commit map
+
+| Phase | Task | Landing commit(s) |
+|---|---|---|
+| 1 | 1. `LabelledSample` / `MetricResults` / `SCHEMA_VERSION` | `56c9a72`, `9fd4e01` |
+| 1 | 2. `RubricItem` optional SPEC.md fields | `d7f3935`, `95094cc` |
+| 1 | 3. `HealthBenchSample` inherits from `LabelledSample` | `1942792` |
+| 1 | 4. Audit positional `HealthBenchSample(...)` call sites | folded into `1942792` |
+| 2 | 5. `extract_ideal_completion_text` | `3bcc8b1` |
+| 3 | 6. `VerdictCache` | `055facc`, `8492c69` |
+| 3 | 7. `CachedJudgeGrader` proxy | `6832b79` |
+| 4 | 8. `meta_eval.py` registry + `MetricLevel` | `377094a` |
+| 4 | 9. `EmptyFilterError` + filter helpers | `480268f` |
+| 5 | 10. `gold_score` | `e04a2ed` |
+| 5 | 11. `cohens_kappa` + `krippendorff_alpha` | `821b8a0` |
+| 5 | 12. `calibration_curve` | `7f71ee9`, `4301d1d` |
+| 5 | 13. `per_dimension_confusion` | `d593ddc` |
+| 5 | 14. `adversarial_accuracy` / `adversarial_prf1` / `per_criterion_metrics` | `1e073d0`, `16de428` |
+| 6 | 15. `FakeJudge` + `demo_labelled_set` | `0de721c` |
+| 7 | 16. `run_meta_eval` | `86e9940`, `74d20c9` |
+| 8 | 17. `MetricResultsView` (repr/summary/IO) | `d4eb671`, `74827b8` |
+| 8 | 18. `compare()` + plot helpers | `38912eb`, `8e61094` |
+| 9 | 19. `meta_evaluate()` happy-path + re-exports | `fc35e14`, `4775160` |
+| 10 | 20. `cli_meta_eval.py` skeleton + `run` subcommand | `1cf3ad3`, `26357aa`, `5bb1c66` |
+| 10 | 21. `regenerate` / `compare` / `clear-cache` / `list-metrics` / `list-metadata-keys` | `1993c6c`, `4424790`, `11a11b2` |
+| 10 | 22. `--dry-run` + default-subcommand preprocessing | `6271e76`, `d22826d` |
+| 11 | 23. `OptimizationMetric` Protocol | `47910ac` |
+| 11 | 24. `JudgeAgreementMetric` + `EndToEndMetric` filters | `6dc54f4` |
+| 11 | 25. `--prompt-domain {agent,judge}` flag | `62eaebb`, `6ae014b` |
+| 12 | 26. Register `meta-evaluate-judge` console script + `tqdm` dep | `d7d7d27` |
+| 12 | 27. CLAUDE.md Project Layout update | `e3fd6d6`, `8d72aea` |
+| 12 | 28. `notebooks/04_judge_meta_evaluation.ipynb` | `c04a058`, `6e292f1` |
+| 13 | 29. Final lint/type/test/coverage pass | `79d1c2c`, `041713f` |
+
+### Deviations from the plan as originally written
+
+The following layout changes happened during implementation and are reflected in the real codebase, but the task bodies below still reference the original paths:
+
+- **`llm_eval/meta_eval.py` → `llm_eval/meta_eval/` subpackage** (commit `076f82a`). The single-module design from Tasks 8–19 was split into `api.py`, `filters.py`, `fixtures.py`, `metrics.py`, `registry.py`, `runner.py`, `verdicts.py`, `results_view.py`, `results_io.py`, `results_plots.py` once the module crossed the maintainability threshold. Public re-exports on `healthbench_agent.llm_eval.meta_eval` are unchanged — consumers import the same symbols.
+- **`llm_eval/meta_eval_results.py` → three modules** inside `llm_eval/meta_eval/`: `results_view.py` (`MetricResultsView`), `results_io.py` (`save_results`/`load_results` free functions), `results_plots.py` (plotting helpers). Splitting out IO and plots keeps `results_view.py` free of matplotlib/pyarrow imports.
+- **`llm_eval/verdict_cache.py` → `llm_eval/cache/` subpackage** (commit `076f82a`): `cache/store.py` owns `VerdictCache`, `cache/cached_judge.py` owns `CachedJudgeGrader`.
+- **`llm_eval/cli_meta_eval.py` → `llm_eval/cli/meta_eval.py`** (commit `076f82a`), alongside `cli/track_experiment.py`. Console-script entry points moved into a `cli/` subpackage.
+- **`Sampler` → `LLMClient` rename** (commit `d0a14ea`): The `SamplerBase`/`OpenAIChatSampler`/`GeminiChatSampler` family was renamed to `LLMClient`/`OpenAIChatClient`/`GeminiChatClient` mid-implementation and factored into `llm_eval/clients/`. This rename touches Tasks 6–16 examples that use `SamplerBase` — the real code uses `LLMClient`.
+- **`llm_eval/grading/` subpackage** (commit `076f82a`): `grader.py` + `config_grader.py` were split into `grading/judge.py` + `grading/config.py`.
+- **Task 29 coverage floor raised from 80% → 95%** (commit `041713f`). CLAUDE.md's testing section now mandates 95% per module; all branch-new modules are at 100% and pre-existing sub-95% modules (`agent/adapters/adk_adapter.py`, `agent/prompt.py`, `analysis/utils.py`, `llm_eval/cli/track_experiment.py`, `llm_eval/clients/*`, `llm_eval/grading/config.py`, `prompt_optimization/cli.py`, `prompt_optimization/adapters/dspy_adapter.py`) are documented as out-of-scope pre-existing gaps.
+- **Extra in-flight fixups** that were not separate tasks but landed on the branch during implementation: `4775160` (4 code-review findings on the meta-evaluation feature), `74d20c9` (cache safety / pyarrow / tqdm import hardening), `8e61094` (JSON-roundtripped calibration keys), `8492c69` (atomic cache writes), `9fd4e01`/`95094cc` (ruff-format follow-ups), `4301d1d` (calibration SE handling for n<2), and `16de428` (stronger adversarial test assertions).
+
+### Where to continue
+
+All planned work is landed and pushed. Remaining activity for this branch:
+
+1. **Address code-review comments on PR #9** (posted 2026-04-11, commit `041713f`): four test-quality findings — private-helper testing in `test_judge_agreement_metric_default_build_judge_constructs_llm_judge`, tautological `xdata == sorted(xdata)` in `test_plot_calibration_curve_falls_back_to_string_sort_on_mixed_keys`, weak `>= 2` count in `test_cli_list_metadata_keys_prints_none_when_metadata_empty`, and log-string assertion in `test_cli_regenerate_skips_level_with_no_matching_rows`. See the review comment on PR #9 for specific guidance.
+2. **Final merge** of PR #9 into `main` once the four review findings are resolved.
+3. **Follow-up work** tracked in the Out of Scope section at the bottom of this plan (Anthropic sampler, hand-labelled gold set, noise-floor hook, judge batch mode, rubric optimization) remains for future issues.
+
+---
+
 ## File Structure
 
 | File | Action | Responsibility |
