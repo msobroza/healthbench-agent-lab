@@ -388,8 +388,8 @@ def main(argv: list[str] | None = None) -> None:
             when None.
 
     Raises:
-        SystemExit: Exits with code 1 when no subcommand is provided, or
-            code 2 when the selected run's filters produced an empty set.
+        SystemExit: Exits with code 2 when the selected run's filters
+            produced an empty set, or when argparse rejects the input.
     """
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     parser = argparse.ArgumentParser(prog="meta-evaluate-judge")
@@ -410,11 +410,10 @@ def main(argv: list[str] | None = None) -> None:
         "clear-cache": _cmd_clear_cache,
     }
 
-    handler = handlers.get(args.command or "")
-    if handler is None:
-        parser.print_help()
-        raise SystemExit(1)
-    handler(args)
+    # Preprocessing above guarantees raw is non-empty and doesn't start with
+    # "-", so argparse either binds args.command to one of the valid choices
+    # or raises SystemExit(2) before we reach here — the dict lookup is safe.
+    handlers[args.command](args)
 
 
 if __name__ == "__main__":  # pragma: no cover

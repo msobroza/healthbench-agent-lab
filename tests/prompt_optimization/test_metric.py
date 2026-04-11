@@ -451,3 +451,144 @@ def test_empty_filter_error_re_exported():
     from healthbench_agent.prompt_optimization.metric import EmptyFilterError
 
     assert EmptyFilterError is RootError
+
+
+def test_end_to_end_metric_sample_filter_rejecting_all_raises_empty_filter():
+    """An over-aggressive sample_filter must surface as EmptyFilterError."""
+    from healthbench_agent.prompt_optimization.metric import EmptyFilterError
+
+    sample = _make_sample()
+    judge = MagicMock()
+    config = _make_config()
+    metric = EndToEndMetric(
+        agent_config=config,
+        judge=judge,
+        samples=[sample],
+        sample_filter=lambda s: False,
+    )
+    with pytest.raises(EmptyFilterError):
+        metric("candidate")
+
+
+def test_end_to_end_metric_rubric_filter_keeps_subset_and_evaluates():
+    """A rubric_filter that keeps some rubrics clones samples and runs the eval."""
+    sample = HealthBenchSample(
+        prompt_id="multi",
+        prompt=[{"role": "user", "content": "?"}],
+        rubrics=[
+            RubricItem(criterion="keep", points=1.0, tags=("accuracy",)),
+            RubricItem(criterion="drop", points=1.0, tags=("emergency",)),
+        ],
+        example_tags=["theme:general"],
+    )
+    judge = MagicMock()
+    judge.grade.return_value = [CriterionVerdict(criterion="keep", criteria_met=True)]
+    pipeline = _make_pipeline("ok")
+    config = _make_config()
+    with patch(
+        "healthbench_agent.prompt_optimization.metric.create_pipeline",
+        return_value=pipeline,
+    ):
+        metric = EndToEndMetric(
+            agent_config=config,
+            judge=judge,
+            samples=[sample],
+            rubric_filter=lambda r: r.criterion == "keep",
+        )
+        score = metric("candidate")
+    # Judge should only see the surviving "keep" rubric, not "drop".
+    graded_rubrics = judge.grade.call_args.args[1]
+    assert [r.criterion for r in graded_rubrics] == ["keep"]
+    assert score == pytest.approx(1.0)
+
+
+def test_end_to_end_metric_rubric_filter_drops_all_raises_empty_filter():
+    """A rubric_filter that removes every rubric from every sample must raise."""
+    from healthbench_agent.prompt_optimization.metric import EmptyFilterError
+
+    sample = _make_sample()
+    judge = MagicMock()
+    config = _make_config()
+    metric = EndToEndMetric(
+        agent_config=config,
+        judge=judge,
+        samples=[sample],
+        rubric_filter=lambda r: False,
+    )
+    with pytest.raises(EmptyFilterError):
+        metric("candidate")
+
+
+def test_judge_agreement_metric_default_build_judge_constructs_llm_judge(monkeypatch):
+    """The default _build_judge clones the config, wires a new template, and
+    returns (judge, fingerprint, sha). Exercises lines 356-372."""
+    import hashlib
+
+    from healthbench_agent.llm_eval.grading.config import JudgeConfig
+    from healthbench_agent.llm_eval.meta_eval import demo_labelled_set
+    from healthbench_agent.prompt_optimization.metric import JudgeAgreementMetric
+
+    created: dict[str, object] = {}
+
+    def fake_create_llm_client(cfg):
+        created["client_config"] = cfg
+        return MagicMock(name="llm_client")
+
+    captured_templates: list[str] = []
+
+    def fake_make_template(template):
+        captured_templates.append(template)
+        return MagicMock(name=f"template:{template}")
+
+    # LLMJudgeGrader is constructed with llm_client + template; record args.
+    construction: dict[str, object] = {}
+
+    class FakeLLMJudgeGrader:
+        def __init__(self, llm_client, template, max_workers):
+            construction["llm_client"] = llm_client
+            construction["template"] = template
+            construction["max_workers"] = max_workers
+
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.clients.create_llm_client",
+        fake_create_llm_client,
+    )
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.grading.judge._make_template",
+        fake_make_template,
+    )
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.grading.judge.LLMJudgeGrader",
+        FakeLLMJudgeGrader,
+    )
+
+    cfg = JudgeConfig(
+        provider="openai",
+        model="gpt-4.1",
+        temperature=0.0,
+        prompt_path="prompts/llm_grader/v1_llm_grader.yaml",
+    )
+    metric = JudgeAgreementMetric(
+        judge_config=cfg,
+        labelled=demo_labelled_set(),
+        dimension_extractor=lambda r: r.category,
+    )
+    judge, fingerprint, prompt_sha = metric._build_judge("CANDIDATE")
+    assert isinstance(judge, FakeLLMJudgeGrader)
+    assert fingerprint == "openai/gpt-4.1@0.0"
+    assert prompt_sha == hashlib.sha256(b"CANDIDATE").hexdigest()
+    assert captured_templates == ["CANDIDATE"]
+
+
+def test_judge_agreement_metric_default_build_judge_requires_config():
+    """When judge_config is None and _build_judge isn't overridden, raise."""
+    from healthbench_agent.llm_eval.meta_eval import demo_labelled_set
+    from healthbench_agent.prompt_optimization.metric import JudgeAgreementMetric
+
+    metric = JudgeAgreementMetric(
+        judge_config=None,
+        labelled=demo_labelled_set(),
+        dimension_extractor=lambda r: r.category,
+    )
+    with pytest.raises(RuntimeError, match="judge_config is None"):
+        metric._build_judge("candidate")
