@@ -53,7 +53,7 @@ This spec adds a small, dataset-agnostic meta-evaluation module that grades a fi
 | Happy-path API | Top-level `meta_evaluate(judge_config, ...)` function that wires dataset → judge → runner → MetricResultsView in one call | sklearn `cross_val_score` analog: most users just want "give me the numbers", not "build the runner yourself". Power users still get `run_meta_eval` for full control |
 | MetricResults UX | Two-class split: lightweight `MetricResults(scores, n_samples_graded, ..., schema_version)` dataclass in `domain/` (json round-trip only); `MetricResultsView` wrapper in `llm_eval/meta_eval_results.py` adding `__repr__`, `summary()`, `_repr_html_`, `to_pandas`, `to_markdown`, `load()`, `verdicts()`, `compare(other)`, `plot_calibration_curve()`, `plot_dimension_confusion()` | Following sklearn / transformers conventions: results object should be inspectable in the REPL, render nicely in Jupyter, save/load round-trip, and produce its own plots — *without* dragging matplotlib/pandas/pyarrow into the domain layer |
 | Saving optimized judge prompts | `prompts/llm_grader/v2_optimized.yaml` written in the existing `{version, template, parent_version, parent_prompt_path, rationale}` shape that `load_grader_prompt` reads. No `prompt_key` because the grader YAML is single-template, not multi-key | Mirrors the existing agent-side save path (`prompts/{agent_dir}/v2_optimized.yaml`) but follows the grader YAML schema so the file can be passed straight back through `JudgeConfig.prompt_path` without conversion |
-| Test/demo helpers | `FakeJudge` (deterministic strategies) and `demo_labelled_set()` (3 hand-built samples with gold + adversarial pairs) ship in the library, not just in tests | Lets users try the API end-to-end with no API key; sklearn ships `make_classification`, transformers ships `pipeline("sentiment-analysis", model=…)` smoke samples for the same reason |
+| Test/demo helpers | `OracleJudge` (deterministic strategies) and `demo_labelled_set()` (3 hand-built samples with gold + adversarial pairs) ship in the library, not just in tests | Lets users try the API end-to-end with no API key; sklearn ships `make_classification`, transformers ships `pipeline("sentiment-analysis", model=…)` smoke samples for the same reason |
 | Progress + errors | `tqdm` progress bar (auto-disabled in non-TTY); error messages name the active filters and suggest the next action (e.g. "no rubrics matched `axis_filter('accuracy')` — try `meta-evaluate-judge list-metadata-keys`") | DX polish; CI logs stay clean while interactive runs get feedback; errors that name the missing knob halve the time-to-first-success |
 | CLI verbs | `argparse` subcommands: `run` / `regenerate` / `compare` / `list-metrics` / `list-metadata-keys` / `clear-cache` | Six verbs is enough to justify subparsers over a flat flag namespace; mirrors `git`, `docker`, `mlflow` |
 
@@ -66,7 +66,7 @@ src/healthbench_agent/domain/
     dataset.py              # EDIT — HealthBenchSample now inherits from LabelledSample
 
 src/healthbench_agent/llm_eval/
-    meta_eval.py            # NEW — registry + 8 built-in metrics + run_meta_eval + filter helpers + EmptyFilterError + meta_evaluate() happy path + FakeJudge + demo_labelled_set
+    meta_eval.py            # NEW — registry + 8 built-in metrics + run_meta_eval + filter helpers + EmptyFilterError + meta_evaluate() happy path + OracleJudge + demo_labelled_set
     meta_eval_results.py    # NEW — MetricResultsView UX wrapper around MetricResults: __repr__, _repr_html_, summary, to_pandas, to_markdown, load, verdicts, compare, plot_* (matplotlib / pandas / pyarrow live here, not in domain/)
     verdict_cache.py        # NEW — file-based VerdictCache keyed by sha256(judge_model || prompt_sha || conv_hash || k_index || rubric_text), plus CachedJudgeGrader proxy that wraps any JudgeGrader without changing the ABC
     cli_meta_eval.py        # NEW — argparse with subcommands: run / regenerate / compare / list-metrics / list-metadata-keys / clear-cache
@@ -77,7 +77,7 @@ src/healthbench_agent/prompt_optimization/
     cli.py                  # EDIT — add --prompt-domain {agent, judge} (note: rename from --target to avoid clashing with the existing --target-agent flag), --rubric-axis, --metadata flags
 
 tests/llm_eval/
-    test_meta_eval.py       # NEW — pure-metric ZOMBIES tests + runner with FakeJudge
+    test_meta_eval.py       # NEW — pure-metric ZOMBIES tests + runner with OracleJudge
     test_meta_eval_results.py  # NEW — MetricResultsView UX tests (summary, _repr_html_, load, compare, plot_*)
     test_verdict_cache.py   # NEW — cache hit/miss/disabled paths + CachedJudgeGrader proxy tests
 
@@ -915,14 +915,14 @@ def meta_evaluate(
 
 The function is ~40 lines wrapping the existing pieces — no new logic, just a humane default-rich entry point that hides the `model_fingerprint` / `judge_prompt_sha` plumbing the runner needs for caching.
 
-### `FakeJudge` and `demo_labelled_set` — try without an API key
+### `OracleJudge` and `demo_labelled_set` — try without an API key
 
 Both are exported from `meta_eval.py` so users can run the pipeline end-to-end with zero external dependencies.
 
 ```python
 # src/healthbench_agent/llm_eval/meta_eval.py
 
-class FakeJudge(JudgeGrader):
+class OracleJudge(JudgeGrader):
     """Deterministic JudgeGrader for tests, demos, and docs.
 
     Implements the JudgeGrader ABC. Each call to grade() returns
@@ -934,7 +934,7 @@ class FakeJudge(JudgeGrader):
       - dict[str, bool] — explicit per-criterion verdict map keyed
         by ``RubricItem.criterion`` text. Pass the labelled set's
         union expected map to simulate a perfect judge:
-        ``FakeJudge({c: m for s in samples for c, m in s.expected.items()})``
+        ``OracleJudge({c: m for s in samples for c, m in s.expected.items()})``
       - Callable[[RubricItem], bool] — for arbitrary per-rubric logic.
 
     Mirrors sklearn.dummy.DummyClassifier — useful for wiring tests
@@ -977,7 +977,7 @@ Combined, they make the smallest possible smoke test:
 
 ```python
 from healthbench_agent.llm_eval import (
-    FakeJudge, demo_labelled_set, run_meta_eval
+    OracleJudge, demo_labelled_set, run_meta_eval
 )
 
 samples = demo_labelled_set()
@@ -985,7 +985,7 @@ samples = demo_labelled_set()
 perfect = {criterion: met for s in samples for criterion, met in s.expected.items()}
 
 view = run_meta_eval(
-    FakeJudge(perfect),
+    OracleJudge(perfect),
     samples,
     dimension_extractor=lambda r: r.category,
 )
@@ -1540,7 +1540,7 @@ ZOMBIES coverage on the pure metric functions using synthetic verdict DataFrames
 | CLI smoke test: `regenerate RUN_DIR` replays metrics from stored parquet | judge mock receives 0 calls; new `metrics.json` matches old |
 | CLI smoke test: `compare RUN1 RUN2` prints a diff table with both judges' scalars | stdout has both judge model names and a delta column |
 | CLI smoke test: `clear-cache` removes the cache directory and prints freed-bytes summary | directory is gone, exit code 0 |
-| `meta_evaluate(judge_config, ...)` happy-path with `FakeJudge` | returns `MetricResultsView` whose `view.results.scores` is non-empty, runs end-to-end without touching the network |
+| `meta_evaluate(judge_config, ...)` happy-path with `OracleJudge` | returns `MetricResultsView` whose `view.results.scores` is non-empty, runs end-to-end without touching the network |
 | `meta_evaluate` with `cache=True` (default in CLI) | second call hits cache (assert via `cache.stats()`); runtime measurably shorter |
 | `meta_evaluate` with `cache=False` | every call goes to the judge; cache directory not created |
 | `tqdm` progress bar suppressed when stdout is not a TTY (`progress=None` auto-detect) | no `tqdm` instance created (assert via patch) |
@@ -1583,16 +1583,16 @@ ZOMBIES coverage on the pure metric functions using synthetic verdict DataFrames
 | `MetricResultsView.plot_dimension_confusion(ax=None)` returns a matplotlib Axes | not None |
 | `plot_calibration_curve` raises a helpful ImportError when matplotlib is missing | message mentions `uv sync --extra viz` |
 
-### `tests/llm_eval/test_meta_eval.py` — FakeJudge sub-section additions
+### `tests/llm_eval/test_meta_eval.py` — OracleJudge sub-section additions
 
 | Test | Expected |
 |---|---|
-| `FakeJudge("always_met")` returns `criteria_met=True` for every rubric | True for all |
-| `FakeJudge("always_fail")` returns `criteria_met=False` for every rubric | False for all |
-| `FakeJudge("alternating")` flips per criterion within one `grade()` call | even-index True, odd-index False |
-| `FakeJudge({"crit_a": True, "crit_b": False})` honours the dict mapping | per-criterion verdicts match |
-| `FakeJudge` constructed from a labelled set's union expected map yields `gold_score == 1.0` | computed via `run_meta_eval(FakeJudge(perfect_map), demo_labelled_set(), ...)` |
-| `FakeJudge` accepts a callable strategy `Callable[[RubricItem], bool]` | per-rubric verdicts match callable's output |
+| `OracleJudge("always_met")` returns `criteria_met=True` for every rubric | True for all |
+| `OracleJudge("always_fail")` returns `criteria_met=False` for every rubric | False for all |
+| `OracleJudge("alternating")` flips per criterion within one `grade()` call | even-index True, odd-index False |
+| `OracleJudge({"crit_a": True, "crit_b": False})` honours the dict mapping | per-criterion verdicts match |
+| `OracleJudge` constructed from a labelled set's union expected map yields `gold_score == 1.0` | computed via `run_meta_eval(OracleJudge(perfect_map), demo_labelled_set(), ...)` |
+| `OracleJudge` accepts a callable strategy `Callable[[RubricItem], bool]` | per-rubric verdicts match callable's output |
 
 ### `tests/llm_eval/test_verdict_cache.py`
 
@@ -1686,7 +1686,7 @@ The migration is mechanical (keyword args + a few extra `gold_response=None` def
 12. ~~SPEC.md schema fields~~ → optional with safe defaults on both `RubricItem` and `LabelledSample`; HealthBench loaders ignore them, future SPEC.md loaders populate them.
 13. ~~Metric level discovery~~ → each metric declares `MetricLevel ∈ {SAMPLE, RUBRIC, ANY}` at registration; runner filters rows per level; CLI exposes `meta-evaluate-judge list-metrics` (subcommand) so users see the level + a one-line description without reading source.
 14. ~~Cost iteration friction~~ → file-based `VerdictCache` keyed by `sha256(judge_model ‖ prompt_sha ‖ conv_hash ‖ k_index)` (OFF in library, ON in CLI), `--dry-run` cost preview, and `regenerate RUN_DIR` subcommand let users tune metrics/filters without re-paying for verdicts.
-15. ~~Beginner ergonomics~~ → top-level `meta_evaluate(judge_config, ...)` happy-path function, `FakeJudge` + `demo_labelled_set()` for an offline smoke run, `tqdm` progress bars (auto-detected), and a rich `MetricResultsView` wrapper (in `llm_eval/`) with `__repr__` / `_repr_html_` / `summary()` / `compare()` / `plot_*` methods so beginners do not need to touch matplotlib or pandas to inspect a run. The pure-domain `MetricResults` dataclass stays UX-free so it can live in `domain/`.
+15. ~~Beginner ergonomics~~ → top-level `meta_evaluate(judge_config, ...)` happy-path function, `OracleJudge` + `demo_labelled_set()` for an offline smoke run, `tqdm` progress bars (auto-detected), and a rich `MetricResultsView` wrapper (in `llm_eval/`) with `__repr__` / `_repr_html_` / `summary()` / `compare()` / `plot_*` methods so beginners do not need to touch matplotlib or pandas to inspect a run. The pure-domain `MetricResults` dataclass stays UX-free so it can live in `domain/`.
 16. ~~Discoverability of metadata filters~~ → new CLI subcommand `list-metadata-keys` walks the dataset and prints every observed key with example values, so users can build correct `--metadata KEY=VALUE` flags without reading the dataset by hand.
 17. ~~Artifact format versioning~~ → `MetricResults.schema_version` (constant `SCHEMA_VERSION = 1`) is written to `metrics.json`; `MetricResultsView.load` raises a clear `ValueError` on unknown versions so future format breaks fail loud, not silent.
 18. ~~Where matplotlib/pandas/pyarrow live~~ → split into a pure-domain `MetricResults` dataclass (`domain/meta_evaluation.py`, stdlib only) and a UX wrapper `MetricResultsView` in `llm_eval/meta_eval_results.py`. Domain stays I/O-free; the view owns `summary()`, `_repr_html_`, `to_pandas`, `to_markdown`, `load`, `save`, `compare`, and the `plot_*` helpers.

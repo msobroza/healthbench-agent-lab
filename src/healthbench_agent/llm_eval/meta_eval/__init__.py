@@ -1,10 +1,10 @@
-"""Meta-evaluation registry, runner, and built-in metrics for LLM-as-judge.
+"""Meta-evaluation registry, runner, metrics, and result helpers.
 
-Re-exports the public surface of the sub-modules so that existing call
-sites such as ``from healthbench_agent.llm_eval.meta_eval import X``
-keep working after the split. Importing :mod:`.metrics` at package load
-time is required to populate the metric registry via its
-``@register_meta_metric`` decorators.
+Re-exports the public surface of every sub-module so that existing
+call sites such as ``from healthbench_agent.llm_eval.meta_eval import X``
+keep working after the nested reorganisation. Importing the
+:mod:`.metrics` subpackage at load time is what populates the metric
+registry via its ``@register_meta_metric`` decorators.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from __future__ import annotations
 # Importing metrics for its side-effects (@register_meta_metric decorators).
 from . import metrics as _metrics  # noqa: F401
 from .api import _build_judge_for_meta_eval, _load_subset_for_meta_eval, meta_evaluate
+from .demo_data import demo_labelled_set
 from .filters import (
     AXIS_TAG_PREFIX,
     EmptyFilterError,
@@ -19,34 +20,38 @@ from .filters import (
     metadata_filter,
     specialty_filter,
 )
-from .fixtures import FakeJudge, demo_labelled_set
 from .metrics import (
+    MetricLevel,
+    MetricSpec,
     adversarial_accuracy,
     adversarial_prf1,
     calibration_curve,
     cohens_kappa,
+    get_meta_metric,
     gold_score,
     krippendorff_alpha,
     per_criterion_metrics,
     per_dimension_confusion,
-)
-from .registry import (
-    MetricLevel,
-    MetricSpec,
-    get_meta_metric,
     register_meta_metric,
     registered_meta_metrics,
 )
-from .results_view import MetricResultsView
+from .oracle_judge import OracleJudge
+from .results import (
+    MetricResultsView,
+    load_results,
+    plot_calibration_curve,
+    plot_dimension_confusion,
+    save_results,
+)
 from .runner import run_meta_eval
 
 __all__ = [
     "AXIS_TAG_PREFIX",
     "EmptyFilterError",
-    "FakeJudge",
     "MetricLevel",
     "MetricResultsView",
     "MetricSpec",
+    "OracleJudge",
     "_build_judge_for_meta_eval",
     "_load_subset_for_meta_eval",
     "adversarial_accuracy",
@@ -58,12 +63,16 @@ __all__ = [
     "get_meta_metric",
     "gold_score",
     "krippendorff_alpha",
+    "load_results",
     "meta_evaluate",
     "metadata_filter",
     "per_criterion_metrics",
     "per_dimension_confusion",
+    "plot_calibration_curve",
+    "plot_dimension_confusion",
     "register_meta_metric",
     "registered_meta_metrics",
     "run_meta_eval",
+    "save_results",
     "specialty_filter",
 ]

@@ -410,7 +410,7 @@ class TestEndToEndMetricWithTargetAgent:
 def test_judge_agreement_metric_returns_scalar_from_meta_eval():
     from typing import Any
 
-    from healthbench_agent.llm_eval.meta_eval import FakeJudge, demo_labelled_set
+    from healthbench_agent.llm_eval.meta_eval import OracleJudge, demo_labelled_set
     from healthbench_agent.prompt_optimization.metric import JudgeAgreementMetric
 
     samples = demo_labelled_set()
@@ -421,7 +421,7 @@ def test_judge_agreement_metric_returns_scalar_from_meta_eval():
     class _CapturingMetric(JudgeAgreementMetric):
         def _build_judge(self, candidate_template: str):  # type: ignore[override]
             captured["template"] = candidate_template
-            return FakeJudge(perfect), "fake@1", "sha"
+            return OracleJudge(perfect), "fake@1", "sha"
 
     metric = _CapturingMetric(
         judge_config=None,  # bypassed by override
@@ -526,8 +526,7 @@ def test_judge_agreement_metric_default_build_judge_constructs_llm_judge(monkeyp
     judge_metadata. Exercises lines 356-372 and the __call__ wiring."""
     from healthbench_agent.domain.meta_evaluation import MetricResults
     from healthbench_agent.llm_eval.grading.config import JudgeConfig
-    from healthbench_agent.llm_eval.meta_eval import demo_labelled_set
-    from healthbench_agent.llm_eval.meta_eval.results_view import MetricResultsView
+    from healthbench_agent.llm_eval.meta_eval import MetricResultsView, demo_labelled_set
     from healthbench_agent.prompt_optimization.metric import JudgeAgreementMetric
 
     created: dict[str, object] = {}

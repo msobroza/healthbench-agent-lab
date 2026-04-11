@@ -947,7 +947,7 @@ healthbench-agent-lab/
         ├── __init__.py
         ├── test_grader.py      # LLMJudgeGrader, create_judge, parse_grading_response, make_template
         ├── test_samplers.py    # OpenAIChatSampler, GeminiChatSampler, create_sampler, JudgeConfig
-        └── test_runner.py      # EvalRunner with FakeJudge (→ JudgeGrader), evaluate_pipeline
+        └── test_runner.py      # EvalRunner with local _FakeJudge test double (→ JudgeGrader), evaluate_pipeline
 ```
 
 ---

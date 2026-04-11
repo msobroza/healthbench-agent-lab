@@ -22,13 +22,13 @@ from healthbench_agent.domain.meta_evaluation import LabelledSample, MetricResul
 from healthbench_agent.domain.rubric import RubricItem
 
 from .filters import EmptyFilterError
-from .registry import _METRIC_REGISTRY, MetricLevel, get_meta_metric
+from .metrics.registry import _METRIC_REGISTRY, MetricLevel, get_meta_metric
 from .verdicts import _VERDICT_COLUMNS, _build_verdict_rows
 
 if TYPE_CHECKING:
     from healthbench_agent.llm_eval.cache.store import VerdictCache
 
-    from .results_view import MetricResultsView
+    from .results import MetricResultsView
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ def run_meta_eval(
 
     from healthbench_agent.llm_eval.cache.cached_judge import CachedJudgeGrader
 
-    from .results_view import MetricResultsView
+    from .results import MetricResultsView
 
     # --- Step 1: sample filter ------------------------------------------
     if sample_filter is not None:

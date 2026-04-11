@@ -20,7 +20,7 @@ from .runner import run_meta_eval
 if TYPE_CHECKING:
     from healthbench_agent.llm_eval.cache.store import VerdictCache
 
-    from .results_view import MetricResultsView
+    from .results import MetricResultsView
 
 
 def _load_subset_for_meta_eval(

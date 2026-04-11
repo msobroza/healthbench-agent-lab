@@ -12,7 +12,7 @@ from pathlib import Path
 
 from healthbench_agent.domain.meta_evaluation import MetricResults
 
-from .results_view import MetricResultsView
+from .view import MetricResultsView
 
 
 def save_results(results: MetricResults, run_dir: Path | str) -> None:

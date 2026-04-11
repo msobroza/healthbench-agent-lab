@@ -54,16 +54,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
       - `track_experiment.py` — `track-experiment` wrapper that delegates to `evaluation.experiment_tracker._cli`
       - `meta_eval.py` — `meta-evaluate-judge` CLI for `run_meta_eval`
     - `meta_eval/` — judge meta-evaluation registry, metrics, runner, and result view
-      - `registry.py` — `MetricLevel`, `MetricSpec`, `@register_meta_metric`, `get_meta_metric`, `registered_meta_metrics`
-      - `metrics.py` — registered metric functions (`gold_score`, `cohens_kappa`, `krippendorff_alpha`, `calibration_curve`, `per_dimension_confusion`, `adversarial_accuracy`, `adversarial_prf1`, `per_criterion_metrics`)
       - `filters.py` — `axis_filter`, `metadata_filter`, `specialty_filter`, `EmptyFilterError`, `AXIS_TAG_PREFIX`
-      - `fixtures.py` — `FakeJudge`, `demo_labelled_set`
+      - `oracle_judge.py` — `OracleJudge` (deterministic `JudgeGrader` baseline used by meta-eval smoke tests and docs)
+      - `demo_data.py` — `demo_labelled_set` (hand-built `LabelledSample` instances for examples and offline tests)
       - `verdicts.py` — verdict-row builder helpers shared across runner/metrics
       - `runner.py` — `run_meta_eval` orchestrator (caching, parquet emission, MetricResultsView wrapping)
       - `api.py` — `meta_evaluate` high-level wrapper, `_load_subset_for_meta_eval`, `_build_judge_for_meta_eval`
-      - `results_view.py` — `MetricResultsView` (REPL ergonomics around `MetricResults`)
-      - `results_io.py` — `save_results`, `load_results` free functions
-      - `results_plots.py` — `plot_calibration_curve`, `plot_dimension_confusion` free functions
+      - `metrics/` — registered metric functions, grouped by category
+        - `registry.py` — `MetricLevel`, `MetricSpec`, `@register_meta_metric`, `get_meta_metric`, `registered_meta_metrics`
+        - `agreement.py` — `gold_score`, `cohens_kappa`, `krippendorff_alpha`
+        - `stratified.py` — `calibration_curve`, `per_dimension_confusion`, `per_criterion_metrics`
+        - `adversarial.py` — `adversarial_accuracy`, `adversarial_prf1`
+      - `results/` — result view, IO, and plot helpers around `MetricResults`
+        - `view.py` — `MetricResultsView` (REPL ergonomics around `MetricResults`)
+        - `io.py` — `save_results`, `load_results` free functions
+        - `plots.py` — `plot_calibration_curve`, `plot_dimension_confusion` free functions
   - `prompt_optimization/` — automatic prompt engineering (→ domain, agent, llm_eval). **Domain-agnostic**: any vertical-specific text (mutate/critique/refine templates, thinking styles) lives in YAML under `prompts/prompt_optimization/`, never in Python.
     - `optimizer.py` — `PromptOptimizer` ABC, `OptimizationResult`, `TrialRecord` (frozen dataclasses), `OptimizationMetric` Protocol (structural callable contract for fitness functions), `_TrialBudget` + `_BudgetExceededError` (shared cache/history/best/budget helper for adapters), `require_optional()` (optional-dep guard)
     - `config.py` — `BaseOptimizationConfig` (pydantic-settings, prefix `OPTIM_`, `dump_safe()`), `DSPyConfig`, `TextGradConfig`, `CritiqueRefineConfig` (with `prompt_path` field pointing to a YAML template file)
