@@ -42,7 +42,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
     - `runner.py` — `EvalRunner` (depends on `JudgeGrader` and `AgentPipeline` abstractions)
     - `grading/` — prompt template loader + LLM-backed judge implementation
       - `config.py` — `JudgeConfig` (pydantic-settings `BaseSettings`), `EvalMode` enum
-      - `judge.py` — `LLMJudgeGrader` (→ `JudgeGrader`), `create_judge()` factory, `GRADER_TEMPLATE`, `grade_sample()`, `format_conversation()`, `parse_grading_response()`, `load_grader_prompt()`
+      - `judge.py` — `LLMJudgeGrader` (→ `JudgeGrader`), `create_judge()` factory, `grade_sample()`, `format_conversation()`, `parse_grading_response()`, `load_grader_prompt()`, `make_template()` (default grader template loaded from `JudgeConfig.prompt_path`, not embedded in Python)
     - `clients/` — provider-specific `LLMClient` implementations and factory
       - `openai.py` — `OpenAIChatClient` (→ `LLMClient`)
       - `gemini.py` — `GeminiChatClient` (→ `LLMClient`)
@@ -514,7 +514,7 @@ See `AGENT_DECISIONS.md` for exhaustive pros/cons and design rationale for each 
 
 ### Subtask 3.1 — Grader Module
 - `src/healthbench_agent/llm_eval/__init__.py`
-- `src/healthbench_agent/llm_eval/grading/judge.py` — `GRADER_TEMPLATE`, `grade_sample()`, `format_conversation()`, `parse_grading_response()`, `load_grader_prompt()`
+- `src/healthbench_agent/llm_eval/grading/judge.py` — `grade_sample()`, `format_conversation()`, `parse_grading_response()`, `load_grader_prompt()`, `make_template()` (default template path lives on `JudgeConfig.prompt_path`, pointing at `prompts/llm_grader/v1_llm_grader.yaml`)
 - `prompts/llm_v1_llm_grader.yaml` — verbatim simple-evals grader template with Jinja2 placeholders
 - Tests: template rendering, response parsing, grade_sample with mocked sampler
 

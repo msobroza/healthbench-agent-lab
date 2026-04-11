@@ -42,7 +42,7 @@ _JINJA_ENV = Environment(
 )
 
 
-def _make_template(raw: str) -> Template:
+def make_template(raw: str) -> Template:
     """Create a Jinja2 Template using <<...>> delimiters.
 
     Args:
@@ -71,7 +71,7 @@ def load_grader_prompt(path: str | Path) -> tuple[Any, str, str]:
         data = yaml.safe_load(f)
     raw = data["template"].strip()
     sha256 = hashlib.sha256(raw.encode()).hexdigest()
-    return _make_template(raw), data["version"], sha256
+    return make_template(raw), data["version"], sha256
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +276,7 @@ def grade_sample(
         conversation: Full conversation including the agent's response.
         rubric_items: Rubric items to grade against.
         template: Jinja2 grader template (load via :func:`load_grader_prompt`
-            or build from a raw string with :func:`_make_template`).
+            or build from a raw string with :func:`make_template`).
 
     Returns:
         List of CriterionVerdict, one per rubric item in the same order.

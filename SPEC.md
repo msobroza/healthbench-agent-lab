@@ -418,9 +418,10 @@ and supports any `SamplerBase`-compatible model — Gemini or OpenAI.
 src/healthbench_agent/llm_eval/
 ├── __init__.py         # re-exports all public symbols (LLMJudgeGrader, EvalRunner, JudgeConfig, …)
 ├── config_grader.py    # JudgeConfig (pydantic-settings BaseSettings), EvalMode enum
-├── grader.py           # GRADER_TEMPLATE, LLMJudgeGrader (→ JudgeGrader), create_judge() factory,
+├── grader.py           # LLMJudgeGrader (→ JudgeGrader), create_judge() factory,
 │                       # grade_sample(), format_conversation(), parse_grading_response(),
-│                       # load_grader_prompt()
+│                       # load_grader_prompt(), make_template() (default template path
+│                       # lives on JudgeConfig.prompt_path → prompts/llm_grader/v1_llm_grader.yaml)
 ├── samplers.py         # OpenAIChatSampler, GeminiChatSampler (both → SamplerBase),
 │                       # create_sampler() factory
 └── runner.py           # EvalRunner — orchestrates async (ThreadPool) and batch execution,
@@ -462,7 +463,7 @@ Return a json object with the following fields: "explanation" and "criteria_met"
   meets the criteria of the rubric item. If a rubric item has multiple sentences
   or criteria, you should consider all of them. If any of the criteria is not met,
   the answer should be false. Only return true if all of the criteria are met.
-[...full template — see grader.py GRADER_TEMPLATE constant...]
+[...full template — see prompts/llm_grader/v1_llm_grader.yaml, referenced by JudgeConfig.prompt_path...]
 
 Return just the json object in markdown format. Do not include any other text.
 ```
@@ -699,7 +700,7 @@ template: |
   # Rubric item
   <<rubric_item>>
 
-  [... full template with examples — see grader.py GRADER_TEMPLATE constant ...]
+  [... full template with examples — see prompts/llm_grader/v1_llm_grader.yaml, referenced by JudgeConfig.prompt_path ...]
 
   Return just the json object in markdown format. Do not include any other text
   in the response.
@@ -847,8 +848,10 @@ healthbench-agent-lab/
 │           ├── __init__.py     # re-exports all public symbols
 │           ├── config_grader.py # JudgeConfig (pydantic-settings), EvalMode enum
 │           ├── grader.py       # LLMJudgeGrader (→ JudgeGrader), create_judge() factory,
-│           │                   # GRADER_TEMPLATE, grade_sample(), format_conversation(),
-│           │                   # parse_grading_response(), load_grader_prompt()
+│           │                   # grade_sample(), format_conversation(),
+│           │                   # parse_grading_response(), load_grader_prompt(),
+│           │                   # make_template() (default template path lives on
+│           │                   # JudgeConfig.prompt_path → prompts/llm_grader/v1_llm_grader.yaml)
 │           ├── samplers.py     # OpenAIChatSampler, GeminiChatSampler (both → SamplerBase),
 │           │                   # create_sampler() factory
 │           └── runner.py       # EvalRunner: depends on JudgeGrader + AgentPipeline abstractions
@@ -942,7 +945,7 @@ healthbench-agent-lab/
     │   └── test_experiment_tracker.py # MLflow logging, build_run_params, RootAgentPipelineConfig
     └── llm_eval/
         ├── __init__.py
-        ├── test_grader.py      # GRADER_TEMPLATE, LLMJudgeGrader, create_judge, parse_grading_response
+        ├── test_grader.py      # LLMJudgeGrader, create_judge, parse_grading_response, make_template
         ├── test_samplers.py    # OpenAIChatSampler, GeminiChatSampler, create_sampler, JudgeConfig
         └── test_runner.py      # EvalRunner with FakeJudge (→ JudgeGrader), evaluate_pipeline
 ```
@@ -1105,7 +1108,7 @@ Based on the insights above, the recommended implementation order for Phase 2:
 
 ### Phase 3 — Evaluation Framework
 **Deliverables:**
-- [x] `src/healthbench_agent/llm_eval/grader.py` — `GRADER_TEMPLATE` (verbatim simple-evals), `grade_sample()`, `format_conversation()`, `parse_grading_response()`
+- [x] `src/healthbench_agent/llm_eval/grader.py` — `grade_sample()`, `format_conversation()`, `parse_grading_response()`, `load_grader_prompt()`, `make_template()` (verbatim simple-evals template lives in `prompts/llm_grader/v1_llm_grader.yaml`, referenced by `JudgeConfig.prompt_path`)
 - [x] `src/healthbench_agent/llm_eval/samplers.py` — `OpenAIChatSampler`, `GeminiChatSampler` (both implement `SamplerBase`)
 - [x] `src/healthbench_agent/llm_eval/runner.py` — `EvalRunner` with async (ThreadPool) and batch (OpenAI Batch API) modes
 - [x] `tests/llm_eval/` — unit tests for grader, samplers (mocked), and runner modes

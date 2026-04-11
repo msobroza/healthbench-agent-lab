@@ -559,7 +559,7 @@ def test_judge_agreement_metric_default_build_judge_constructs_llm_judge(monkeyp
         fake_create_llm_client,
     )
     monkeypatch.setattr(
-        "healthbench_agent.llm_eval.grading.judge._make_template",
+        "healthbench_agent.llm_eval.grading.judge.make_template",
         fake_make_template,
     )
     monkeypatch.setattr(

@@ -356,7 +356,7 @@ class JudgeAgreementMetric:
         import hashlib
 
         from healthbench_agent.llm_eval.clients import create_llm_client
-        from healthbench_agent.llm_eval.grading.judge import LLMJudgeGrader, _make_template
+        from healthbench_agent.llm_eval.grading.judge import LLMJudgeGrader, make_template
 
         if self.judge_config is None:
             raise RuntimeError("judge_config is None and _build_judge was not overridden")
@@ -364,7 +364,7 @@ class JudgeAgreementMetric:
         llm_client = create_llm_client(cfg)
         judge = LLMJudgeGrader(
             llm_client=llm_client,
-            template=_make_template(candidate_template),
+            template=make_template(candidate_template),
             max_workers=cfg.grader_max_workers,
         )
         fingerprint = f"{cfg.provider}/{cfg.model}@{cfg.temperature}"
