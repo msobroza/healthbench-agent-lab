@@ -13,9 +13,9 @@ from healthbench_agent.domain.rubric import RubricItem
 from healthbench_agent.llm_eval.meta_eval import (
     AXIS_TAG_PREFIX,
     EmptyFilterError,
-    FakeJudge,
     MetricLevel,
     MetricSpec,
+    OracleJudge,
     adversarial_accuracy,
     adversarial_prf1,
     axis_filter,
@@ -469,7 +469,7 @@ def test_per_criterion_metrics_grouped_by_rubric_key():
 
 
 def test_fake_judge_always_met_returns_true_for_all():
-    judge = FakeJudge("always_met")
+    judge = OracleJudge("always_met")
     items = [RubricItem(criterion="a", points=1.0), RubricItem(criterion="b", points=1.0)]
     out = judge.grade([], items)
     assert all(isinstance(v, CriterionVerdict) for v in out)
@@ -477,14 +477,14 @@ def test_fake_judge_always_met_returns_true_for_all():
 
 
 def test_fake_judge_always_fail_returns_false_for_all():
-    judge = FakeJudge("always_fail")
+    judge = OracleJudge("always_fail")
     items = [RubricItem(criterion="a", points=1.0)]
     out = judge.grade([], items)
     assert not out[0].criteria_met
 
 
 def test_fake_judge_alternating_flips_per_call():
-    judge = FakeJudge("alternating")
+    judge = OracleJudge("alternating")
     out = judge.grade(
         [], [RubricItem(criterion="a", points=1.0), RubricItem(criterion="b", points=1.0)]
     )
@@ -493,7 +493,7 @@ def test_fake_judge_alternating_flips_per_call():
 
 
 def test_fake_judge_dict_strategy_honours_mapping():
-    judge = FakeJudge({"a": True, "b": False})
+    judge = OracleJudge({"a": True, "b": False})
     out = judge.grade(
         [], [RubricItem(criterion="a", points=1.0), RubricItem(criterion="b", points=1.0)]
     )
@@ -502,7 +502,7 @@ def test_fake_judge_dict_strategy_honours_mapping():
 
 
 def test_fake_judge_callable_strategy():
-    judge = FakeJudge(lambda item: item.points > 0)
+    judge = OracleJudge(lambda item: item.points > 0)
     out = judge.grade(
         [], [RubricItem(criterion="a", points=1.0), RubricItem(criterion="b", points=-1.0)]
     )
@@ -529,7 +529,7 @@ def test_run_meta_eval_with_fake_judge_produces_scores(tmp_path):
     samples = demo_labelled_set()
     perfect = {c: m for s in samples for c, m in s.expected.items()}
     view = run_meta_eval(
-        FakeJudge(perfect),
+        OracleJudge(perfect),
         samples,
         dimension_extractor=_axis_extractor,
         n_samples=2,
@@ -543,7 +543,7 @@ def test_run_meta_eval_with_fake_judge_produces_scores(tmp_path):
 def test_run_meta_eval_persists_artifacts(tmp_path):
     samples = demo_labelled_set()
     view = run_meta_eval(
-        FakeJudge("always_met"),
+        OracleJudge("always_met"),
         samples,
         dimension_extractor=_axis_extractor,
         n_samples=1,
@@ -559,7 +559,7 @@ def test_run_meta_eval_sample_filter_rejects_all_raises_empty_filter(tmp_path):
     samples = demo_labelled_set()
     with pytest.raises(EmptyFilterError):
         run_meta_eval(
-            FakeJudge("always_met"),
+            OracleJudge("always_met"),
             samples,
             dimension_extractor=_axis_extractor,
             sample_filter=lambda s: False,
@@ -572,7 +572,7 @@ def test_run_meta_eval_rubric_filter_rejects_all_raises_empty_filter():
     samples = demo_labelled_set()
     with pytest.raises(EmptyFilterError):
         run_meta_eval(
-            FakeJudge("always_met"),
+            OracleJudge("always_met"),
             samples,
             dimension_extractor=_axis_extractor,
             rubric_filter=lambda r: False,
@@ -597,7 +597,7 @@ def test_run_meta_eval_skips_sample_metrics_when_only_adversarial(caplog):
         ],
     )
     view = run_meta_eval(
-        FakeJudge("always_met"),
+        OracleJudge("always_met"),
         [sample],
         dimension_extractor=_axis_extractor,
         metric_names=["gold_score", "adversarial_accuracy"],
@@ -616,7 +616,7 @@ def test_run_meta_eval_raises_when_every_metric_skipped():
     )
     with pytest.raises(EmptyFilterError, match="gold_score"):
         run_meta_eval(
-            FakeJudge("always_met"),
+            OracleJudge("always_met"),
             [sample],
             dimension_extractor=_axis_extractor,
             metric_names=["gold_score"],
@@ -638,7 +638,7 @@ def test_meta_evaluate_with_fake_judge_returns_view(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "healthbench_agent.llm_eval.meta_eval.api._build_judge_for_meta_eval",
-        lambda config, temperature: (FakeJudge("always_met"), "fake/model@1.0", "sha"),
+        lambda config, temperature: (OracleJudge("always_met"), "fake/model@1.0", "sha"),
     )
 
     view = meta_evaluate(
@@ -718,7 +718,7 @@ def test_build_judge_for_meta_eval_from_path(monkeypatch):
         "healthbench_agent.llm_eval.grading.config.JudgeConfig.from_yaml",
         classmethod(lambda cls, path: cfg),
     )
-    fake_judge = FakeJudge("always_met")
+    fake_judge = OracleJudge("always_met")
     monkeypatch.setattr(
         "healthbench_agent.llm_eval.grading.judge.create_judge",
         lambda c: fake_judge,
@@ -750,7 +750,7 @@ def test_build_judge_for_meta_eval_from_config_instance(monkeypatch):
     )
     monkeypatch.setattr(
         "healthbench_agent.llm_eval.grading.judge.create_judge",
-        lambda c: FakeJudge("always_met"),
+        lambda c: OracleJudge("always_met"),
     )
     monkeypatch.setattr(
         "healthbench_agent.llm_eval.grading.judge.load_grader_prompt",
@@ -781,7 +781,7 @@ def test_meta_evaluate_with_cache_true_creates_default_verdict_cache(monkeypatch
     )
     monkeypatch.setattr(
         "healthbench_agent.llm_eval.meta_eval.api._build_judge_for_meta_eval",
-        lambda config, temperature: (FakeJudge("always_met"), "fake/model@1.0", "sha"),
+        lambda config, temperature: (OracleJudge("always_met"), "fake/model@1.0", "sha"),
     )
     captured: dict[str, Any] = {}
 
@@ -820,7 +820,7 @@ def test_meta_evaluate_with_explicit_cache_instance_passes_through(monkeypatch, 
     )
     monkeypatch.setattr(
         "healthbench_agent.llm_eval.meta_eval.api._build_judge_for_meta_eval",
-        lambda config, temperature: (FakeJudge("always_met"), "fake/model@1.0", "sha"),
+        lambda config, temperature: (OracleJudge("always_met"), "fake/model@1.0", "sha"),
     )
     captured: dict[str, Any] = {}
 
@@ -859,7 +859,7 @@ def test_cli_run_dispatches_to_run_meta_eval(monkeypatch, tmp_path, capsys):
             n_rubrics_graded=1,
             judge_metadata={"judge_model": "fake"},
         )
-        from healthbench_agent.llm_eval.meta_eval.results_view import MetricResultsView
+        from healthbench_agent.llm_eval.meta_eval import MetricResultsView
 
         return MetricResultsView(results=results)
 
@@ -870,7 +870,7 @@ def test_cli_run_dispatches_to_run_meta_eval(monkeypatch, tmp_path, capsys):
     )
     monkeypatch.setattr(
         "healthbench_agent.llm_eval.cli.meta_eval._build_judge_for_cli",
-        lambda config, temperature: (FakeJudge("always_met"), "fake@1", "sha"),
+        lambda config, temperature: (OracleJudge("always_met"), "fake@1", "sha"),
     )
 
     cli_meta_eval.main(
@@ -932,11 +932,11 @@ def test_cli_clear_cache_removes_directory(tmp_path, monkeypatch):
 
 def test_cli_regenerate_replays_metrics(tmp_path):
     from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
-    from healthbench_agent.llm_eval.meta_eval.results_io import load_results
+    from healthbench_agent.llm_eval.meta_eval import load_results
 
     samples = demo_labelled_set()
     view = run_meta_eval(
-        FakeJudge({c: m for s in samples for c, m in s.expected.items()}),
+        OracleJudge({c: m for s in samples for c, m in s.expected.items()}),
         samples,
         dimension_extractor=lambda r: r.category,
         n_samples=1,
@@ -954,8 +954,7 @@ def test_cli_regenerate_replays_metrics(tmp_path):
 
 def test_cli_compare_prints_diff_table(tmp_path, capsys):
     from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
-    from healthbench_agent.llm_eval.meta_eval.results_io import save_results
-    from healthbench_agent.llm_eval.meta_eval.results_view import MetricResultsView
+    from healthbench_agent.llm_eval.meta_eval import MetricResultsView, save_results
 
     a_dir = tmp_path / "a"
     b_dir = tmp_path / "b"
@@ -1074,7 +1073,7 @@ def test_run_meta_eval_rubric_filter_keeps_subset_of_rubrics():
         expected={"keep": True, "drop": True},
     )
     view = run_meta_eval(
-        FakeJudge("always_met"),
+        OracleJudge("always_met"),
         [sample],
         dimension_extractor=_axis_extractor,
         rubric_filter=lambda r: r.criterion == "keep",
@@ -1094,7 +1093,7 @@ def test_run_meta_eval_with_cache_requires_fingerprint_and_prompt_sha(tmp_path):
     cache = VerdictCache(root=tmp_path / "cache", enabled=True)
     with pytest.raises(ValueError, match="model_fingerprint and judge_prompt_sha"):
         run_meta_eval(
-            FakeJudge("always_met"),
+            OracleJudge("always_met"),
             demo_labelled_set(),
             dimension_extractor=_axis_extractor,
             n_samples=1,
@@ -1109,7 +1108,7 @@ def test_run_meta_eval_with_cache_wraps_judge_in_cached_grader(tmp_path):
 
     cache = VerdictCache(root=tmp_path / "cache", enabled=True)
     view = run_meta_eval(
-        FakeJudge("always_met"),
+        OracleJudge("always_met"),
         demo_labelled_set(),
         dimension_extractor=_axis_extractor,
         n_samples=1,
@@ -1123,7 +1122,7 @@ def test_run_meta_eval_with_cache_wraps_judge_in_cached_grader(tmp_path):
     assert "cache_misses" in view.results.judge_metadata
     # Running the same invocation twice should see cache hits > 0.
     view2 = run_meta_eval(
-        FakeJudge("always_met"),
+        OracleJudge("always_met"),
         demo_labelled_set(),
         dimension_extractor=_axis_extractor,
         n_samples=1,
@@ -1149,7 +1148,7 @@ def test_run_meta_eval_with_progress_true_uses_thread_map(monkeypatch):
         fake_thread_map,
     )
     run_meta_eval(
-        FakeJudge("always_met"),
+        OracleJudge("always_met"),
         demo_labelled_set(),
         dimension_extractor=_axis_extractor,
         n_samples=1,
@@ -1207,7 +1206,7 @@ def test_build_judge_for_cli_delegates_to_meta_eval_helper(monkeypatch):
     def fake_builder(config, temperature):
         captured["config"] = config
         captured["temperature"] = temperature
-        return (FakeJudge("always_met"), "fake@1", "prompt-sha")
+        return (OracleJudge("always_met"), "fake@1", "prompt-sha")
 
     monkeypatch.setattr(
         "healthbench_agent.llm_eval.meta_eval._build_judge_for_meta_eval",
@@ -1217,7 +1216,7 @@ def test_build_judge_for_cli_delegates_to_meta_eval_helper(monkeypatch):
     assert captured == {"config": "fake.yaml", "temperature": 0.25}
     assert fingerprint == "fake@1"
     assert prompt_sha == "prompt-sha"
-    assert isinstance(judge, FakeJudge)
+    assert isinstance(judge, OracleJudge)
 
 
 def test_build_filters_parses_metadata_key_value_pairs():
@@ -1271,7 +1270,7 @@ def test_cli_run_surfaces_empty_filter_error_as_system_exit(monkeypatch, tmp_pat
     )
     monkeypatch.setattr(
         "healthbench_agent.llm_eval.cli.meta_eval._build_judge_for_cli",
-        lambda config, temperature: (FakeJudge("always_met"), "fake@1", "sha"),
+        lambda config, temperature: (OracleJudge("always_met"), "fake@1", "sha"),
     )
     monkeypatch.setattr("healthbench_agent.llm_eval.cli.meta_eval.run_meta_eval", raise_empty)
 
@@ -1312,7 +1311,7 @@ def test_cli_regenerate_unknown_metric_exits(tmp_path, capsys):
     # Seed a valid run dir first.
     samples = demo_labelled_set()
     run_meta_eval(
-        FakeJudge("always_met"),
+        OracleJudge("always_met"),
         samples,
         dimension_extractor=_axis_extractor,
         n_samples=1,
@@ -1334,7 +1333,7 @@ def test_cli_regenerate_skips_level_with_no_matching_rows(tmp_path):
     import pandas as pd
 
     from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
-    from healthbench_agent.llm_eval.meta_eval.results_io import load_results, save_results
+    from healthbench_agent.llm_eval.meta_eval import load_results, save_results
 
     # Write a parquet file that contains only ideal_completion rows, then
     # request a rubric-level metric which will have zero matching rows.
@@ -1386,7 +1385,7 @@ def test_cli_compare_missing_run_dir_exits(tmp_path, capsys):
 def test_cli_compare_writes_markdown_output(tmp_path, capsys):
     """compare --output should serialise the diff as markdown next to the call."""
     from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
-    from healthbench_agent.llm_eval.meta_eval.results_io import save_results
+    from healthbench_agent.llm_eval.meta_eval import save_results
 
     a_dir = tmp_path / "a"
     b_dir = tmp_path / "b"
@@ -1416,10 +1415,10 @@ def test_cli_compare_writes_markdown_output(tmp_path, capsys):
     assert "Markdown table written to" in capsys.readouterr().out
 
 
-def test_fake_judge_rejects_unknown_strategy():
-    """FakeJudge raises ValueError for an unrecognised strategy string."""
-    judge = FakeJudge("definitely_not_a_strategy")
-    with pytest.raises(ValueError, match="Unknown FakeJudge strategy"):
+def test_oracle_judge_rejects_unknown_strategy():
+    """OracleJudge raises ValueError for an unrecognised strategy string."""
+    judge = OracleJudge("definitely_not_a_strategy")
+    with pytest.raises(ValueError, match="Unknown OracleJudge strategy"):
         judge.grade(
             [{"role": "user", "content": "?"}],
             [RubricItem(criterion="x", points=1.0)],

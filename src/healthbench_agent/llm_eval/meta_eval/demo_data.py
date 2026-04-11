@@ -1,62 +1,16 @@
-"""Test fixtures for meta-evaluation demos and smoke tests.
+"""Hand-built ``LabelledSample`` instances used as example data.
 
-``FakeJudge`` is a deterministic ``JudgeGrader`` implementation that
-never touches a network; ``demo_labelled_set`` builds a small
-hand-authored labelled set for docs and offline tests.
+Provides :func:`demo_labelled_set`, a tiny hand-authored labelled set
+for documentation snippets and offline smoke tests. Ships with varied
+rubric shapes (positive only, penalty, adversarial examples) so that
+example snippets can exercise every code path without loading the
+full HealthBench dataset.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
-from healthbench_agent.domain.conversation import MessageList
-from healthbench_agent.domain.evaluation import CriterionVerdict
-from healthbench_agent.domain.judge import JudgeGrader
 from healthbench_agent.domain.meta_evaluation import LabelledSample
 from healthbench_agent.domain.rubric import RubricItem
-
-
-class FakeJudge(JudgeGrader):
-    """Deterministic JudgeGrader for tests, demos, and docs.
-
-    Strategies:
-        - "always_met"  / "always_fail" / "alternating"
-        - dict[str, bool] keyed by criterion text
-        - Callable[[RubricItem], bool] for arbitrary per-rubric logic
-    """
-
-    def __init__(
-        self,
-        strategy: str | dict[str, bool] | Callable[[RubricItem], bool] = "always_met",
-    ) -> None:
-        self.strategy = strategy
-
-    def grade(
-        self,
-        conversation: MessageList,
-        rubric_items: list[RubricItem],
-    ) -> list[CriterionVerdict]:
-        verdicts: list[CriterionVerdict] = []
-        for idx, item in enumerate(rubric_items):
-            met = self._verdict_for(item, idx)
-            verdicts.append(
-                CriterionVerdict(criterion=item.criterion, criteria_met=met, explanation="fake")
-            )
-        return verdicts
-
-    def _verdict_for(self, item: RubricItem, idx: int) -> bool:
-        strategy = self.strategy
-        if callable(strategy):
-            return bool(strategy(item))
-        if isinstance(strategy, dict):
-            return bool(strategy.get(item.criterion, False))
-        if strategy == "always_met":
-            return True
-        if strategy == "always_fail":
-            return False
-        if strategy == "alternating":
-            return idx % 2 == 0
-        raise ValueError(f"Unknown FakeJudge strategy: {strategy!r}")
 
 
 def demo_labelled_set() -> list[LabelledSample]:

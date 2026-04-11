@@ -1,8 +1,10 @@
 """Meta-evaluation metric registry.
 
 Holds the decorator, specification dataclass, level enum, and lookup
-helpers. Metric implementations live in :mod:`.metrics`; importing that
-module at package load time is what populates the registry.
+helpers. Metric implementations live in the sibling
+:mod:`.agreement`, :mod:`.stratified`, and :mod:`.adversarial`
+modules; importing the package at load time is what populates the
+registry via their ``@register_meta_metric`` decorators.
 """
 
 from __future__ import annotations

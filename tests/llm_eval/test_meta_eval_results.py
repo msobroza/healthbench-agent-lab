@@ -1,4 +1,4 @@
-"""Tests for MetricResultsView, results_io, and results_plots."""
+"""Tests for MetricResultsView, save_results/load_results, and plot helpers."""
 
 from __future__ import annotations
 
@@ -7,12 +7,13 @@ from pathlib import Path
 import pytest
 
 from healthbench_agent.domain.meta_evaluation import MetricResults
-from healthbench_agent.llm_eval.meta_eval.results_io import load_results, save_results
-from healthbench_agent.llm_eval.meta_eval.results_plots import (
+from healthbench_agent.llm_eval.meta_eval import (
+    MetricResultsView,
+    load_results,
     plot_calibration_curve,
     plot_dimension_confusion,
+    save_results,
 )
-from healthbench_agent.llm_eval.meta_eval.results_view import MetricResultsView
 
 
 @pytest.fixture

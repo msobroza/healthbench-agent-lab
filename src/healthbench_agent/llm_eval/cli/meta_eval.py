@@ -250,7 +250,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
 
 
 def _cmd_list_metrics(args: argparse.Namespace) -> None:  # noqa: ARG001
-    from healthbench_agent.llm_eval.meta_eval.registry import registered_meta_metrics
+    from healthbench_agent.llm_eval.meta_eval import registered_meta_metrics
 
     registry = registered_meta_metrics()
     print(f"{'NAME':<30} {'LEVEL':<8} DESCRIPTION")
@@ -268,12 +268,13 @@ def _cmd_clear_cache(args: argparse.Namespace) -> None:  # noqa: ARG001
 def _cmd_regenerate(args: argparse.Namespace) -> None:
     import pandas as pd
 
-    from healthbench_agent.llm_eval.meta_eval.registry import (
+    from healthbench_agent.llm_eval.meta_eval import (
         MetricLevel,
         get_meta_metric,
+        load_results,
         registered_meta_metrics,
+        save_results,
     )
-    from healthbench_agent.llm_eval.meta_eval.results_io import load_results, save_results
 
     run_dir = Path(args.run_dir)
     parquet_path = run_dir / "verdicts.parquet"
@@ -322,7 +323,7 @@ def _cmd_regenerate(args: argparse.Namespace) -> None:
 
 
 def _cmd_compare(args: argparse.Namespace) -> None:
-    from healthbench_agent.llm_eval.meta_eval.results_io import load_results
+    from healthbench_agent.llm_eval.meta_eval import load_results
 
     try:
         a_view = load_results(args.run_dir_a)

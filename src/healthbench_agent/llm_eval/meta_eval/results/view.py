@@ -5,9 +5,9 @@ without dragging matplotlib or pyarrow into the domain layer. Returned
 by ``meta_evaluate`` and ``run_meta_eval`` so users get rich UX by
 default.
 
-File-IO helpers live in :mod:`.results_io` and plot helpers live in
-:mod:`.results_plots`; both take the pure-domain
-:class:`MetricResults` as input.
+File-IO helpers live in :mod:`.io` and plot helpers live in
+:mod:`.plots`; both take the pure-domain :class:`MetricResults` as
+input.
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ class MetricResultsView:
             A string with a header line, separator, column titles, and
             one row per metric showing its name, level, and value.
         """
-        from healthbench_agent.llm_eval.meta_eval.registry import get_meta_metric
+        from healthbench_agent.llm_eval.meta_eval.metrics.registry import get_meta_metric
 
         meta = self.results.judge_metadata
         header_line = (
@@ -90,7 +90,7 @@ class MetricResultsView:
         """
         import pandas as pd
 
-        from healthbench_agent.llm_eval.meta_eval.registry import get_meta_metric
+        from healthbench_agent.llm_eval.meta_eval.metrics.registry import get_meta_metric
 
         rows: list[dict[str, Any]] = []
         for name, value in self.results.scores.items():
