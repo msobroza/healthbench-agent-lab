@@ -140,15 +140,23 @@ def test_plot_dimension_confusion_raises_keyerror_when_missing(view):
 
 def test_plot_calibration_curve_falls_back_to_string_sort_on_mixed_keys():
     """Mixed-type keys (some non-coercible) fall through to lexicographic sort."""
+    # Insertion order is deliberately out-of-order so the observed result
+    # can only come from the fallback sort — asserting against a concrete
+    # expected list guards against a future regression where the function
+    # silently drops the sort (sorted(insertion_order) == insertion_order
+    # would self-referentially pass).
     results = MetricResults(
-        scores={"calibration_curve": {"a": 0.1, "b": 0.2}},
-        n_samples_graded=2,
-        n_rubrics_graded=2,
+        scores={"calibration_curve": {"z": 0.1, "a": 0.3, "m": 0.2}},
+        n_samples_graded=3,
+        n_rubrics_graded=3,
         judge_metadata={},
     )
     ax = plot_calibration_curve(results)
     xdata = list(ax.lines[0].get_xdata())
-    assert xdata == sorted(xdata)
+    # Lexicographic ascending: a < m < z.
+    assert xdata == ["a", "m", "z"]
+    # Rule out insertion-order: the function must have actually sorted.
+    assert xdata != ["z", "a", "m"]
 
 
 def test_summary_marks_unregistered_metrics_with_question_mark():
