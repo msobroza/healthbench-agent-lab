@@ -16,8 +16,8 @@ from healthbench_agent.domain.judge import JudgeGrader
 from healthbench_agent.domain.llm_client import LLMResponse
 from healthbench_agent.domain.rubric import RubricItem
 from healthbench_agent.llm_eval.grading.judge import (
-    GRADER_TEMPLATE,
     LLMJudgeGrader,
+    _make_template,
     create_judge,
     format_conversation,
     grade_sample,
@@ -25,29 +25,31 @@ from healthbench_agent.llm_eval.grading.judge import (
     parse_grading_response,
 )
 
-# ---------------------------------------------------------------------------
-# GRADER_TEMPLATE tests
-# ---------------------------------------------------------------------------
+# Repo-root path to the HealthBench grader YAML, used by fixtures that
+# need a real template loaded exactly like production code does.
+_GRADER_YAML_PATH = (
+    Path(__file__).resolve().parents[2] / "prompts" / "llm_grader" / "v1_llm_grader.yaml"
+)
 
 
-class TestGraderTemplate:
-    """Tests for the GRADER_TEMPLATE constant."""
+@pytest.fixture(scope="module")
+def grader_template():
+    """Load the HealthBench grader template once per module.
 
-    def test_template_is_nonempty_string(self):
-        assert isinstance(GRADER_TEMPLATE, str)
-        assert len(GRADER_TEMPLATE) > 100
+    Matches the production path: ``create_judge`` → ``load_grader_prompt``.
+    """
+    template, _version, _sha = load_grader_prompt(_GRADER_YAML_PATH)
+    return template
 
-    def test_template_contains_conversation_placeholder(self):
-        assert "<<conversation>>" in GRADER_TEMPLATE
 
-    def test_template_contains_rubric_item_placeholder(self):
-        assert "<<rubric_item>>" in GRADER_TEMPLATE
+@pytest.fixture(scope="module")
+def minimal_template():
+    """Build a bare-bones template with just the required placeholders.
 
-    def test_template_mentions_criteria_met(self):
-        assert "criteria_met" in GRADER_TEMPLATE
-
-    def test_template_mentions_explanation(self):
-        assert "explanation" in GRADER_TEMPLATE
+    Used by tests that exercise plumbing (judge construction, mock-driven
+    grading) and do not care about the real grader wording.
+    """
+    return _make_template("<<conversation>> <<rubric_item>>")
 
 
 # ---------------------------------------------------------------------------
@@ -59,10 +61,7 @@ class TestLoadGraderPrompt:
     """Tests for load_grader_prompt()."""
 
     def test_load_from_yaml_returns_template_version_hash(self):
-        prompt_path = (
-            Path(__file__).resolve().parents[2] / "prompts" / "llm_grader" / "v1_llm_grader.yaml"
-        )
-        template, version, sha256 = load_grader_prompt(prompt_path)
+        template, version, sha256 = load_grader_prompt(_GRADER_YAML_PATH)
         assert version == "1.0.0"
         assert len(sha256) == 64  # SHA-256 hex digest
         rendered = template.render(conversation="test convo", rubric_item="test item")
@@ -70,11 +69,8 @@ class TestLoadGraderPrompt:
         assert "test item" in rendered
 
     def test_hash_is_deterministic(self):
-        prompt_path = (
-            Path(__file__).resolve().parents[2] / "prompts" / "llm_grader" / "v1_llm_grader.yaml"
-        )
-        _, _, hash1 = load_grader_prompt(prompt_path)
-        _, _, hash2 = load_grader_prompt(prompt_path)
+        _, _, hash1 = load_grader_prompt(_GRADER_YAML_PATH)
+        _, _, hash2 = load_grader_prompt(_GRADER_YAML_PATH)
         assert hash1 == hash2
 
 
@@ -192,29 +188,29 @@ def _make_mock_llm_client(responses: list[str]) -> MagicMock:
 class TestGradeSample:
     """Tests for grade_sample() with mocked LLM clients."""
 
-    def test_single_rubric_item_met(self):
+    def test_single_rubric_item_met(self, minimal_template):
         llm_client = _make_mock_llm_client(['{"explanation": "Correct", "criteria_met": true}'])
         rubric_items = [RubricItem("States the diagnosis", 5.0, ["axis:accuracy"])]
         conversation: MessageList = [
             {"role": "user", "content": "What's wrong?"},
             {"role": "assistant", "content": "You have condition X."},
         ]
-        verdicts = grade_sample(llm_client, conversation, rubric_items)
+        verdicts = grade_sample(llm_client, conversation, rubric_items, minimal_template)
         assert len(verdicts) == 1
         assert verdicts[0].criteria_met is True
         assert verdicts[0].criterion == "States the diagnosis"
 
-    def test_single_rubric_item_not_met(self):
+    def test_single_rubric_item_not_met(self, minimal_template):
         llm_client = _make_mock_llm_client(
             ['{"explanation": "Missing info", "criteria_met": false}']
         )
         rubric_items = [RubricItem("Mentions side effects", 3.0)]
         conversation: MessageList = [{"role": "user", "content": "Tell me about X."}]
-        verdicts = grade_sample(llm_client, conversation, rubric_items)
+        verdicts = grade_sample(llm_client, conversation, rubric_items, minimal_template)
         assert len(verdicts) == 1
         assert verdicts[0].criteria_met is False
 
-    def test_multiple_rubric_items(self):
+    def test_multiple_rubric_items(self, minimal_template):
         llm_client = _make_mock_llm_client(
             [
                 '{"explanation": "Good", "criteria_met": true}',
@@ -228,22 +224,22 @@ class TestGradeSample:
             RubricItem("Item C", -2.0),
         ]
         conversation: MessageList = [{"role": "user", "content": "Q"}]
-        verdicts = grade_sample(llm_client, conversation, rubric_items)
+        verdicts = grade_sample(llm_client, conversation, rubric_items, minimal_template)
         assert len(verdicts) == 3
         assert verdicts[0].criteria_met is True
         assert verdicts[1].criteria_met is False
         assert verdicts[2].criteria_met is True
 
-    def test_malformed_response_defaults_to_not_met(self):
+    def test_malformed_response_defaults_to_not_met(self, minimal_template):
         llm_client = _make_mock_llm_client(["This is not valid JSON at all"])
         rubric_items = [RubricItem("Some criterion", 5.0)]
         conversation: MessageList = [{"role": "user", "content": "Q"}]
-        verdicts = grade_sample(llm_client, conversation, rubric_items)
+        verdicts = grade_sample(llm_client, conversation, rubric_items, minimal_template)
         assert len(verdicts) == 1
         assert verdicts[0].criteria_met is False
         assert "Failed to parse" in verdicts[0].explanation
 
-    def test_llm_client_called_once_per_rubric_item(self):
+    def test_llm_client_called_once_per_rubric_item(self, minimal_template):
         llm_client = _make_mock_llm_client(
             [
                 '{"explanation": "A", "criteria_met": true}',
@@ -252,12 +248,12 @@ class TestGradeSample:
         )
         rubric_items = [RubricItem("X", 1.0), RubricItem("Y", 2.0)]
         conversation: MessageList = [{"role": "user", "content": "Q"}]
-        grade_sample(llm_client, conversation, rubric_items)
+        grade_sample(llm_client, conversation, rubric_items, minimal_template)
         assert llm_client.call_count == 2
 
-    def test_empty_rubric_returns_empty_verdicts(self):
+    def test_empty_rubric_returns_empty_verdicts(self, minimal_template):
         llm_client = _make_mock_llm_client([])
-        verdicts = grade_sample(llm_client, [], [])
+        verdicts = grade_sample(llm_client, [], [], minimal_template)
         assert verdicts == []
 
 
@@ -269,14 +265,14 @@ class TestGradeSample:
 class TestLLMJudgeGrader:
     """Tests for LLMJudgeGrader concrete class."""
 
-    def test_is_judge_grader_subclass(self):
+    def test_is_judge_grader_subclass(self, minimal_template):
         llm_client = _make_mock_llm_client([])
-        judge = LLMJudgeGrader(llm_client=llm_client)
+        judge = LLMJudgeGrader(llm_client=llm_client, template=minimal_template)
         assert isinstance(judge, JudgeGrader)
 
-    def test_grade_single_item_met(self):
+    def test_grade_single_item_met(self, minimal_template):
         llm_client = _make_mock_llm_client(['{"explanation": "Good", "criteria_met": true}'])
-        judge = LLMJudgeGrader(llm_client=llm_client)
+        judge = LLMJudgeGrader(llm_client=llm_client, template=minimal_template)
         rubric_items = [RubricItem("Correct diagnosis", 5.0)]
         conversation: MessageList = [
             {"role": "user", "content": "What do I have?"},
@@ -287,14 +283,14 @@ class TestLLMJudgeGrader:
         assert verdicts[0].criteria_met is True
         assert verdicts[0].criterion == "Correct diagnosis"
 
-    def test_grade_multiple_items(self):
+    def test_grade_multiple_items(self, minimal_template):
         llm_client = _make_mock_llm_client(
             [
                 '{"explanation": "A", "criteria_met": true}',
                 '{"explanation": "B", "criteria_met": false}',
             ]
         )
-        judge = LLMJudgeGrader(llm_client=llm_client)
+        judge = LLMJudgeGrader(llm_client=llm_client, template=minimal_template)
         rubric_items = [
             RubricItem("Item A", 5.0),
             RubricItem("Item B", 3.0),
@@ -305,9 +301,9 @@ class TestLLMJudgeGrader:
         assert verdicts[0].criteria_met is True
         assert verdicts[1].criteria_met is False
 
-    def test_malformed_response_defaults_to_not_met(self):
+    def test_malformed_response_defaults_to_not_met(self, minimal_template):
         llm_client = _make_mock_llm_client(["not json"])
-        judge = LLMJudgeGrader(llm_client=llm_client)
+        judge = LLMJudgeGrader(llm_client=llm_client, template=minimal_template)
         verdicts = judge.grade(
             [{"role": "user", "content": "Q"}],
             [RubricItem("X", 5.0)],
@@ -315,24 +311,36 @@ class TestLLMJudgeGrader:
         assert verdicts[0].criteria_met is False
         assert "Failed to parse" in verdicts[0].explanation
 
-    def test_llm_client_called_once_per_rubric_item(self):
+    def test_llm_client_called_once_per_rubric_item(self, minimal_template):
         llm_client = _make_mock_llm_client(
             [
                 '{"explanation": "A", "criteria_met": true}',
                 '{"explanation": "B", "criteria_met": true}',
             ]
         )
-        judge = LLMJudgeGrader(llm_client=llm_client)
+        judge = LLMJudgeGrader(llm_client=llm_client, template=minimal_template)
         judge.grade(
             [{"role": "user", "content": "Q"}],
             [RubricItem("X", 1.0), RubricItem("Y", 2.0)],
         )
         assert llm_client.call_count == 2
 
-    def test_empty_rubric_returns_empty(self):
+    def test_empty_rubric_returns_empty(self, minimal_template):
         llm_client = _make_mock_llm_client([])
-        judge = LLMJudgeGrader(llm_client=llm_client)
+        judge = LLMJudgeGrader(llm_client=llm_client, template=minimal_template)
         assert judge.grade([], []) == []
+
+    def test_uses_real_grader_template(self, grader_template):
+        """Smoke test: judge constructed with the real HealthBench template renders it."""
+        llm_client = _make_mock_llm_client(['{"explanation": "x", "criteria_met": true}'])
+        judge = LLMJudgeGrader(llm_client=llm_client, template=grader_template)
+        rubric_items = [RubricItem("States diagnosis", 1.0)]
+        judge.grade([{"role": "user", "content": "Q"}], rubric_items)
+        # Verify the real template was rendered into the prompt.
+        called_messages = llm_client.call_args_list[0][0][0]
+        prompt_text = called_messages[0]["content"]
+        assert "Your job is to look at a conversation" in prompt_text
+        assert "States diagnosis" in prompt_text
 
 
 # ---------------------------------------------------------------------------
