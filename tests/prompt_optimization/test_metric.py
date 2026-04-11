@@ -524,8 +524,6 @@ def test_judge_agreement_metric_default_build_judge_constructs_llm_judge(monkeyp
     point) clones the config, wires a new template, constructs an
     LLMJudgeGrader, and threads the fingerprint into run_meta_eval's
     judge_metadata. Exercises lines 356-372 and the __call__ wiring."""
-    import hashlib
-
     from healthbench_agent.domain.meta_evaluation import MetricResults
     from healthbench_agent.llm_eval.grading.config import JudgeConfig
     from healthbench_agent.llm_eval.meta_eval import demo_labelled_set
@@ -539,10 +537,11 @@ def test_judge_agreement_metric_default_build_judge_constructs_llm_judge(monkeyp
         return MagicMock(name="llm_client")
 
     captured_templates: list[str] = []
+    fake_template = object()  # sentinel for identity check
 
     def fake_make_template(template):
         captured_templates.append(template)
-        return MagicMock(name=f"template:{template}")
+        return fake_template
 
     # LLMJudgeGrader is constructed with llm_client + template; record args.
     construction: dict[str, object] = {}
@@ -610,9 +609,9 @@ def test_judge_agreement_metric_default_build_judge_constructs_llm_judge(monkeyp
     # template derived from the candidate string.
     assert isinstance(construction["llm_client"], MagicMock)
     assert captured_templates == ["CANDIDATE"]
-    # The template passed to LLMJudgeGrader is the MagicMock returned by
-    # fake_make_template for the "CANDIDATE" input.
-    assert construction["template"]._mock_name == "template:CANDIDATE"
+    # The exact sentinel object returned by fake_make_template was threaded
+    # into LLMJudgeGrader.__init__ — stronger than any string/name check.
+    assert construction["template"] is fake_template
 
     # The cloned JudgeConfig — not the original — was handed to
     # create_llm_client, so field values must match the source config.
@@ -627,10 +626,6 @@ def test_judge_agreement_metric_default_build_judge_constructs_llm_judge(monkeyp
     # judge_metadata as "judge_model".
     expected_fingerprint = "openai/gpt-4.1@0.0"
     assert captured_run_kwargs["judge_metadata"] == {"judge_model": expected_fingerprint}
-    # The prompt_sha produced by _build_judge is the sha256 of the
-    # candidate template, even though __call__ does not forward it.
-    expected_prompt_sha = hashlib.sha256(b"CANDIDATE").hexdigest()
-    assert expected_prompt_sha == hashlib.sha256(captured_templates[0].encode("utf-8")).hexdigest()
 
     # __call__ returns the float score from the fake view.
     assert score == 0.75
