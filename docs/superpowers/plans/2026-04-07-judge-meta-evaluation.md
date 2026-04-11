@@ -4,7 +4,7 @@
 
 **Goal:** Add a meta-evaluation pipeline that grades a fixed labelled set with one judge, computes a registry of pluggable metrics (gold_score, kappa, calibration, etc.), persists raw verdicts + summary scores, and reuses the existing prompt-optimizer to optimize the grader prompt.
 
-**Architecture:** A new `domain/meta_evaluation.py` adds a `LabelledSample` parent class and lightweight `MetricResults` dataclass; `HealthBenchSample` inherits from it. A new `llm_eval/meta_eval.py` houses the metric registry, runner, filter helpers, `FakeJudge`, and `meta_evaluate()` happy-path. A `MetricResultsView` UX wrapper lives one layer out in `llm_eval/meta_eval_results.py` so matplotlib/pandas/pyarrow stay out of the domain layer. A `VerdictCache` + `CachedJudgeGrader` proxy in `llm_eval/verdict_cache.py` deduplicates judge calls without touching the `JudgeGrader` ABC. A new `meta-evaluate-judge` CLI exposes `run/regenerate/compare/list-metrics/list-metadata-keys/clear-cache` subcommands. The existing `optimize-prompt` CLI gains `--prompt-domain {agent,judge}` to optimize the grader prompt via a new `JudgeAgreementMetric`.
+**Architecture:** A new `domain/meta_evaluation.py` adds a `LabelledSample` parent class and lightweight `MetricResults` dataclass; `HealthBenchSample` inherits from it. A new `llm_eval/meta_eval/` subpackage houses the metric registry, runner, filter helpers, `OracleJudge` (in `oracle_judge.py`), `demo_labelled_set` (in `demo_data.py`), and `meta_evaluate()` happy-path. A `MetricResultsView` UX wrapper lives one layer out in `llm_eval/meta_eval/results/view.py` so matplotlib/pandas/pyarrow stay out of the domain layer. A `VerdictCache` + `CachedJudgeGrader` proxy in `llm_eval/cache/` deduplicates judge calls without touching the `JudgeGrader` ABC. A new `meta-evaluate-judge` CLI exposes `run/regenerate/compare/list-metrics/list-metadata-keys/clear-cache` subcommands. The existing `optimize-prompt` CLI gains `--prompt-domain {agent,judge}` to optimize the grader prompt via a new `JudgeAgreementMetric`.
 
 **Tech Stack:** Python 3.11+, pandas, pyarrow, scikit-learn, matplotlib, tqdm (new), dataclasses, argparse, MLflow.
 
@@ -34,7 +34,7 @@
 | 5 | 12. `calibration_curve` | `7f71ee9`, `4301d1d` |
 | 5 | 13. `per_dimension_confusion` | `d593ddc` |
 | 5 | 14. `adversarial_accuracy` / `adversarial_prf1` / `per_criterion_metrics` | `1e073d0`, `16de428` |
-| 6 | 15. `FakeJudge` + `demo_labelled_set` | `0de721c` |
+| 6 | 15. `OracleJudge` + `demo_labelled_set` | `0de721c` |
 | 7 | 16. `run_meta_eval` | `86e9940`, `74d20c9` |
 | 8 | 17. `MetricResultsView` (repr/summary/IO) | `d4eb671`, `74827b8` |
 | 8 | 18. `compare()` + plot helpers | `38912eb`, `8e61094` |
@@ -54,8 +54,8 @@
 
 The following layout changes happened during implementation and are reflected in the real codebase, but the task bodies below still reference the original paths:
 
-- **`llm_eval/meta_eval.py` → `llm_eval/meta_eval/` subpackage** (commit `076f82a`). The single-module design from Tasks 8–19 was split into `api.py`, `filters.py`, `fixtures.py`, `metrics.py`, `registry.py`, `runner.py`, `verdicts.py`, `results_view.py`, `results_io.py`, `results_plots.py` once the module crossed the maintainability threshold. Public re-exports on `healthbench_agent.llm_eval.meta_eval` are unchanged — consumers import the same symbols.
-- **`llm_eval/meta_eval_results.py` → three modules** inside `llm_eval/meta_eval/`: `results_view.py` (`MetricResultsView`), `results_io.py` (`save_results`/`load_results` free functions), `results_plots.py` (plotting helpers). Splitting out IO and plots keeps `results_view.py` free of matplotlib/pyarrow imports.
+- **`llm_eval/meta_eval.py` → `llm_eval/meta_eval/` subpackage** (commit `076f82a`). The single-module design from Tasks 8–19 was split into `api.py`, `filters.py`, `oracle_judge.py`, `demo_data.py`, `runner.py`, `verdicts.py`, a `metrics/` subdirectory (`registry.py`, `agreement.py`, `stratified.py`, `adversarial.py`), and a `results/` subdirectory (see below) once the module crossed the maintainability threshold. Public re-exports on `healthbench_agent.llm_eval.meta_eval` are unchanged — consumers import the same symbols.
+- **`llm_eval/meta_eval_results.py` → `llm_eval/meta_eval/results/` subpackage**: `view.py` (`MetricResultsView`), `io.py` (`save_results`/`load_results` free functions), `plots.py` (plotting helpers). Splitting out IO and plots keeps `view.py` free of matplotlib/pyarrow imports.
 - **`llm_eval/verdict_cache.py` → `llm_eval/cache/` subpackage** (commit `076f82a`): `cache/store.py` owns `VerdictCache`, `cache/cached_judge.py` owns `CachedJudgeGrader`.
 - **`llm_eval/cli_meta_eval.py` → `llm_eval/cli/meta_eval.py`** (commit `076f82a`), alongside `cli/track_experiment.py`. Console-script entry points moved into a `cli/` subpackage.
 - **`Sampler` → `LLMClient` rename** (commit `d0a14ea`): The `SamplerBase`/`OpenAIChatSampler`/`GeminiChatSampler` family was renamed to `LLMClient`/`OpenAIChatClient`/`GeminiChatClient` mid-implementation and factored into `llm_eval/clients/`. This rename touches Tasks 6–16 examples that use `SamplerBase` — the real code uses `LLMClient`.
@@ -81,10 +81,10 @@ All planned work is landed and pushed. Remaining activity for this branch:
 | `src/healthbench_agent/domain/rubric.py` | Modify | Optional SPEC.md fields; tolerate missing `tags` |
 | `src/healthbench_agent/domain/dataset.py` | Modify | `HealthBenchSample` inherits from `LabelledSample` |
 | `src/healthbench_agent/dataset/extraction.py` | Create | `extract_ideal_completion_text` HealthBench glue |
-| `src/healthbench_agent/llm_eval/verdict_cache.py` | Create | `VerdictCache` + `CachedJudgeGrader` proxy |
-| `src/healthbench_agent/llm_eval/meta_eval.py` | Create | Registry, 8 metrics, `run_meta_eval`, filters, `FakeJudge`, `demo_labelled_set`, `meta_evaluate` |
-| `src/healthbench_agent/llm_eval/meta_eval_results.py` | Create | `MetricResultsView` UX wrapper |
-| `src/healthbench_agent/llm_eval/cli_meta_eval.py` | Create | `meta-evaluate-judge` argparse CLI |
+| `src/healthbench_agent/llm_eval/cache/store.py` + `cache/cached_judge.py` | Create | `VerdictCache` + `CachedJudgeGrader` proxy |
+| `src/healthbench_agent/llm_eval/meta_eval/` | Create | Subpackage: registry, 8 metrics (`metrics/`), `run_meta_eval` (`runner.py`), filters (`filters.py`), `OracleJudge` (`oracle_judge.py`), `demo_labelled_set` (`demo_data.py`), `meta_evaluate` (`api.py`) |
+| `src/healthbench_agent/llm_eval/meta_eval/results/view.py` + `results/io.py` + `results/plots.py` | Create | `MetricResultsView` UX wrapper + save/load free functions + plot helpers |
+| `src/healthbench_agent/llm_eval/cli/meta_eval.py` | Create | `meta-evaluate-judge` argparse CLI |
 | `src/healthbench_agent/llm_eval/__init__.py` | Modify | Re-export new public symbols |
 | `src/healthbench_agent/prompt_optimization/optimizer.py` | Modify | Add `OptimizationMetric` Protocol |
 | `src/healthbench_agent/prompt_optimization/metric.py` | Modify | `JudgeAgreementMetric`; filter args on `EndToEndMetric`; re-export `EmptyFilterError` |
@@ -95,7 +95,7 @@ All planned work is landed and pushed. Remaining activity for this branch:
 | `tests/domain/test_rubric.py` | Modify | Tag-less from_dict + SPEC.md field tests |
 | `tests/dataset/test_extraction.py` | Create | `extract_ideal_completion_text` schema variants |
 | `tests/llm_eval/test_verdict_cache.py` | Create | Cache + proxy tests |
-| `tests/llm_eval/test_meta_eval.py` | Create | Registry, metrics, runner, filters, FakeJudge, CLI smoke |
+| `tests/llm_eval/test_meta_eval.py` | Create | Registry, metrics, runner, filters, OracleJudge, CLI smoke |
 | `tests/llm_eval/test_meta_eval_results.py` | Create | View tests |
 | `tests/prompt_optimization/test_metric.py` | Modify | `JudgeAgreementMetric` + filter tests |
 | `notebooks/04_judge_meta_evaluation.ipynb` | Create | Five-cell view-based walkthrough |
@@ -110,7 +110,7 @@ All planned work is landed and pushed. Remaining activity for this branch:
 - Create: `src/healthbench_agent/domain/meta_evaluation.py`
 - Test: `tests/domain/test_meta_evaluation.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/domain/test_meta_evaluation.py
@@ -209,12 +209,12 @@ def test_metric_results_carries_no_ux_methods():
     assert forbidden.isdisjoint(set(dir(MetricResults)))
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/domain/test_meta_evaluation.py -v`
 Expected: FAIL with `ModuleNotFoundError: healthbench_agent.domain.meta_evaluation`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```python
 # src/healthbench_agent/domain/meta_evaluation.py
@@ -336,12 +336,12 @@ class MetricResults:
         )
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/domain/test_meta_evaluation.py -v`
 Expected: PASS (6 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/healthbench_agent/domain/meta_evaluation.py tests/domain/test_meta_evaluation.py
@@ -356,7 +356,7 @@ git commit -m "feat(domain): add LabelledSample and MetricResults dataclasses"
 - Modify: `src/healthbench_agent/domain/rubric.py`
 - Test: `tests/domain/test_rubric.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/domain/test_rubric.py` (create if missing — mirror existing test files in the project):
 
@@ -401,12 +401,12 @@ def test_rubric_item_from_dict_ignores_unknown_keys():
     assert item.criterion == "x"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/domain/test_rubric.py -v -k "tolerates_missing_tags or spec_md"`
 Expected: FAIL — `tags` access raises KeyError, attribute lookups raise AttributeError.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Replace [src/healthbench_agent/domain/rubric.py](../../../src/healthbench_agent/domain/rubric.py) with:
 
@@ -480,12 +480,12 @@ class RubricItem:
         )
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `uv run pytest tests/domain/test_rubric.py -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/healthbench_agent/domain/rubric.py tests/domain/test_rubric.py
@@ -500,7 +500,7 @@ git commit -m "feat(domain): add optional SPEC.md fields to RubricItem"
 - Modify: `src/healthbench_agent/domain/dataset.py`
 - Test: `tests/domain/test_meta_evaluation.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/domain/test_meta_evaluation.py`:
 
@@ -559,12 +559,12 @@ def test_loaded_health_bench_sample_can_set_gold_fields():
     assert sample.expected == {"c1": True}
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/domain/test_meta_evaluation.py::test_health_bench_sample_is_labelled_sample -v`
 Expected: FAIL — `HealthBenchSample` does not inherit from `LabelledSample`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Replace [src/healthbench_agent/domain/dataset.py](../../../src/healthbench_agent/domain/dataset.py) `HealthBenchSample` class with:
 
@@ -628,12 +628,12 @@ class HealthBenchDataset:
         return iter(self.samples)
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `uv run pytest tests/domain/ -v`
 Expected: PASS (LabelledSample, MetricResults, HealthBenchSample tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/healthbench_agent/domain/dataset.py tests/domain/test_meta_evaluation.py
@@ -649,14 +649,14 @@ git commit -m "refactor(domain): make HealthBenchSample inherit from LabelledSam
 - Modify: any file that constructs `HealthBenchSample` positionally past argument 3
 - Test: existing test suite must still pass
 
-- [ ] **Step 1: Find all construction sites**
+- [x] **Step 1: Find all construction sites**
 
 Run: `uv run pytest tests/ -v 2>&1 | tail -50`
 Then `Grep` for `HealthBenchSample(` across both `src/`, `tests/`, and `agents/` and inspect each call.
 
 Use Grep with pattern `HealthBenchSample\(` to enumerate.
 
-- [ ] **Step 2: Migrate each positional call to keyword form**
+- [x] **Step 2: Migrate each positional call to keyword form**
 
 For each match where the 4th positional argument was previously `example_tags`, rewrite to keyword form:
 
@@ -672,17 +672,17 @@ sample = HealthBenchSample(
 )
 ```
 
-- [ ] **Step 3: Run the full domain + dataset test suite**
+- [x] **Step 3: Run the full domain + dataset test suite**
 
 Run: `uv run pytest tests/domain/ tests/dataset/ -v`
 Expected: PASS.
 
-- [ ] **Step 4: Run the full project test suite**
+- [x] **Step 4: Run the full project test suite**
 
 Run: `uv run pytest tests/ -v`
 Expected: PASS — Tasks 1-3 should not have broken anything else.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -u
@@ -699,7 +699,7 @@ git commit -m "refactor: migrate HealthBenchSample call sites to keyword form"
 - Create: `src/healthbench_agent/dataset/extraction.py`
 - Test: `tests/dataset/test_extraction.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/dataset/test_extraction.py
@@ -741,12 +741,12 @@ def test_extract_returns_none_when_list_has_no_assistant_turn():
     assert extract_ideal_completion_text(data) is None
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/dataset/test_extraction.py -v`
 Expected: FAIL — `ModuleNotFoundError`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```python
 # src/healthbench_agent/dataset/extraction.py
@@ -801,12 +801,12 @@ def extract_ideal_completion_text(
     return None
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `uv run pytest tests/dataset/test_extraction.py -v`
 Expected: PASS (7 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/healthbench_agent/dataset/extraction.py tests/dataset/test_extraction.py
@@ -820,10 +820,10 @@ git commit -m "feat(dataset): add extract_ideal_completion_text helper"
 ### Task 6: Create `VerdictCache`
 
 **Files:**
-- Create: `src/healthbench_agent/llm_eval/verdict_cache.py`
+- Create: `src/healthbench_agent/llm_eval/cache/store.py`
 - Test: `tests/llm_eval/test_verdict_cache.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/llm_eval/test_verdict_cache.py
@@ -835,7 +835,7 @@ from pathlib import Path
 import pytest
 
 from healthbench_agent.domain.evaluation import CriterionVerdict
-from healthbench_agent.llm_eval.verdict_cache import VerdictCache
+from healthbench_agent.llm_eval.cache.store import VerdictCache
 
 
 @pytest.fixture
@@ -931,15 +931,15 @@ def test_two_instances_share_cache_files(tmp_path: Path):
     assert b.get(key) is not None
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/llm_eval/test_verdict_cache.py -v`
 Expected: FAIL — `ModuleNotFoundError`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```python
-# src/healthbench_agent/llm_eval/verdict_cache.py
+# src/healthbench_agent/llm_eval/cache/store.py
 """File-based cache for individual judge verdicts.
 
 Enables iterating on metric definitions, filters, or output formats without
@@ -1058,15 +1058,15 @@ class VerdictCache:
         return {"hits": self._hits, "misses": self._misses, "size_bytes": size}
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `uv run pytest tests/llm_eval/test_verdict_cache.py -v`
 Expected: PASS (10+ tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add src/healthbench_agent/llm_eval/verdict_cache.py tests/llm_eval/test_verdict_cache.py
+git add src/healthbench_agent/llm_eval/cache/store.py tests/llm_eval/test_verdict_cache.py
 git commit -m "feat(llm_eval): add file-based VerdictCache"
 ```
 
@@ -1075,17 +1075,17 @@ git commit -m "feat(llm_eval): add file-based VerdictCache"
 ### Task 7: Add `CachedJudgeGrader` proxy
 
 **Files:**
-- Modify: `src/healthbench_agent/llm_eval/verdict_cache.py`
+- Create: `src/healthbench_agent/llm_eval/cache/cached_judge.py`
 - Test: `tests/llm_eval/test_verdict_cache.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/llm_eval/test_verdict_cache.py`:
 
 ```python
 from unittest.mock import MagicMock
 
-from healthbench_agent.llm_eval.verdict_cache import CachedJudgeGrader
+from healthbench_agent.llm_eval.cache.cached_judge import CachedJudgeGrader
 
 
 def _make_inner(verdicts: list[CriterionVerdict]) -> MagicMock:
@@ -1157,14 +1157,14 @@ def test_cached_proxy_preserves_input_rubric_order(cache: VerdictCache):
     assert out[1] == v2
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/llm_eval/test_verdict_cache.py -v -k "cached_proxy"`
 Expected: FAIL — `CachedJudgeGrader` does not exist.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
-Append to `src/healthbench_agent/llm_eval/verdict_cache.py`:
+Create `src/healthbench_agent/llm_eval/cache/cached_judge.py`:
 
 ```python
 class CachedJudgeGrader(JudgeGrader):
@@ -1232,15 +1232,15 @@ class CachedJudgeGrader(JudgeGrader):
         return [cached[i] for i in range(len(rubric_items))]
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `uv run pytest tests/llm_eval/test_verdict_cache.py -v`
 Expected: PASS (all proxy tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add src/healthbench_agent/llm_eval/verdict_cache.py tests/llm_eval/test_verdict_cache.py
+git add src/healthbench_agent/llm_eval/cache/cached_judge.py tests/llm_eval/test_verdict_cache.py
 git commit -m "feat(llm_eval): add CachedJudgeGrader proxy"
 ```
 
@@ -1248,13 +1248,13 @@ git commit -m "feat(llm_eval): add CachedJudgeGrader proxy"
 
 ## Phase 4 — Meta-Eval Module Skeleton
 
-### Task 8: Create `meta_eval.py` with `MetricLevel`, `MetricSpec`, registry
+### Task 8: Create `meta_eval/` subpackage with `MetricLevel`, `MetricSpec`, registry
 
 **Files:**
-- Create: `src/healthbench_agent/llm_eval/meta_eval.py`
+- Create: `src/healthbench_agent/llm_eval/meta_eval/metrics/registry.py`
 - Test: `tests/llm_eval/test_meta_eval.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/llm_eval/test_meta_eval.py
@@ -1306,20 +1306,20 @@ def test_get_meta_metric_unknown_raises():
         get_meta_metric("totally_unknown_metric")
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v`
 Expected: FAIL — module does not exist.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```python
-# src/healthbench_agent/llm_eval/meta_eval.py
+# src/healthbench_agent/llm_eval/meta_eval/metrics/registry.py
 """Meta-evaluation registry, runner, and built-in metrics for LLM-as-judge.
 
-The module is dataset-agnostic: it operates on lists of LabelledSample.
+The subpackage is dataset-agnostic: it operates on lists of LabelledSample.
 HealthBench-specific glue (subset loading, ideal completion extraction)
-lives in ``cli_meta_eval.py``.
+lives in ``llm_eval/cli/meta_eval.py``.
 
 Adding a new metric is one decorated function — name, level, description,
 and the pure DataFrame transform. Zero changes anywhere else.
@@ -1398,15 +1398,15 @@ def registered_meta_metrics() -> dict[str, MetricSpec]:
     return _METRIC_REGISTRY
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add src/healthbench_agent/llm_eval/meta_eval.py tests/llm_eval/test_meta_eval.py
+git add src/healthbench_agent/llm_eval/meta_eval/metrics/registry.py tests/llm_eval/test_meta_eval.py
 git commit -m "feat(llm_eval): add meta_eval registry and MetricLevel"
 ```
 
@@ -1415,10 +1415,10 @@ git commit -m "feat(llm_eval): add meta_eval registry and MetricLevel"
 ### Task 9: Add `EmptyFilterError` and filter helpers
 
 **Files:**
-- Modify: `src/healthbench_agent/llm_eval/meta_eval.py`
+- Modify: `src/healthbench_agent/llm_eval/meta_eval/filters.py`
 - Test: `tests/llm_eval/test_meta_eval.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/llm_eval/test_meta_eval.py`:
 
@@ -1485,14 +1485,14 @@ def test_empty_filter_error_carries_filter_reprs():
     assert "language='fr'" in str(err)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k "filter or empty_filter or axis"`
 Expected: FAIL.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
-Append to `src/healthbench_agent/llm_eval/meta_eval.py`:
+Append to `src/healthbench_agent/llm_eval/meta_eval/filters.py`:
 
 ```python
 from healthbench_agent.domain.meta_evaluation import LabelledSample
@@ -1570,15 +1570,15 @@ def specialty_filter(*specialties: str) -> Callable[[LabelledSample], bool]:
     return predicate
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add src/healthbench_agent/llm_eval/meta_eval.py tests/llm_eval/test_meta_eval.py
+git add src/healthbench_agent/llm_eval/meta_eval/filters.py tests/llm_eval/test_meta_eval.py
 git commit -m "feat(llm_eval): add EmptyFilterError and filter helpers to meta_eval"
 ```
 
@@ -1589,10 +1589,10 @@ git commit -m "feat(llm_eval): add EmptyFilterError and filter helpers to meta_e
 ### Task 10: Implement `gold_score`
 
 **Files:**
-- Modify: `src/healthbench_agent/llm_eval/meta_eval.py`
+- Modify: `src/healthbench_agent/llm_eval/meta_eval/metrics/agreement.py`
 - Test: `tests/llm_eval/test_meta_eval.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/llm_eval/test_meta_eval.py`:
 
@@ -1638,14 +1638,14 @@ def test_gold_score_registered_with_sample_level():
     assert spec.level is MetricLevel.SAMPLE
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k gold_score`
 Expected: FAIL.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
-Append to `src/healthbench_agent/llm_eval/meta_eval.py`:
+Append to `src/healthbench_agent/llm_eval/meta_eval/metrics/agreement.py`:
 
 ```python
 from statistics import fmean
@@ -1691,15 +1691,15 @@ def gold_score(verdicts: "pd.DataFrame") -> float:
     return fmean(per_sample_scores) if per_sample_scores else 0.0
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k gold_score`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add src/healthbench_agent/llm_eval/meta_eval.py tests/llm_eval/test_meta_eval.py
+git add src/healthbench_agent/llm_eval/meta_eval/metrics/agreement.py tests/llm_eval/test_meta_eval.py
 git commit -m "feat(llm_eval): add gold_score meta-eval metric"
 ```
 
@@ -1708,10 +1708,10 @@ git commit -m "feat(llm_eval): add gold_score meta-eval metric"
 ### Task 11: Implement `cohens_kappa` and `krippendorff_alpha`
 
 **Files:**
-- Modify: `src/healthbench_agent/llm_eval/meta_eval.py`
+- Modify: `src/healthbench_agent/llm_eval/meta_eval/metrics/agreement.py`
 - Test: `tests/llm_eval/test_meta_eval.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 from healthbench_agent.llm_eval.meta_eval import cohens_kappa, krippendorff_alpha
@@ -1753,14 +1753,14 @@ def test_krippendorff_alpha_random_is_near_zero():
     assert abs(krippendorff_alpha(df)) < 0.5
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k "kappa or alpha"`
 Expected: FAIL.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
-Append to `src/healthbench_agent/llm_eval/meta_eval.py`:
+Append to `src/healthbench_agent/llm_eval/meta_eval/metrics/agreement.py`:
 
 ```python
 def _majority_vote_columns(df: "pd.DataFrame") -> tuple[list[bool], list[bool]]:
@@ -1815,15 +1815,15 @@ def krippendorff_alpha(verdicts: "pd.DataFrame") -> float:
     return float(1.0 - do_metric / de_metric)
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k "kappa or alpha"`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add src/healthbench_agent/llm_eval/meta_eval.py tests/llm_eval/test_meta_eval.py
+git add src/healthbench_agent/llm_eval/meta_eval/metrics/agreement.py tests/llm_eval/test_meta_eval.py
 git commit -m "feat(llm_eval): add cohens_kappa and krippendorff_alpha metrics"
 ```
 
@@ -1832,10 +1832,10 @@ git commit -m "feat(llm_eval): add cohens_kappa and krippendorff_alpha metrics"
 ### Task 12: Implement `calibration_curve`
 
 **Files:**
-- Modify: `src/healthbench_agent/llm_eval/meta_eval.py`
+- Modify: `src/healthbench_agent/llm_eval/meta_eval/metrics/stratified.py`
 - Test: `tests/llm_eval/test_meta_eval.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 from healthbench_agent.llm_eval.meta_eval import calibration_curve
@@ -1867,14 +1867,14 @@ def test_calibration_curve_empty_dataframe_returns_empty_dict():
     assert calibration_curve(df) == {}
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k calibration`
 Expected: FAIL.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
-Append to `src/healthbench_agent/llm_eval/meta_eval.py`:
+Append to `src/healthbench_agent/llm_eval/meta_eval/metrics/stratified.py`:
 
 ```python
 @register_meta_metric(
@@ -1909,15 +1909,15 @@ def calibration_curve(verdicts: "pd.DataFrame") -> dict[int, float]:
     return curve
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k calibration`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add src/healthbench_agent/llm_eval/meta_eval.py tests/llm_eval/test_meta_eval.py
+git add src/healthbench_agent/llm_eval/meta_eval/metrics/stratified.py tests/llm_eval/test_meta_eval.py
 git commit -m "feat(llm_eval): add calibration_curve metric"
 ```
 
@@ -1926,10 +1926,10 @@ git commit -m "feat(llm_eval): add calibration_curve metric"
 ### Task 13: Implement `per_dimension_confusion`
 
 **Files:**
-- Modify: `src/healthbench_agent/llm_eval/meta_eval.py`
+- Modify: `src/healthbench_agent/llm_eval/meta_eval/metrics/stratified.py`
 - Test: `tests/llm_eval/test_meta_eval.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 from healthbench_agent.llm_eval.meta_eval import per_dimension_confusion
@@ -1954,14 +1954,14 @@ def test_per_dimension_confusion_unspecified_for_none():
     assert per_dimension_confusion(df)["unspecified"]["tp"] == 1
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k per_dimension`
 Expected: FAIL.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
-Append to `src/healthbench_agent/llm_eval/meta_eval.py`:
+Append to `src/healthbench_agent/llm_eval/meta_eval/metrics/stratified.py`:
 
 ```python
 @register_meta_metric(
@@ -1985,15 +1985,15 @@ def per_dimension_confusion(verdicts: "pd.DataFrame") -> dict[str, dict[str, int
     return result
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k per_dimension`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add src/healthbench_agent/llm_eval/meta_eval.py tests/llm_eval/test_meta_eval.py
+git add src/healthbench_agent/llm_eval/meta_eval/metrics/stratified.py tests/llm_eval/test_meta_eval.py
 git commit -m "feat(llm_eval): add per_dimension_confusion metric"
 ```
 
@@ -2002,10 +2002,10 @@ git commit -m "feat(llm_eval): add per_dimension_confusion metric"
 ### Task 14: Implement `adversarial_accuracy`, `adversarial_prf1`, `per_criterion_metrics`
 
 **Files:**
-- Modify: `src/healthbench_agent/llm_eval/meta_eval.py`
+- Modify: `src/healthbench_agent/llm_eval/meta_eval/metrics/adversarial.py`
 - Test: `tests/llm_eval/test_meta_eval.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 from healthbench_agent.llm_eval.meta_eval import (
@@ -2048,14 +2048,14 @@ def test_per_criterion_metrics_grouped_by_rubric_key():
     assert set(out["c1"].keys()) == {"accuracy", "precision", "recall", "f1"}
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k "adversarial or per_criterion"`
 Expected: FAIL.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
-Append to `src/healthbench_agent/llm_eval/meta_eval.py`:
+Append to `src/healthbench_agent/llm_eval/meta_eval/metrics/adversarial.py`:
 
 ```python
 @register_meta_metric(
@@ -2124,65 +2124,66 @@ def per_criterion_metrics(verdicts: "pd.DataFrame") -> dict[str, dict[str, float
     return result
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k "adversarial or per_criterion"`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add src/healthbench_agent/llm_eval/meta_eval.py tests/llm_eval/test_meta_eval.py
+git add src/healthbench_agent/llm_eval/meta_eval/metrics/adversarial.py tests/llm_eval/test_meta_eval.py
 git commit -m "feat(llm_eval): add adversarial and per-criterion metrics"
 ```
 
 ---
 
-## Phase 6 — FakeJudge and demo data
+## Phase 6 — OracleJudge and demo data
 
-### Task 15: Add `FakeJudge` and `demo_labelled_set`
+### Task 15: Add `OracleJudge` and `demo_labelled_set`
 
 **Files:**
-- Modify: `src/healthbench_agent/llm_eval/meta_eval.py`
+- Create: `src/healthbench_agent/llm_eval/meta_eval/oracle_judge.py`
+- Create: `src/healthbench_agent/llm_eval/meta_eval/demo_data.py`
 - Test: `tests/llm_eval/test_meta_eval.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 from healthbench_agent.domain.evaluation import CriterionVerdict
-from healthbench_agent.llm_eval.meta_eval import FakeJudge, demo_labelled_set
+from healthbench_agent.llm_eval.meta_eval import OracleJudge, demo_labelled_set
 
 
-def test_fake_judge_always_met_returns_true_for_all():
-    judge = FakeJudge("always_met")
+def test_oracle_judge_always_met_returns_true_for_all():
+    judge = OracleJudge("always_met")
     items = [RubricItem(criterion="a", points=1.0), RubricItem(criterion="b", points=1.0)]
     out = judge.grade([], items)
     assert all(v.criteria_met for v in out)
 
 
-def test_fake_judge_always_fail_returns_false_for_all():
-    judge = FakeJudge("always_fail")
+def test_oracle_judge_always_fail_returns_false_for_all():
+    judge = OracleJudge("always_fail")
     items = [RubricItem(criterion="a", points=1.0)]
     out = judge.grade([], items)
     assert not out[0].criteria_met
 
 
-def test_fake_judge_alternating_flips_per_call():
-    judge = FakeJudge("alternating")
+def test_oracle_judge_alternating_flips_per_call():
+    judge = OracleJudge("alternating")
     out = judge.grade([], [RubricItem(criterion="a", points=1.0), RubricItem(criterion="b", points=1.0)])
     assert out[0].criteria_met is True
     assert out[1].criteria_met is False
 
 
-def test_fake_judge_dict_strategy_honours_mapping():
-    judge = FakeJudge({"a": True, "b": False})
+def test_oracle_judge_dict_strategy_honours_mapping():
+    judge = OracleJudge({"a": True, "b": False})
     out = judge.grade([], [RubricItem(criterion="a", points=1.0), RubricItem(criterion="b", points=1.0)])
     assert out[0].criteria_met is True
     assert out[1].criteria_met is False
 
 
-def test_fake_judge_callable_strategy():
-    judge = FakeJudge(lambda item: item.points > 0)
+def test_oracle_judge_callable_strategy():
+    judge = OracleJudge(lambda item: item.points > 0)
     out = judge.grade([], [RubricItem(criterion="a", points=1.0), RubricItem(criterion="b", points=-1.0)])
     assert out[0].criteria_met is True
     assert out[1].criteria_met is False
@@ -2199,14 +2200,14 @@ def test_demo_labelled_set_returns_three_samples_with_mixed_flows():
     assert has_adversarial >= 1
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
-Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k "fake_judge or demo_labelled"`
+Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k "oracle_judge or demo_labelled"`
 Expected: FAIL.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
-Append to `src/healthbench_agent/llm_eval/meta_eval.py`:
+Create `src/healthbench_agent/llm_eval/meta_eval/oracle_judge.py` (`OracleJudge`) and `src/healthbench_agent/llm_eval/meta_eval/demo_data.py` (`demo_labelled_set`). For clarity they are shown together in the same snippet below, though in the real layout the class and helper live in separate modules:
 
 ```python
 from healthbench_agent.domain.conversation import MessageList
@@ -2214,8 +2215,14 @@ from healthbench_agent.domain.evaluation import CriterionVerdict
 from healthbench_agent.domain.judge import JudgeGrader
 
 
-class FakeJudge(JudgeGrader):
-    """Deterministic JudgeGrader for tests, demos, and docs.
+class OracleJudge(JudgeGrader):
+    """Deterministic oracle JudgeGrader for meta-evaluation smoke tests and demos.
+
+    An oracle judge scores rubric items against a deterministic strategy
+    rather than calling an LLM. Used as the baseline "known-answer"
+    evaluator in meta-evaluation smoke tests, documentation snippets,
+    and offline runs where real LLM grading would be cost-prohibitive
+    or non-reproducible.
 
     Strategies:
         - "always_met"  / "always_fail" / "alternating"
@@ -2238,7 +2245,7 @@ class FakeJudge(JudgeGrader):
         for idx, item in enumerate(rubric_items):
             met = self._verdict_for(item, idx)
             verdicts.append(
-                CriterionVerdict(criterion=item.criterion, criteria_met=met, explanation="fake")
+                CriterionVerdict(criterion=item.criterion, criteria_met=met, explanation="oracle")
             )
         return verdicts
 
@@ -2254,7 +2261,7 @@ class FakeJudge(JudgeGrader):
             return False
         if strategy == "alternating":
             return idx % 2 == 0
-        raise ValueError(f"Unknown FakeJudge strategy: {strategy!r}")
+        raise ValueError(f"Unknown OracleJudge strategy: {strategy!r}")
 
 
 def demo_labelled_set() -> list[LabelledSample]:
@@ -2303,16 +2310,16 @@ def demo_labelled_set() -> list[LabelledSample]:
     ]
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
-Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k "fake_judge or demo_labelled"`
+Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k "oracle_judge or demo_labelled"`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add src/healthbench_agent/llm_eval/meta_eval.py tests/llm_eval/test_meta_eval.py
-git commit -m "feat(llm_eval): add FakeJudge and demo_labelled_set helpers"
+git add src/healthbench_agent/llm_eval/meta_eval/oracle_judge.py src/healthbench_agent/llm_eval/meta_eval/demo_data.py tests/llm_eval/test_meta_eval.py
+git commit -m "feat(llm_eval): add OracleJudge and demo_labelled_set helpers"
 ```
 
 ---
@@ -2322,10 +2329,10 @@ git commit -m "feat(llm_eval): add FakeJudge and demo_labelled_set helpers"
 ### Task 16: Implement `run_meta_eval` (filter resolution + verdict DataFrame build)
 
 **Files:**
-- Modify: `src/healthbench_agent/llm_eval/meta_eval.py`
+- Modify: `src/healthbench_agent/llm_eval/meta_eval/runner.py`
 - Test: `tests/llm_eval/test_meta_eval.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 from healthbench_agent.llm_eval.meta_eval import run_meta_eval
@@ -2335,11 +2342,11 @@ def _axis_extractor(item: RubricItem) -> str | None:
     return item.category
 
 
-def test_run_meta_eval_with_fake_judge_produces_scores(tmp_path):
+def test_run_meta_eval_with_oracle_judge_produces_scores(tmp_path):
     samples = demo_labelled_set()
     perfect = {c: m for s in samples for c, m in s.expected.items()}
     view = run_meta_eval(
-        FakeJudge(perfect),
+        OracleJudge(perfect),
         samples,
         dimension_extractor=_axis_extractor,
         n_samples=2,
@@ -2353,7 +2360,7 @@ def test_run_meta_eval_with_fake_judge_produces_scores(tmp_path):
 def test_run_meta_eval_persists_artifacts(tmp_path):
     samples = demo_labelled_set()
     view = run_meta_eval(
-        FakeJudge("always_met"),
+        OracleJudge("always_met"),
         samples,
         dimension_extractor=_axis_extractor,
         n_samples=1,
@@ -2369,7 +2376,7 @@ def test_run_meta_eval_sample_filter_rejects_all_raises_empty_filter(tmp_path):
     samples = demo_labelled_set()
     with pytest.raises(EmptyFilterError):
         run_meta_eval(
-            FakeJudge("always_met"),
+            OracleJudge("always_met"),
             samples,
             dimension_extractor=_axis_extractor,
             sample_filter=lambda s: False,
@@ -2382,7 +2389,7 @@ def test_run_meta_eval_rubric_filter_rejects_all_raises_empty_filter():
     samples = demo_labelled_set()
     with pytest.raises(EmptyFilterError):
         run_meta_eval(
-            FakeJudge("always_met"),
+            OracleJudge("always_met"),
             samples,
             dimension_extractor=_axis_extractor,
             rubric_filter=lambda r: False,
@@ -2407,7 +2414,7 @@ def test_run_meta_eval_skips_sample_metrics_when_only_adversarial(caplog):
         ],
     )
     view = run_meta_eval(
-        FakeJudge("always_met"),
+        OracleJudge("always_met"),
         [sample],
         dimension_extractor=_axis_extractor,
         metric_names=["gold_score", "adversarial_accuracy"],
@@ -2428,7 +2435,7 @@ def test_run_meta_eval_raises_when_every_metric_skipped():
     )
     with pytest.raises(EmptyFilterError, match="gold_score"):
         run_meta_eval(
-            FakeJudge("always_met"),
+            OracleJudge("always_met"),
             [sample],
             dimension_extractor=_axis_extractor,
             metric_names=["gold_score"],
@@ -2437,14 +2444,14 @@ def test_run_meta_eval_raises_when_every_metric_skipped():
         )
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k run_meta_eval`
 Expected: FAIL.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
-Append to `src/healthbench_agent/llm_eval/meta_eval.py`:
+Append to `src/healthbench_agent/llm_eval/meta_eval/runner.py`:
 
 ```python
 import json
@@ -2456,8 +2463,8 @@ from pathlib import Path
 from healthbench_agent.domain.meta_evaluation import MetricResults
 
 if TYPE_CHECKING:
-    from healthbench_agent.llm_eval.meta_eval_results import MetricResultsView
-    from healthbench_agent.llm_eval.verdict_cache import VerdictCache
+    from healthbench_agent.llm_eval.cache.store import VerdictCache
+    from healthbench_agent.llm_eval.meta_eval.results import MetricResultsView
 
 logger = logging.getLogger(__name__)
 
@@ -2554,8 +2561,8 @@ def run_meta_eval(
     """Grade labelled samples k times with one judge, compute metrics, persist."""
     import pandas as pd
 
-    from healthbench_agent.llm_eval.meta_eval_results import MetricResultsView
-    from healthbench_agent.llm_eval.verdict_cache import CachedJudgeGrader
+    from healthbench_agent.llm_eval.cache.cached_judge import CachedJudgeGrader
+    from healthbench_agent.llm_eval.meta_eval.results import MetricResultsView
 
     # Step 1: sample filter
     if sample_filter is not None:
@@ -2716,17 +2723,17 @@ def run_meta_eval(
     return MetricResultsView(results=results)
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 > **Execution-order note:** `run_meta_eval` does a *function-local* lazy import of `MetricResultsView` (defined in Task 17). At module-load time, importing `meta_eval.py` will succeed; the import only fires when `run_meta_eval()` is actually called. So the integration tests in this step depend on Task 17 being implemented first. **Do Task 17 before running this step.** Once Task 17 is in place, return here and run the verification.
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k run_meta_eval`
 Expected: PASS for every test in the `run_meta_eval` block (covers cache wiring, filter resolution, metric dispatch, and persistence).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add src/healthbench_agent/llm_eval/meta_eval.py tests/llm_eval/test_meta_eval.py
+git add src/healthbench_agent/llm_eval/meta_eval/runner.py tests/llm_eval/test_meta_eval.py
 git commit -m "feat(llm_eval): implement run_meta_eval with filter, cache, and metric dispatch"
 ```
 
@@ -2737,10 +2744,10 @@ git commit -m "feat(llm_eval): implement run_meta_eval with filter, cache, and m
 ### Task 17: Create `MetricResultsView` (printing + IO)
 
 **Files:**
-- Create: `src/healthbench_agent/llm_eval/meta_eval_results.py`
+- Create: `src/healthbench_agent/llm_eval/meta_eval/results/view.py`
 - Test: `tests/llm_eval/test_meta_eval_results.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/llm_eval/test_meta_eval_results.py
@@ -2752,7 +2759,7 @@ from pathlib import Path
 import pytest
 
 from healthbench_agent.domain.meta_evaluation import MetricResults
-from healthbench_agent.llm_eval.meta_eval_results import MetricResultsView
+from healthbench_agent.llm_eval.meta_eval.results.view import MetricResultsView
 
 
 @pytest.fixture
@@ -2810,15 +2817,15 @@ def test_load_missing_metrics_json_raises(tmp_path: Path):
         MetricResultsView.load(tmp_path)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval_results.py -v`
 Expected: FAIL — module does not exist.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```python
-# src/healthbench_agent/llm_eval/meta_eval_results.py
+# src/healthbench_agent/llm_eval/meta_eval/results/view.py
 """User-facing wrapper around the pure-domain MetricResults dataclass.
 
 Adds REPL/Jupyter/IO/plot helpers without dragging matplotlib, pandas,
@@ -2948,15 +2955,15 @@ class MetricResultsView:
         return self._verdicts_cache
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval_results.py -v -k "repr or summary or html or pandas or save or load"`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add src/healthbench_agent/llm_eval/meta_eval_results.py tests/llm_eval/test_meta_eval_results.py
+git add src/healthbench_agent/llm_eval/meta_eval/results/view.py tests/llm_eval/test_meta_eval_results.py
 git commit -m "feat(llm_eval): add MetricResultsView with repr, summary, IO helpers"
 ```
 
@@ -2965,10 +2972,10 @@ git commit -m "feat(llm_eval): add MetricResultsView with repr, summary, IO help
 ### Task 18: Add `MetricResultsView.compare` and plot helpers
 
 **Files:**
-- Modify: `src/healthbench_agent/llm_eval/meta_eval_results.py`
+- Modify: `src/healthbench_agent/llm_eval/meta_eval/results/view.py`
 - Test: `tests/llm_eval/test_meta_eval_results.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append:
 
@@ -3017,14 +3024,14 @@ def test_plot_calibration_curve_raises_keyerror_when_missing(view):
         view.plot_calibration_curve()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval_results.py -v -k "compare or plot"`
 Expected: FAIL — methods do not exist.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
-Append to `src/healthbench_agent/llm_eval/meta_eval_results.py`:
+Append to `src/healthbench_agent/llm_eval/meta_eval/results/view.py`:
 
 ```python
     # ---- comparison ------------------------------------------------------
@@ -3094,15 +3101,15 @@ Append to `src/healthbench_agent/llm_eval/meta_eval_results.py`:
         return ax
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval_results.py -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add src/healthbench_agent/llm_eval/meta_eval_results.py tests/llm_eval/test_meta_eval_results.py
+git add src/healthbench_agent/llm_eval/meta_eval/results/view.py tests/llm_eval/test_meta_eval_results.py
 git commit -m "feat(llm_eval): add compare() and plot helpers to MetricResultsView"
 ```
 
@@ -3113,16 +3120,16 @@ git commit -m "feat(llm_eval): add compare() and plot helpers to MetricResultsVi
 ### Task 19: Implement `meta_evaluate()` and re-export public symbols
 
 **Files:**
-- Modify: `src/healthbench_agent/llm_eval/meta_eval.py`
+- Modify: `src/healthbench_agent/llm_eval/meta_eval/api.py`
 - Modify: `src/healthbench_agent/llm_eval/__init__.py`
 - Test: `tests/llm_eval/test_meta_eval.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/llm_eval/test_meta_eval.py`:
 
 ```python
-def test_meta_evaluate_with_fake_judge_returns_view(monkeypatch, tmp_path):
+def test_meta_evaluate_with_oracle_judge_returns_view(monkeypatch, tmp_path):
     """meta_evaluate should accept a JudgeConfig and a pre-built dataset path."""
     from healthbench_agent.llm_eval import meta_evaluate
 
@@ -3135,7 +3142,7 @@ def test_meta_evaluate_with_fake_judge_returns_view(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "healthbench_agent.llm_eval.meta_eval._build_judge_for_meta_eval",
-        lambda config, temperature: (FakeJudge("always_met"), "fake/model@1.0", "sha"),
+        lambda config, temperature: (OracleJudge("always_met"), "fake/model@1.0", "sha"),
     )
 
     view = meta_evaluate(
@@ -3149,14 +3156,14 @@ def test_meta_evaluate_with_fake_judge_returns_view(monkeypatch, tmp_path):
     assert view.results.scores
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k meta_evaluate`
 Expected: FAIL.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
-Append to `src/healthbench_agent/llm_eval/meta_eval.py`:
+Append to `src/healthbench_agent/llm_eval/meta_eval/api.py`:
 
 ```python
 def _load_subset_for_meta_eval(
@@ -3187,8 +3194,8 @@ def _build_judge_for_meta_eval(
     temperature: float,
 ) -> tuple[JudgeGrader, str, str]:
     """Build the judge + return its (model_fingerprint, prompt_sha) for caching."""
-    from healthbench_agent.llm_eval.config_grader import JudgeConfig
-    from healthbench_agent.llm_eval.grader import create_judge, load_grader_prompt
+    from healthbench_agent.llm_eval.grading.config import JudgeConfig
+    from healthbench_agent.llm_eval.grading.judge import create_judge, load_grader_prompt
 
     if isinstance(config, (str, Path)):
         cfg = JudgeConfig.from_yaml(str(config))
@@ -3219,7 +3226,7 @@ def meta_evaluate(
     seed: int = 0,
 ) -> "MetricResultsView":
     """Meta-evaluate one judge end-to-end with sensible defaults."""
-    from healthbench_agent.llm_eval.verdict_cache import VerdictCache
+    from healthbench_agent.llm_eval.cache.store import VerdictCache
 
     samples = _load_subset_for_meta_eval(subset, sample_size, seed)
     judge, fingerprint, prompt_sha = _build_judge_for_meta_eval(judge_config, temperature)
@@ -3258,12 +3265,14 @@ def meta_evaluate(
 Modify [src/healthbench_agent/llm_eval/__init__.py](../../../src/healthbench_agent/llm_eval/__init__.py) to re-export:
 
 ```python
+from .cache import CachedJudgeGrader, VerdictCache
 from .meta_eval import (
     AXIS_TAG_PREFIX,
     EmptyFilterError,
-    FakeJudge,
     MetricLevel,
+    MetricResultsView,
     MetricSpec,
+    OracleJudge,
     axis_filter,
     demo_labelled_set,
     get_meta_metric,
@@ -3274,21 +3283,19 @@ from .meta_eval import (
     run_meta_eval,
     specialty_filter,
 )
-from .meta_eval_results import MetricResultsView
-from .verdict_cache import CachedJudgeGrader, VerdictCache
 ```
 
 Add the new names to `__all__` in the same file.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k meta_evaluate`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add src/healthbench_agent/llm_eval/meta_eval.py src/healthbench_agent/llm_eval/__init__.py tests/llm_eval/test_meta_eval.py
+git add src/healthbench_agent/llm_eval/meta_eval/api.py src/healthbench_agent/llm_eval/__init__.py tests/llm_eval/test_meta_eval.py
 git commit -m "feat(llm_eval): add meta_evaluate happy-path API and re-export public symbols"
 ```
 
@@ -3296,20 +3303,20 @@ git commit -m "feat(llm_eval): add meta_evaluate happy-path API and re-export pu
 
 ## Phase 10 — CLI
 
-### Task 20: Create `cli_meta_eval.py` skeleton with `run` subcommand
+### Task 20: Create `cli/meta_eval.py` skeleton with `run` subcommand
 
 **Files:**
-- Create: `src/healthbench_agent/llm_eval/cli_meta_eval.py`
+- Create: `src/healthbench_agent/llm_eval/cli/meta_eval.py`
 - Test: `tests/llm_eval/test_meta_eval.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append:
 
 ```python
 def test_cli_run_dispatches_to_run_meta_eval(monkeypatch, tmp_path, capsys):
     """CLI run subcommand should call run_meta_eval with parsed args."""
-    from healthbench_agent.llm_eval import cli_meta_eval
+    from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
 
     called: dict[str, Any] = {}
 
@@ -3321,17 +3328,17 @@ def test_cli_run_dispatches_to_run_meta_eval(monkeypatch, tmp_path, capsys):
             n_rubrics_graded=1,
             judge_metadata={"judge_model": "fake"},
         )
-        from healthbench_agent.llm_eval.meta_eval_results import MetricResultsView
+        from healthbench_agent.llm_eval.meta_eval.results.view import MetricResultsView
         return MetricResultsView(results=results)
 
-    monkeypatch.setattr("healthbench_agent.llm_eval.cli_meta_eval.run_meta_eval", fake_run)
+    monkeypatch.setattr("healthbench_agent.llm_eval.cli.meta_eval.run_meta_eval", fake_run)
     monkeypatch.setattr(
-        "healthbench_agent.llm_eval.cli_meta_eval._load_consensus_labelled",
+        "healthbench_agent.llm_eval.cli.meta_eval._load_consensus_labelled",
         lambda subset, sample_size, seed: (demo_labelled_set(), lambda r: r.category),
     )
     monkeypatch.setattr(
-        "healthbench_agent.llm_eval.cli_meta_eval._build_judge_for_cli",
-        lambda config, temperature: (FakeJudge("always_met"), "fake@1", "sha"),
+        "healthbench_agent.llm_eval.cli.meta_eval._build_judge_for_cli",
+        lambda config, temperature: (OracleJudge("always_met"), "fake@1", "sha"),
     )
 
     cli_meta_eval.main(
@@ -3352,15 +3359,15 @@ def test_cli_run_dispatches_to_run_meta_eval(monkeypatch, tmp_path, capsys):
     assert "gold_score" in captured.out
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k cli_run`
 Expected: FAIL.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```python
-# src/healthbench_agent/llm_eval/cli_meta_eval.py
+# src/healthbench_agent/llm_eval/cli/meta_eval.py
 """``meta-evaluate-judge`` CLI.
 
 argparse subcommands: run / regenerate / compare / list-metrics /
@@ -3378,13 +3385,13 @@ from healthbench_agent.domain.meta_evaluation import LabelledSample
 from healthbench_agent.domain.rubric import RubricItem
 from healthbench_agent.llm_eval.meta_eval import (
     EmptyFilterError,
-    FakeJudge,  # noqa: F401  -- re-exported for tests
+    OracleJudge,  # noqa: F401  -- re-exported for tests
     axis_filter,
     metadata_filter,
     run_meta_eval,
 )
-from healthbench_agent.llm_eval.meta_eval_results import MetricResultsView
-from healthbench_agent.llm_eval.verdict_cache import VerdictCache
+from healthbench_agent.llm_eval.meta_eval.results.view import MetricResultsView
+from healthbench_agent.llm_eval.cache.store import VerdictCache
 
 logger = logging.getLogger(__name__)
 
@@ -3427,8 +3434,8 @@ def _load_consensus_labelled(
 
 
 def _build_judge_for_cli(config_path: str, temperature: float):
-    from healthbench_agent.llm_eval.config_grader import JudgeConfig
-    from healthbench_agent.llm_eval.grader import create_judge, load_grader_prompt
+    from healthbench_agent.llm_eval.grading.config import JudgeConfig
+    from healthbench_agent.llm_eval.grading.judge import create_judge, load_grader_prompt
 
     cfg = JudgeConfig.from_yaml(config_path)
     cfg = cfg.model_copy(update={"temperature": temperature})
@@ -3526,15 +3533,15 @@ if __name__ == "__main__":  # pragma: no cover
     main()
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k cli_run`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add src/healthbench_agent/llm_eval/cli_meta_eval.py tests/llm_eval/test_meta_eval.py
+git add src/healthbench_agent/llm_eval/cli/meta_eval.py tests/llm_eval/test_meta_eval.py
 git commit -m "feat(cli): add meta-evaluate-judge run subcommand"
 ```
 
@@ -3543,14 +3550,14 @@ git commit -m "feat(cli): add meta-evaluate-judge run subcommand"
 ### Task 21: Add `regenerate`, `compare`, `clear-cache`, `list-metrics`, `list-metadata-keys` subcommands
 
 **Files:**
-- Modify: `src/healthbench_agent/llm_eval/cli_meta_eval.py`
+- Modify: `src/healthbench_agent/llm_eval/cli/meta_eval.py`
 - Test: `tests/llm_eval/test_meta_eval.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_cli_list_metrics_prints_all(capsys):
-    from healthbench_agent.llm_eval import cli_meta_eval
+    from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
     cli_meta_eval.main(["list-metrics"])
     out = capsys.readouterr().out
     for name in (
@@ -3561,14 +3568,14 @@ def test_cli_list_metrics_prints_all(capsys):
 
 
 def test_cli_clear_cache_removes_directory(tmp_path, monkeypatch, capsys):
-    from healthbench_agent.llm_eval import cli_meta_eval
+    from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
     cache = VerdictCache(root=tmp_path / "cache", enabled=True)
     cache.put(
         cache.make_key("m", "s", [{"role": "user", "content": "x"}], "rt", 1),
         CriterionVerdict(criterion="rt", criteria_met=True, explanation=""),
     )
     monkeypatch.setattr(
-        "healthbench_agent.llm_eval.cli_meta_eval._default_cache_for_cli",
+        "healthbench_agent.llm_eval.cli.meta_eval._default_cache_for_cli",
         lambda: cache,
     )
     cli_meta_eval.main(["clear-cache"])
@@ -3576,11 +3583,11 @@ def test_cli_clear_cache_removes_directory(tmp_path, monkeypatch, capsys):
 
 
 def test_cli_regenerate_replays_metrics(tmp_path, monkeypatch):
-    from healthbench_agent.llm_eval import cli_meta_eval
+    from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
 
     samples = demo_labelled_set()
     view = run_meta_eval(
-        FakeJudge({c: m for s in samples for c, m in s.expected.items()}),
+        OracleJudge({c: m for s in samples for c, m in s.expected.items()}),
         samples,
         dimension_extractor=lambda r: r.category,
         n_samples=1,
@@ -3597,7 +3604,7 @@ def test_cli_regenerate_replays_metrics(tmp_path, monkeypatch):
 
 
 def test_cli_compare_prints_diff_table(tmp_path, capsys):
-    from healthbench_agent.llm_eval import cli_meta_eval
+    from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
 
     a_dir = tmp_path / "a"
     b_dir = tmp_path / "b"
@@ -3624,9 +3631,9 @@ def test_cli_compare_prints_diff_table(tmp_path, capsys):
 
 
 def test_cli_list_metadata_keys(monkeypatch, capsys):
-    from healthbench_agent.llm_eval import cli_meta_eval
+    from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
     monkeypatch.setattr(
-        "healthbench_agent.llm_eval.cli_meta_eval._load_consensus_labelled",
+        "healthbench_agent.llm_eval.cli.meta_eval._load_consensus_labelled",
         lambda subset, sample_size, seed: (demo_labelled_set(), lambda r: r.category),
     )
     cli_meta_eval.main(["list-metadata-keys", "--sample-size", "3"])
@@ -3634,14 +3641,14 @@ def test_cli_list_metadata_keys(monkeypatch, capsys):
     assert "language" in out or "specialty" in out or "clinical_urgency" in out
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k "list_metrics or clear_cache or regenerate or compare or list_metadata"`
 Expected: FAIL.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
-Append to `src/healthbench_agent/llm_eval/cli_meta_eval.py`:
+Append to `src/healthbench_agent/llm_eval/cli/meta_eval.py`:
 
 ```python
 def _default_cache_for_cli() -> VerdictCache:
@@ -3773,15 +3780,15 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(1)
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k "list_metrics or clear_cache or regenerate or compare or list_metadata"`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add src/healthbench_agent/llm_eval/cli_meta_eval.py tests/llm_eval/test_meta_eval.py
+git add src/healthbench_agent/llm_eval/cli/meta_eval.py tests/llm_eval/test_meta_eval.py
 git commit -m "feat(cli): add regenerate/compare/list-metrics/list-metadata-keys/clear-cache subcommands"
 ```
 
@@ -3790,14 +3797,14 @@ git commit -m "feat(cli): add regenerate/compare/list-metrics/list-metadata-keys
 ### Task 22: Add `--dry-run` cost preview and default-subcommand workaround
 
 **Files:**
-- Modify: `src/healthbench_agent/llm_eval/cli_meta_eval.py`
+- Modify: `src/healthbench_agent/llm_eval/cli/meta_eval.py`
 - Test: `tests/llm_eval/test_meta_eval.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_cli_dry_run_does_not_call_judge(monkeypatch, capsys):
-    from healthbench_agent.llm_eval import cli_meta_eval
+    from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
     judge_calls = {"n": 0}
 
     class CountingJudge(JudgeGrader):
@@ -3809,11 +3816,11 @@ def test_cli_dry_run_does_not_call_judge(monkeypatch, capsys):
             ]
 
     monkeypatch.setattr(
-        "healthbench_agent.llm_eval.cli_meta_eval._load_consensus_labelled",
+        "healthbench_agent.llm_eval.cli.meta_eval._load_consensus_labelled",
         lambda subset, sample_size, seed: (demo_labelled_set(), lambda r: r.category),
     )
     monkeypatch.setattr(
-        "healthbench_agent.llm_eval.cli_meta_eval._build_judge_for_cli",
+        "healthbench_agent.llm_eval.cli.meta_eval._build_judge_for_cli",
         lambda config, temperature: (CountingJudge(), "fake@1", "sha"),
     )
 
@@ -3834,23 +3841,23 @@ def test_cli_dry_run_does_not_call_judge(monkeypatch, capsys):
 
 def test_cli_default_subcommand_inferred_from_leading_flag(monkeypatch, capsys):
     """Bare `meta-evaluate-judge --judge-config foo.yaml` injects 'run'."""
-    from healthbench_agent.llm_eval import cli_meta_eval
+    from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
     monkeypatch.setattr(
-        "healthbench_agent.llm_eval.cli_meta_eval._cmd_run",
+        "healthbench_agent.llm_eval.cli.meta_eval._cmd_run",
         lambda args: print("RUN_CALLED"),
     )
     cli_meta_eval.main(["--judge-config", "x.yaml", "--sample-size", "1"])
     assert "RUN_CALLED" in capsys.readouterr().out
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k "dry_run or default_subcommand"`
 Expected: FAIL.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
-In [src/healthbench_agent/llm_eval/cli_meta_eval.py](../../../src/healthbench_agent/llm_eval/cli_meta_eval.py), modify `_cmd_run` so it short-circuits on `--dry-run`:
+In [src/healthbench_agent/llm_eval/cli/meta_eval.py](../../../src/healthbench_agent/llm_eval/cli/meta_eval.py), modify `_cmd_run` so it short-circuits on `--dry-run`:
 
 ```python
 def _cmd_run(args: argparse.Namespace) -> None:
@@ -3938,15 +3945,15 @@ def main(argv: list[str] | None = None) -> None:
     handlers[args.command](args)
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `uv run pytest tests/llm_eval/test_meta_eval.py -v -k "dry_run or default_subcommand"`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add src/healthbench_agent/llm_eval/cli_meta_eval.py tests/llm_eval/test_meta_eval.py
+git add src/healthbench_agent/llm_eval/cli/meta_eval.py tests/llm_eval/test_meta_eval.py
 git commit -m "feat(cli): add --dry-run cost preview and default-subcommand workaround"
 ```
 
@@ -3960,7 +3967,7 @@ git commit -m "feat(cli): add --dry-run cost preview and default-subcommand work
 - Modify: `src/healthbench_agent/prompt_optimization/optimizer.py`
 - Test: `tests/prompt_optimization/test_optimizer.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append (or create) `tests/prompt_optimization/test_optimizer.py`:
 
@@ -3976,12 +3983,12 @@ def test_end_to_end_metric_satisfies_optimization_metric_protocol():
     assert obj("hi") == 0.5
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/prompt_optimization/test_optimizer.py -v -k optimization_metric_protocol`
 Expected: FAIL — `OptimizationMetric` does not exist.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Append to [src/healthbench_agent/prompt_optimization/optimizer.py](../../../src/healthbench_agent/prompt_optimization/optimizer.py):
 
@@ -4004,12 +4011,12 @@ class OptimizationMetric(Protocol):
         ...
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `uv run pytest tests/prompt_optimization/test_optimizer.py -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/healthbench_agent/prompt_optimization/optimizer.py tests/prompt_optimization/test_optimizer.py
@@ -4024,11 +4031,11 @@ git commit -m "feat(prompt_opt): add OptimizationMetric Protocol"
 - Modify: `src/healthbench_agent/prompt_optimization/metric.py`
 - Test: `tests/prompt_optimization/test_metric.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_judge_agreement_metric_returns_scalar_from_meta_eval(monkeypatch):
-    from healthbench_agent.llm_eval.meta_eval import demo_labelled_set, FakeJudge
+    from healthbench_agent.llm_eval.meta_eval import demo_labelled_set, OracleJudge
     from healthbench_agent.prompt_optimization.metric import JudgeAgreementMetric
 
     samples = demo_labelled_set()
@@ -4039,7 +4046,7 @@ def test_judge_agreement_metric_returns_scalar_from_meta_eval(monkeypatch):
     class _CapturingMetric(JudgeAgreementMetric):
         def _build_judge(self, candidate_template: str):  # type: ignore[override]
             captured["template"] = candidate_template
-            return FakeJudge(perfect), "fake@1", "sha"
+            return OracleJudge(perfect), "fake@1", "sha"
 
     metric = _CapturingMetric(
         judge_config=None,  # bypassed by override
@@ -4068,12 +4075,12 @@ def test_empty_filter_error_re_exported():
     assert EmptyFilterError is RootError
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/prompt_optimization/test_metric.py -v -k "judge_agreement or filter or empty_filter"`
 Expected: FAIL.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Append to [src/healthbench_agent/prompt_optimization/metric.py](../../../src/healthbench_agent/prompt_optimization/metric.py):
 
@@ -4082,7 +4089,7 @@ from typing import Any, Callable
 
 from healthbench_agent.domain.meta_evaluation import LabelledSample
 from healthbench_agent.domain.rubric import RubricItem
-from healthbench_agent.llm_eval.config_grader import JudgeConfig
+from healthbench_agent.llm_eval.grading.config import JudgeConfig
 from healthbench_agent.llm_eval.meta_eval import (
     EmptyFilterError,
     run_meta_eval,
@@ -4113,7 +4120,7 @@ class JudgeAgreementMetric:
         self.rubric_filter = rubric_filter
 
     def _build_judge(self, candidate_template: str):
-        from healthbench_agent.llm_eval.grader import LLMJudgeGrader
+        from healthbench_agent.llm_eval.grading.judge import LLMJudgeGrader
 
         if self.judge_config is None:
             raise RuntimeError("judge_config is None and _build_judge was not overridden")
@@ -4183,12 +4190,12 @@ In `__call__`, pre-filter `self.samples` (and each sample's `rubrics`) before de
         # ... rest of existing __call__, using `kept` instead of self.samples ...
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `uv run pytest tests/prompt_optimization/test_metric.py -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/healthbench_agent/prompt_optimization/metric.py tests/prompt_optimization/test_metric.py
@@ -4203,7 +4210,7 @@ git commit -m "feat(prompt_opt): add JudgeAgreementMetric and filter args on End
 - Modify: `src/healthbench_agent/prompt_optimization/cli.py`
 - Test: `tests/prompt_optimization/test_cli.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 def test_optimize_prompt_cli_judge_domain_writes_to_llm_grader(tmp_path, monkeypatch):
@@ -4244,12 +4251,12 @@ def test_optimize_prompt_cli_judge_domain_writes_to_llm_grader(tmp_path, monkeyp
     assert "NEW TEMPLATE" in out.read_text()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/prompt_optimization/test_cli.py -v -k judge_domain`
 Expected: FAIL.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Add `--prompt-domain` flag to the existing parser in [src/healthbench_agent/prompt_optimization/cli.py](../../../src/healthbench_agent/prompt_optimization/cli.py) and a `--judge-config` argument. Refactor `main()` so it dispatches:
 
@@ -4276,13 +4283,13 @@ def _judge_save_path(judge_config_path: str) -> Path:
 
 
 def _run_judge_optimization(args: argparse.Namespace) -> dict[str, Any]:
-    from healthbench_agent.llm_eval.cli_meta_eval import (
+    from healthbench_agent.llm_eval.cli.meta_eval import (
         _build_judge_for_cli,
         _build_filters,
         _load_consensus_labelled,
     )
-    from healthbench_agent.llm_eval.config_grader import JudgeConfig
-    from healthbench_agent.llm_eval.grader import load_grader_prompt
+    from healthbench_agent.llm_eval.grading.config import JudgeConfig
+    from healthbench_agent.llm_eval.grading.judge import load_grader_prompt
     from healthbench_agent.prompt_optimization import (
         create_prompt_optimizer,
         get_optimizer_config_class,
@@ -4346,12 +4353,12 @@ def _save_judge_yaml(args: argparse.Namespace, result: dict[str, Any]) -> Path:
 
 Refactor the existing `main()` body so the agent path stays the default and the judge path runs through the new helpers. Also expose `main_argv(argv)` so tests can pass a list directly.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `uv run pytest tests/prompt_optimization/test_cli.py -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/healthbench_agent/prompt_optimization/cli.py tests/prompt_optimization/test_cli.py
@@ -4367,23 +4374,23 @@ git commit -m "feat(prompt_opt): add --prompt-domain {agent,judge} to optimize-p
 **Files:**
 - Modify: `pyproject.toml`
 
-- [ ] **Step 1: Inspect current scripts**
+- [x] **Step 1: Inspect current scripts**
 
 Read [pyproject.toml](../../../pyproject.toml).
 
-- [ ] **Step 2: Add `tqdm` to `dependencies` and the script entry**
+- [x] **Step 2: Add `tqdm` to `dependencies` and the script entry**
 
 In `[project] dependencies` confirm `tqdm>=4.66.0` is present (it already is per the existing file). Add to `[project.scripts]`:
 
 ```toml
 [project.scripts]
 download-healthbench = "healthbench_agent.dataset.loader:_cli"
-track-experiment = "healthbench_agent.llm_eval.cli:main"
+track-experiment = "healthbench_agent.llm_eval.cli.track_experiment:main"
 optimize-prompt = "healthbench_agent.prompt_optimization.cli:main"
-meta-evaluate-judge = "healthbench_agent.llm_eval.cli_meta_eval:main"
+meta-evaluate-judge = "healthbench_agent.llm_eval.cli.meta_eval:main"
 ```
 
-- [ ] **Step 3: Run `uv sync` and the smoke test**
+- [x] **Step 3: Run `uv sync` and the smoke test**
 
 ```bash
 uv sync
@@ -4392,7 +4399,7 @@ uv run meta-evaluate-judge list-metrics
 
 Expected: CLI prints all 8 metrics.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add pyproject.toml uv.lock
@@ -4406,11 +4413,11 @@ git commit -m "build: register meta-evaluate-judge console script"
 **Files:**
 - Modify: `CLAUDE.md`
 
-- [ ] **Step 1: Read current Project Layout block**
+- [x] **Step 1: Read current Project Layout block**
 
 Read [CLAUDE.md](../../../CLAUDE.md) lines around `domain/` and `llm_eval/`.
 
-- [ ] **Step 2: Add new entries**
+- [x] **Step 2: Add new entries**
 
 Add to the `domain/` block:
 ```
@@ -4419,10 +4426,10 @@ Add to the `domain/` block:
 
 Add to the `llm_eval/` block:
 ```
-- `meta_eval.py` — registry (`@register_meta_metric`, `MetricLevel`, `MetricSpec`), 8 built-in metrics, `run_meta_eval`, `meta_evaluate`, `FakeJudge`, `demo_labelled_set`, filter helpers (`axis_filter`, `metadata_filter`, `specialty_filter`), `EmptyFilterError`
-- `meta_eval_results.py` — `MetricResultsView` (UX wrapper around `MetricResults`)
-- `verdict_cache.py` — `VerdictCache` (file-based judge call cache), `CachedJudgeGrader` (proxy)
-- `cli_meta_eval.py` — `meta-evaluate-judge` CLI with `run / regenerate / compare / list-metrics / list-metadata-keys / clear-cache` subcommands
+- `meta_eval/` — subpackage with registry (`@register_meta_metric`, `MetricLevel`, `MetricSpec`), 8 built-in metrics under `metrics/`, `run_meta_eval` (`runner.py`), `meta_evaluate` (`api.py`), `OracleJudge` (`oracle_judge.py`), `demo_labelled_set` (`demo_data.py`), filter helpers under `filters.py` (`axis_filter`, `metadata_filter`, `specialty_filter`, `EmptyFilterError`)
+- `meta_eval/results/` — `MetricResultsView` (`view.py`, UX wrapper around `MetricResults`) + `save_results`/`load_results` (`io.py`) + plot helpers (`plots.py`)
+- `cache/` — `VerdictCache` (file-based judge call cache, `store.py`) + `CachedJudgeGrader` proxy (`cached_judge.py`)
+- `cli/meta_eval.py` — `meta-evaluate-judge` CLI with `run / regenerate / compare / list-metrics / list-metadata-keys / clear-cache` subcommands
 ```
 
 Add to the `dataset/` block:
@@ -4453,7 +4460,7 @@ uv run optimize-prompt --prompt-domain judge \
 ```
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add CLAUDE.md
@@ -4467,11 +4474,11 @@ git commit -m "docs: document meta-evaluation modules in CLAUDE.md"
 **Files:**
 - Create: `notebooks/04_judge_meta_evaluation.ipynb`
 
-- [ ] **Step 1: Inspect existing notebook style**
+- [x] **Step 1: Inspect existing notebook style**
 
 Run: `Glob notebooks/*.ipynb` and `Read notebooks/02_agent_comparison.ipynb` to mirror cell formatting.
 
-- [ ] **Step 2: Create the new notebook**
+- [x] **Step 2: Create the new notebook**
 
 Use the Write tool to create `notebooks/04_judge_meta_evaluation.ipynb` with five cells exactly mirroring the spec's cell list (load → calibration plot → dimension confusion plot → compare → extract gold_score per judge). Each cell should be a single `code_cell` JSON entry. Use the structure from `02_agent_comparison.ipynb` as the template.
 
@@ -4479,24 +4486,29 @@ The cell contents are:
 
 ```python
 # Cell 1
-from healthbench_agent.llm_eval.meta_eval_results import MetricResultsView
-view = MetricResultsView.load("runs/meta_eval/2026-04-07_gpt-4-1")
+from healthbench_agent.llm_eval.meta_eval import (
+    load_results,
+    plot_calibration_curve,
+    plot_dimension_confusion,
+)
+
+view = load_results("runs/meta_eval/2026-04-07_gpt-4-1")
 view
 ```
 
 ```python
 # Cell 2
-view.plot_calibration_curve()
+plot_calibration_curve(view.results)
 ```
 
 ```python
 # Cell 3
-view.plot_dimension_confusion()
+plot_dimension_confusion(view.results)
 ```
 
 ```python
 # Cell 4
-other = MetricResultsView.load("runs/meta_eval/2026-04-07_gemini-2-5")
+other = load_results("runs/meta_eval/2026-04-07_gemini-2-5")
 view.compare(other)
 ```
 
@@ -4505,12 +4517,12 @@ view.compare(other)
 view.results.scores["gold_score"], other.results.scores["gold_score"]
 ```
 
-- [ ] **Step 3: Smoke test the notebook structure**
+- [x] **Step 3: Smoke test the notebook structure**
 
 Run: `uv run python -c "import json; nb = json.load(open('notebooks/04_judge_meta_evaluation.ipynb')); assert len(nb['cells']) == 5"`
 Expected: no AssertionError.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add notebooks/04_judge_meta_evaluation.ipynb
@@ -4526,7 +4538,7 @@ git commit -m "docs(notebook): add judge meta-evaluation walkthrough"
 **Files:**
 - All modified files
 
-- [ ] **Step 1: Lint + type check + tests**
+- [x] **Step 1: Lint + type check + tests**
 
 Run, in order:
 
@@ -4537,13 +4549,13 @@ uv run mypy .
 uv run pytest tests/ --cov=src/healthbench_agent --cov-report=term-missing -v
 ```
 
-Expected: all green; per-module coverage ≥ 80%; pure metric functions at 100%.
+Expected: all green; per-module coverage ≥ 95%; pure metric functions at 100%.
 
-- [ ] **Step 2: Fix any failures inline**
+- [x] **Step 2: Fix any failures inline**
 
 Loop until clean. Address any new ruff/mypy diagnostics introduced by Tasks 1-28.
 
-- [ ] **Step 3: Final commit (if anything had to be fixed)**
+- [x] **Step 3: Final commit (if anything had to be fixed)**
 
 ```bash
 git add -u
