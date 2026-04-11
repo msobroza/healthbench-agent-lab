@@ -1325,14 +1325,16 @@ def test_cli_regenerate_unknown_metric_exits(tmp_path, capsys):
     assert "totally_unknown_metric" in capsys.readouterr().err
 
 
-def test_cli_regenerate_skips_level_with_no_matching_rows(tmp_path, caplog):
-    """regenerate should skip a metric whose level has no matching verdict rows."""
-    import logging
+def test_cli_regenerate_skips_level_with_no_matching_rows(tmp_path):
+    """regenerate should skip a metric whose level has no matching verdict rows.
 
+    The observable effect is that the skipped metric is absent from the
+    persisted metrics.json after regeneration.
+    """
     import pandas as pd
 
     from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
-    from healthbench_agent.llm_eval.meta_eval.results_io import save_results
+    from healthbench_agent.llm_eval.meta_eval.results_io import load_results, save_results
 
     # Write a parquet file that contains only ideal_completion rows, then
     # request a rubric-level metric which will have zero matching rows.
@@ -1360,9 +1362,12 @@ def test_cli_regenerate_skips_level_with_no_matching_rows(tmp_path, caplog):
         tmp_path,
     )
 
-    caplog.set_level(logging.INFO, logger="healthbench_agent.llm_eval.cli.meta_eval")
     cli_meta_eval.main(["regenerate", str(tmp_path), "--metrics", "adversarial_accuracy"])
-    assert any("skipping metric adversarial_accuracy" in rec.message for rec in caplog.records)
+
+    # Observable behaviour: the skipped metric must not appear in the
+    # persisted metrics.json after regenerate.
+    reloaded = load_results(tmp_path)
+    assert "adversarial_accuracy" not in reloaded.results.scores
 
 
 def test_cli_compare_missing_run_dir_exits(tmp_path, capsys):
@@ -1437,5 +1442,10 @@ def test_cli_list_metadata_keys_prints_none_when_metadata_empty(monkeypatch, cap
     )
     cli_meta_eval.main(["list-metadata-keys", "--sample-size", "1"])
     out = capsys.readouterr().out
-    # All three top-level fields are None → '(none)' for each.
-    assert out.count("(none)") >= 2  # metadata dict + at least one top-level field
+    # All three top-level fields (language, specialty, user_persona) are
+    # None, plus the metadata dict is empty → '(none)' prints exactly four
+    # times: once per top-level field and once for the metadata dict.
+    assert out.count("(none)") == 4
+    assert "language: (none)" in out
+    assert "specialty: (none)" in out
+    assert "user_persona: (none)" in out

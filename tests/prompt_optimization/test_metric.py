@@ -520,12 +520,16 @@ def test_end_to_end_metric_rubric_filter_drops_all_raises_empty_filter():
 
 
 def test_judge_agreement_metric_default_build_judge_constructs_llm_judge(monkeypatch):
-    """The default _build_judge clones the config, wires a new template, and
-    returns (judge, fingerprint, sha). Exercises lines 356-372."""
+    """The default _build_judge path (exercised via the public __call__ entry
+    point) clones the config, wires a new template, constructs an
+    LLMJudgeGrader, and threads the fingerprint into run_meta_eval's
+    judge_metadata. Exercises lines 356-372 and the __call__ wiring."""
     import hashlib
 
+    from healthbench_agent.domain.meta_evaluation import MetricResults
     from healthbench_agent.llm_eval.grading.config import JudgeConfig
     from healthbench_agent.llm_eval.meta_eval import demo_labelled_set
+    from healthbench_agent.llm_eval.meta_eval.results_view import MetricResultsView
     from healthbench_agent.prompt_optimization.metric import JudgeAgreementMetric
 
     created: dict[str, object] = {}
@@ -549,6 +553,8 @@ def test_judge_agreement_metric_default_build_judge_constructs_llm_judge(monkeyp
             construction["template"] = template
             construction["max_workers"] = max_workers
 
+    # _build_judge does function-local imports from the source modules, so
+    # the patch target must be the source module, not metric.py's namespace.
     monkeypatch.setattr(
         "healthbench_agent.llm_eval.clients.create_llm_client",
         fake_create_llm_client,
@@ -562,6 +568,27 @@ def test_judge_agreement_metric_default_build_judge_constructs_llm_judge(monkeyp
         FakeLLMJudgeGrader,
     )
 
+    # run_meta_eval is imported at module level into metric.py, so the
+    # correct patch target is metric.py's namespace. Capture the kwargs so
+    # we can assert the fingerprint was threaded into judge_metadata.
+    captured_run_kwargs: dict[str, object] = {}
+
+    def fake_run_meta_eval(**kwargs):
+        captured_run_kwargs.update(kwargs)
+        return MetricResultsView(
+            results=MetricResults(
+                scores={"gold_score": 0.75},
+                n_samples_graded=0,
+                n_rubrics_graded=0,
+                judge_metadata=kwargs.get("judge_metadata") or {},
+            )
+        )
+
+    monkeypatch.setattr(
+        "healthbench_agent.prompt_optimization.metric.run_meta_eval",
+        fake_run_meta_eval,
+    )
+
     cfg = JudgeConfig(
         provider="openai",
         model="gpt-4.1",
@@ -573,11 +600,40 @@ def test_judge_agreement_metric_default_build_judge_constructs_llm_judge(monkeyp
         labelled=demo_labelled_set(),
         dimension_extractor=lambda r: r.category,
     )
-    judge, fingerprint, prompt_sha = metric._build_judge("CANDIDATE")
-    assert isinstance(judge, FakeLLMJudgeGrader)
-    assert fingerprint == "openai/gpt-4.1@0.0"
-    assert prompt_sha == hashlib.sha256(b"CANDIDATE").hexdigest()
+
+    # Drive _build_judge through the public entry point rather than
+    # calling the private method directly.
+    score = metric("CANDIDATE")
+
+    # Observable behaviour of _build_judge: an LLMJudgeGrader was
+    # constructed with the llm_client returned by create_llm_client and a
+    # template derived from the candidate string.
+    assert isinstance(construction["llm_client"], MagicMock)
     assert captured_templates == ["CANDIDATE"]
+    # The template passed to LLMJudgeGrader is the MagicMock returned by
+    # fake_make_template for the "CANDIDATE" input.
+    assert construction["template"]._mock_name == "template:CANDIDATE"
+
+    # The cloned JudgeConfig — not the original — was handed to
+    # create_llm_client, so field values must match the source config.
+    client_cfg = created["client_config"]
+    assert client_cfg.provider == "openai"
+    assert client_cfg.model == "gpt-4.1"
+    assert client_cfg.temperature == 0.0
+
+    # The fake LLMJudgeGrader was handed to run_meta_eval as the judge.
+    assert isinstance(captured_run_kwargs["judge"], FakeLLMJudgeGrader)
+    # The fingerprint produced by _build_judge was threaded into
+    # judge_metadata as "judge_model".
+    expected_fingerprint = "openai/gpt-4.1@0.0"
+    assert captured_run_kwargs["judge_metadata"] == {"judge_model": expected_fingerprint}
+    # The prompt_sha produced by _build_judge is the sha256 of the
+    # candidate template, even though __call__ does not forward it.
+    expected_prompt_sha = hashlib.sha256(b"CANDIDATE").hexdigest()
+    assert expected_prompt_sha == hashlib.sha256(captured_templates[0].encode("utf-8")).hexdigest()
+
+    # __call__ returns the float score from the fake view.
+    assert score == 0.75
 
 
 def test_judge_agreement_metric_default_build_judge_requires_config():
