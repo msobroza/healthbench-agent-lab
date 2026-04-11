@@ -468,7 +468,7 @@ def test_per_criterion_metrics_grouped_by_rubric_key():
     assert out["c2"]["accuracy"] == pytest.approx(0.0, abs=1e-9)
 
 
-def test_fake_judge_always_met_returns_true_for_all():
+def test_oracle_judge_always_met_returns_true_for_all():
     judge = OracleJudge("always_met")
     items = [RubricItem(criterion="a", points=1.0), RubricItem(criterion="b", points=1.0)]
     out = judge.grade([], items)
@@ -476,14 +476,14 @@ def test_fake_judge_always_met_returns_true_for_all():
     assert all(v.criteria_met for v in out)
 
 
-def test_fake_judge_always_fail_returns_false_for_all():
+def test_oracle_judge_always_fail_returns_false_for_all():
     judge = OracleJudge("always_fail")
     items = [RubricItem(criterion="a", points=1.0)]
     out = judge.grade([], items)
     assert not out[0].criteria_met
 
 
-def test_fake_judge_alternating_flips_per_call():
+def test_oracle_judge_alternating_flips_per_call():
     judge = OracleJudge("alternating")
     out = judge.grade(
         [], [RubricItem(criterion="a", points=1.0), RubricItem(criterion="b", points=1.0)]
@@ -492,7 +492,7 @@ def test_fake_judge_alternating_flips_per_call():
     assert out[1].criteria_met is False
 
 
-def test_fake_judge_dict_strategy_honours_mapping():
+def test_oracle_judge_dict_strategy_honours_mapping():
     judge = OracleJudge({"a": True, "b": False})
     out = judge.grade(
         [], [RubricItem(criterion="a", points=1.0), RubricItem(criterion="b", points=1.0)]
@@ -501,7 +501,7 @@ def test_fake_judge_dict_strategy_honours_mapping():
     assert out[1].criteria_met is False
 
 
-def test_fake_judge_callable_strategy():
+def test_oracle_judge_callable_strategy():
     judge = OracleJudge(lambda item: item.points > 0)
     out = judge.grade(
         [], [RubricItem(criterion="a", points=1.0), RubricItem(criterion="b", points=-1.0)]
@@ -525,7 +525,7 @@ def _axis_extractor(item: RubricItem) -> str | None:
     return item.category
 
 
-def test_run_meta_eval_with_fake_judge_produces_scores(tmp_path):
+def test_run_meta_eval_with_oracle_judge_produces_scores(tmp_path):
     samples = demo_labelled_set()
     perfect = {c: m for s in samples for c, m in s.expected.items()}
     view = run_meta_eval(
@@ -625,7 +625,7 @@ def test_run_meta_eval_raises_when_every_metric_skipped():
         )
 
 
-def test_meta_evaluate_with_fake_judge_returns_view(monkeypatch, tmp_path):
+def test_meta_evaluate_with_oracle_judge_returns_view(monkeypatch, tmp_path):
     """meta_evaluate should accept a JudgeConfig and a pre-built dataset path."""
     from healthbench_agent.llm_eval import meta_evaluate
 
