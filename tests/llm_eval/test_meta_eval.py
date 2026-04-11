@@ -363,6 +363,96 @@ def test_adversarial_prf1_returns_all_keys():
     assert out["support"] == pytest.approx(4.0, abs=1e-9)
 
 
+def test_cohens_kappa_empty_dataframe_returns_zero():
+    df = pd.DataFrame(
+        columns=["prompt_id", "rubric_key", "gold_source", "observed_met", "expected_met"]
+    )
+    assert cohens_kappa(df) == 0.0
+
+
+def test_krippendorff_alpha_empty_dataframe_returns_zero():
+    df = pd.DataFrame(
+        columns=["prompt_id", "rubric_key", "gold_source", "observed_met", "expected_met"]
+    )
+    assert krippendorff_alpha(df) == 0.0
+
+
+def test_krippendorff_alpha_degenerate_all_agree_same_label():
+    """When all coders agree and the label is constant, de=0 but do=0 → α=1."""
+    df = _agreement_rows([True, True, True], [True, True, True])
+    assert krippendorff_alpha(df) == pytest.approx(1.0)
+
+
+def test_per_dimension_confusion_empty_dataframe_returns_empty_dict():
+    df = pd.DataFrame(columns=["dimension", "observed_met", "expected_met"])
+    assert per_dimension_confusion(df) == {}
+
+
+def test_adversarial_prf1_empty_dataframe_returns_zero_fields():
+    df = pd.DataFrame(columns=["observed_met", "expected_met"])
+    out = adversarial_prf1(df)
+    assert out == {"precision": 0.0, "recall": 0.0, "f1": 0.0, "support": 0.0}
+
+
+def test_per_criterion_metrics_empty_dataframe_returns_empty_dict():
+    df = pd.DataFrame(columns=["rubric_key", "observed_met", "expected_met"])
+    assert per_criterion_metrics(df) == {}
+
+
+def test_gold_score_skips_groups_with_zero_max_points():
+    """When calculate_score returns None (zero positive points), the group is skipped."""
+    # Two groups: one has only a penalty rubric (max_points=0 → calculate_score=None),
+    # the other has a single met positive rubric → score=1.0.
+    rows = [
+        {
+            "prompt_id": "p_zero",
+            "sample_k": 1,
+            "criterion": "penalty_only",
+            "points": -1.0,
+            "observed_met": False,
+        },
+        {
+            "prompt_id": "p_valid",
+            "sample_k": 1,
+            "criterion": "good",
+            "points": 1.0,
+            "observed_met": True,
+        },
+    ]
+    df = pd.DataFrame(rows)
+    assert gold_score(df) == pytest.approx(1.0, abs=1e-9)
+
+
+def test_calibration_curve_empty_sub_bucket_for_a_given_k():
+    """If no rows have sample_k ≤ k, that k is skipped in the output curve."""
+    df = pd.DataFrame(
+        [
+            {
+                "prompt_id": "p0",
+                "rubric_key": "r0",
+                "gold_source": "ideal_completion",
+                "sample_k": 5,
+                "observed_met": True,
+                "expected_met": True,
+            },
+            {
+                "prompt_id": "p1",
+                "rubric_key": "r0",
+                "gold_source": "ideal_completion",
+                "sample_k": 5,
+                "observed_met": False,
+                "expected_met": True,
+            },
+        ]
+    )
+    curve = calibration_curve(df)
+    # k=1, k=3 subsets are empty and must be absent entirely.
+    assert 1 not in curve
+    assert 3 not in curve
+    # k=5 has two observations → SE is computed.
+    assert 5 in curve
+
+
 def test_per_criterion_metrics_grouped_by_rubric_key():
     df = pd.DataFrame(
         [
@@ -964,3 +1054,388 @@ def test_cli_default_subcommand_inferred_from_leading_flag(monkeypatch, capsys):
     )
     cli_meta_eval.main(["--judge-config", "x.yaml", "--sample-size", "1"])
     assert "RUN_CALLED" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# runner.py coverage backfill
+# ---------------------------------------------------------------------------
+
+
+def test_run_meta_eval_rubric_filter_keeps_subset_of_rubrics():
+    """A rubric_filter that keeps some rubrics exercises the append branch."""
+    sample = LabelledSample(
+        prompt_id="mixed",
+        prompt=[{"role": "user", "content": "q"}],
+        rubrics=[
+            RubricItem(criterion="keep", points=1.0, category="accuracy", tags=()),
+            RubricItem(criterion="drop", points=1.0, category="emergency", tags=()),
+        ],
+        gold_response="gold",
+        expected={"keep": True, "drop": True},
+    )
+    view = run_meta_eval(
+        FakeJudge("always_met"),
+        [sample],
+        dimension_extractor=_axis_extractor,
+        rubric_filter=lambda r: r.criterion == "keep",
+        metric_names=["gold_score"],
+        n_samples=1,
+        progress=False,
+    )
+    # The surviving sample retained exactly one rubric.
+    assert view.results.n_samples_graded == 1
+    assert view.results.n_rubrics_graded == 1
+
+
+def test_run_meta_eval_with_cache_requires_fingerprint_and_prompt_sha(tmp_path):
+    """Passing a cache without both fingerprint and prompt sha must raise."""
+    from healthbench_agent.llm_eval.cache.store import VerdictCache
+
+    cache = VerdictCache(root=tmp_path / "cache", enabled=True)
+    with pytest.raises(ValueError, match="model_fingerprint and judge_prompt_sha"):
+        run_meta_eval(
+            FakeJudge("always_met"),
+            demo_labelled_set(),
+            dimension_extractor=_axis_extractor,
+            n_samples=1,
+            cache=cache,
+            progress=False,
+        )
+
+
+def test_run_meta_eval_with_cache_wraps_judge_in_cached_grader(tmp_path):
+    """With cache + fingerprint + prompt_sha, grade_for_k wraps in CachedJudgeGrader."""
+    from healthbench_agent.llm_eval.cache.store import VerdictCache
+
+    cache = VerdictCache(root=tmp_path / "cache", enabled=True)
+    view = run_meta_eval(
+        FakeJudge("always_met"),
+        demo_labelled_set(),
+        dimension_extractor=_axis_extractor,
+        n_samples=1,
+        cache=cache,
+        model_fingerprint="fake/model@1.0",
+        judge_prompt_sha="sha-abc",
+        progress=False,
+    )
+    # Cache stats flow through to judge_metadata.
+    assert "cache_hits" in view.results.judge_metadata
+    assert "cache_misses" in view.results.judge_metadata
+    # Running the same invocation twice should see cache hits > 0.
+    view2 = run_meta_eval(
+        FakeJudge("always_met"),
+        demo_labelled_set(),
+        dimension_extractor=_axis_extractor,
+        n_samples=1,
+        cache=cache,
+        model_fingerprint="fake/model@1.0",
+        judge_prompt_sha="sha-abc",
+        progress=False,
+    )
+    assert view2.results.judge_metadata["cache_hits"] > 0
+
+
+def test_run_meta_eval_with_progress_true_uses_thread_map(monkeypatch):
+    """progress=True should dispatch via tqdm's thread_map helper."""
+    called: dict[str, Any] = {}
+
+    def fake_thread_map(fn, pairs, **kwargs):
+        called["invoked"] = True
+        called["max_workers"] = kwargs.get("max_workers")
+        return [fn(pair) for pair in pairs]
+
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.meta_eval.runner.thread_map",
+        fake_thread_map,
+    )
+    run_meta_eval(
+        FakeJudge("always_met"),
+        demo_labelled_set(),
+        dimension_extractor=_axis_extractor,
+        n_samples=1,
+        progress=True,
+        meta_eval_max_workers=4,
+    )
+    assert called["invoked"] is True
+    assert called["max_workers"] == 4
+
+
+# ---------------------------------------------------------------------------
+# cli/meta_eval.py coverage backfill
+# ---------------------------------------------------------------------------
+
+
+def test_load_consensus_labelled_returns_samples_and_axis_extractor(monkeypatch):
+    """_load_consensus_labelled delegates and builds an axis extractor."""
+    from healthbench_agent.llm_eval.cli.meta_eval import _load_consensus_labelled
+
+    canned = demo_labelled_set()
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.meta_eval._load_subset_for_meta_eval",
+        lambda subset, sample_size, seed: canned,
+    )
+    samples, extractor = _load_consensus_labelled("consensus", sample_size=3, seed=0)
+    assert samples is canned
+    # The extractor reads axis tags when present.
+    tagged = RubricItem(criterion="x", points=1.0, tags=("axis: accuracy",))
+    assert extractor(tagged) == "accuracy"
+    # Falls back to category when no axis tag is present.
+    categorised = RubricItem(criterion="x", points=1.0, category="emergency", tags=())
+    assert extractor(categorised) == "emergency"
+
+
+def test_load_consensus_labelled_exits_when_all_samples_dropped(monkeypatch, capsys):
+    """Empty dataset after gold extraction should exit with code 2."""
+    from healthbench_agent.llm_eval.cli.meta_eval import _load_consensus_labelled
+
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.meta_eval._load_subset_for_meta_eval",
+        lambda subset, sample_size, seed: [],
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        _load_consensus_labelled("consensus", sample_size=1, seed=0)
+    assert excinfo.value.code == 2
+    assert "physician ideal completions" in capsys.readouterr().err
+
+
+def test_build_judge_for_cli_delegates_to_meta_eval_helper(monkeypatch):
+    """_build_judge_for_cli forwards to _build_judge_for_meta_eval."""
+    from healthbench_agent.llm_eval.cli.meta_eval import _build_judge_for_cli
+
+    captured: dict[str, Any] = {}
+
+    def fake_builder(config, temperature):
+        captured["config"] = config
+        captured["temperature"] = temperature
+        return (FakeJudge("always_met"), "fake@1", "prompt-sha")
+
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.meta_eval._build_judge_for_meta_eval",
+        fake_builder,
+    )
+    judge, fingerprint, prompt_sha = _build_judge_for_cli("fake.yaml", 0.25)
+    assert captured == {"config": "fake.yaml", "temperature": 0.25}
+    assert fingerprint == "fake@1"
+    assert prompt_sha == "prompt-sha"
+    assert isinstance(judge, FakeJudge)
+
+
+def test_build_filters_parses_metadata_key_value_pairs():
+    """KEY=VALUE entries should become a metadata_filter closure."""
+    import argparse
+
+    from healthbench_agent.llm_eval.cli.meta_eval import _build_filters
+
+    args = argparse.Namespace(rubric_axis=["accuracy"], metadata=["language=en"])
+    sf, rf = _build_filters(args)
+    assert sf is not None
+    assert rf is not None
+    # The sample filter should accept a sample whose language matches.
+    sample = LabelledSample(prompt_id="p", prompt=[], rubrics=[], language="en")
+    assert sf(sample)
+    other = LabelledSample(prompt_id="p", prompt=[], rubrics=[], language="fr")
+    assert not sf(other)
+
+
+def test_build_filters_rejects_malformed_metadata_entries():
+    """--metadata without '=' should raise SystemExit with a helpful message."""
+    import argparse
+
+    from healthbench_agent.llm_eval.cli.meta_eval import _build_filters
+
+    args = argparse.Namespace(rubric_axis=[], metadata=["malformed"])
+    with pytest.raises(SystemExit, match="KEY=VALUE"):
+        _build_filters(args)
+
+
+def test_default_cache_for_cli_returns_enabled_verdict_cache():
+    """_default_cache_for_cli yields an enabled VerdictCache pointing at the default root."""
+    from healthbench_agent.llm_eval.cache.store import VerdictCache
+    from healthbench_agent.llm_eval.cli.meta_eval import _default_cache_for_cli
+
+    cache = _default_cache_for_cli()
+    assert isinstance(cache, VerdictCache)
+    assert cache.enabled is True
+
+
+def test_cli_run_surfaces_empty_filter_error_as_system_exit(monkeypatch, tmp_path, capsys):
+    """_cmd_run must translate EmptyFilterError into SystemExit(2) with stderr output."""
+    from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
+
+    def raise_empty(**kwargs):
+        raise EmptyFilterError(sample_filter="sf", rubric_filter="rf")
+
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.cli.meta_eval._load_consensus_labelled",
+        lambda subset, sample_size, seed: (demo_labelled_set(), _axis_extractor),
+    )
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.cli.meta_eval._build_judge_for_cli",
+        lambda config, temperature: (FakeJudge("always_met"), "fake@1", "sha"),
+    )
+    monkeypatch.setattr("healthbench_agent.llm_eval.cli.meta_eval.run_meta_eval", raise_empty)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_meta_eval.main(
+            [
+                "run",
+                "--judge-config",
+                "fake.yaml",
+                "--sample-size",
+                "1",
+                "--n-samples",
+                "1",
+                "--no-cache",
+                "--no-progress",
+                "--output-dir",
+                str(tmp_path),
+            ]
+        )
+    assert excinfo.value.code == 2
+    assert "sf" in capsys.readouterr().err
+
+
+def test_cli_regenerate_missing_parquet_exits(tmp_path, capsys):
+    """regenerate must exit cleanly when verdicts.parquet is absent."""
+    from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_meta_eval.main(["regenerate", str(tmp_path)])
+    assert excinfo.value.code == 2
+    assert "verdicts.parquet not found" in capsys.readouterr().err
+
+
+def test_cli_regenerate_unknown_metric_exits(tmp_path, capsys):
+    """regenerate must exit cleanly when --metrics names an unknown metric."""
+    from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
+
+    # Seed a valid run dir first.
+    samples = demo_labelled_set()
+    run_meta_eval(
+        FakeJudge("always_met"),
+        samples,
+        dimension_extractor=_axis_extractor,
+        n_samples=1,
+        output_dir=tmp_path,
+        progress=False,
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        cli_meta_eval.main(["regenerate", str(tmp_path), "--metrics", "totally_unknown_metric"])
+    assert excinfo.value.code == 2
+    assert "totally_unknown_metric" in capsys.readouterr().err
+
+
+def test_cli_regenerate_skips_level_with_no_matching_rows(tmp_path, caplog):
+    """regenerate should skip a metric whose level has no matching verdict rows."""
+    import logging
+
+    import pandas as pd
+
+    from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
+    from healthbench_agent.llm_eval.meta_eval.results_io import save_results
+
+    # Write a parquet file that contains only ideal_completion rows, then
+    # request a rubric-level metric which will have zero matching rows.
+    parquet_rows = [
+        {
+            "prompt_id": "p1",
+            "sample_k": 1,
+            "rubric_key": "c1",
+            "criterion": "c1",
+            "points": 1.0,
+            "observed_met": True,
+            "expected_met": True,
+            "gold_source": "ideal_completion",
+            "dimension": "accuracy",
+        }
+    ]
+    pd.DataFrame(parquet_rows).to_parquet(tmp_path / "verdicts.parquet")
+    save_results(
+        MetricResults(
+            scores={"gold_score": 1.0},
+            n_samples_graded=1,
+            n_rubrics_graded=1,
+            judge_metadata={"judge_model": "fake"},
+        ),
+        tmp_path,
+    )
+
+    caplog.set_level(logging.INFO, logger="healthbench_agent.llm_eval.cli.meta_eval")
+    cli_meta_eval.main(["regenerate", str(tmp_path), "--metrics", "adversarial_accuracy"])
+    assert any("skipping metric adversarial_accuracy" in rec.message for rec in caplog.records)
+
+
+def test_cli_compare_missing_run_dir_exits(tmp_path, capsys):
+    """compare must exit cleanly when one of the run dirs has no metrics.json."""
+    from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
+
+    bogus = tmp_path / "bogus"
+    bogus.mkdir()
+    # tmp_path itself has no metrics.json either.
+    with pytest.raises(SystemExit) as excinfo:
+        cli_meta_eval.main(["compare", str(bogus), str(tmp_path)])
+    assert excinfo.value.code == 2
+    assert "metrics.json" in capsys.readouterr().err
+
+
+def test_cli_compare_writes_markdown_output(tmp_path, capsys):
+    """compare --output should serialise the diff as markdown next to the call."""
+    from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
+    from healthbench_agent.llm_eval.meta_eval.results_io import save_results
+
+    a_dir = tmp_path / "a"
+    b_dir = tmp_path / "b"
+    output = tmp_path / "diff.md"
+    save_results(
+        MetricResults(
+            scores={"gold_score": 0.8},
+            n_samples_graded=1,
+            n_rubrics_graded=1,
+            judge_metadata={"judge_model": "alpha"},
+        ),
+        a_dir,
+    )
+    save_results(
+        MetricResults(
+            scores={"gold_score": 0.7},
+            n_samples_graded=1,
+            n_rubrics_graded=1,
+            judge_metadata={"judge_model": "beta"},
+        ),
+        b_dir,
+    )
+    cli_meta_eval.main(["compare", str(a_dir), str(b_dir), "--output", str(output)])
+    assert output.exists()
+    body = output.read_text()
+    assert "gold_score" in body
+    assert "Markdown table written to" in capsys.readouterr().out
+
+
+def test_fake_judge_rejects_unknown_strategy():
+    """FakeJudge raises ValueError for an unrecognised strategy string."""
+    judge = FakeJudge("definitely_not_a_strategy")
+    with pytest.raises(ValueError, match="Unknown FakeJudge strategy"):
+        judge.grade(
+            [{"role": "user", "content": "?"}],
+            [RubricItem(criterion="x", points=1.0)],
+        )
+
+
+def test_cli_list_metadata_keys_prints_none_when_metadata_empty(monkeypatch, capsys):
+    """list-metadata-keys should print '(none)' when no metadata keys are present."""
+    from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
+
+    # Sample with only a prompt — no language, specialty, persona, or metadata dict.
+    empty_sample = LabelledSample(
+        prompt_id="empty",
+        prompt=[{"role": "user", "content": "?"}],
+        rubrics=[],
+    )
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.cli.meta_eval._load_consensus_labelled",
+        lambda subset, sample_size, seed: ([empty_sample], _axis_extractor),
+    )
+    cli_meta_eval.main(["list-metadata-keys", "--sample-size", "1"])
+    out = capsys.readouterr().out
+    # All three top-level fields are None → '(none)' for each.
+    assert out.count("(none)") >= 2  # metadata dict + at least one top-level field

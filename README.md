@@ -439,7 +439,7 @@ healthbench-agent-lab/
 
 1. Fork the repo and create a feature branch
 2. Follow the coding standards in [CLAUDE.md](CLAUDE.md)
-3. Write tests (80% coverage minimum per module)
+3. Write tests (95% coverage minimum per module)
 4. Run `uv run ruff check . && uv run mypy . && uv run pytest tests/ -v`
 5. Submit a PR with a clear description
 

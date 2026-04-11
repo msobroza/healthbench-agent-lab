@@ -130,3 +130,109 @@ def test_plot_calibration_curve_after_save_load_round_trip_uses_numeric_order(tm
     assert numeric_x == sorted(numeric_x)
     # And the count must include all 5 k values, not just the lex-sortable subset.
     assert len(xdata) == 5
+
+
+def test_plot_dimension_confusion_raises_keyerror_when_missing(view):
+    """The dimension-confusion plot must fail loudly when its score is absent."""
+    with pytest.raises(KeyError):
+        plot_dimension_confusion(view.results)
+
+
+def test_plot_calibration_curve_falls_back_to_string_sort_on_mixed_keys():
+    """Mixed-type keys (some non-coercible) fall through to lexicographic sort."""
+    results = MetricResults(
+        scores={"calibration_curve": {"a": 0.1, "b": 0.2}},
+        n_samples_graded=2,
+        n_rubrics_graded=2,
+        judge_metadata={},
+    )
+    ax = plot_calibration_curve(results)
+    xdata = list(ax.lines[0].get_xdata())
+    assert xdata == sorted(xdata)
+
+
+def test_summary_marks_unregistered_metrics_with_question_mark():
+    """summary() must not crash when a score key is not in the metric registry."""
+    results = MetricResults(
+        scores={"not_registered": 0.5},
+        n_samples_graded=1,
+        n_rubrics_graded=1,
+        judge_metadata={"judge_model": "fake"},
+    )
+    view_local = MetricResultsView(results=results)
+    assert "?" in view_local.summary()
+
+
+def test_to_pandas_flattens_dict_valued_metrics_and_tags_unknown_metric():
+    """to_pandas flattens dict metrics into sub-rows and degrades gracefully on unknown names."""
+    results = MetricResults(
+        scores={
+            "per_dimension_confusion": {"axis1": {"tp": 1, "fp": 0}},
+            "unknown_metric": 0.25,
+        },
+        n_samples_graded=1,
+        n_rubrics_graded=1,
+        judge_metadata={},
+    )
+    df = MetricResultsView(results=results).to_pandas()
+    # Dict-valued metric got flattened into sub-keys with dotted metric names.
+    assert "per_dimension_confusion.axis1" in df["metric"].tolist()
+    # Unknown registry entry still appears, tagged with a '?' level.
+    unknown_row = df[df["metric"] == "unknown_metric"].iloc[0]
+    assert unknown_row["level"] == "?"
+
+
+def test_compare_returns_see_details_sentinel_for_dict_metrics():
+    """Dict-valued metric deltas are rendered as the 'see details' sentinel string."""
+    a = MetricResultsView(
+        results=MetricResults(
+            scores={"per_dimension_confusion": {"x": {"tp": 1}}},
+            n_samples_graded=1,
+            n_rubrics_graded=1,
+            judge_metadata={},
+        )
+    )
+    b = MetricResultsView(
+        results=MetricResults(
+            scores={"per_dimension_confusion": {"x": {"tp": 2}}},
+            n_samples_graded=1,
+            n_rubrics_graded=1,
+            judge_metadata={},
+        )
+    )
+    diff = a.compare(b)
+    assert diff.iloc[0]["delta"] == "see details"
+
+
+def test_verdicts_loads_parquet_lazily_and_memoises(tmp_path: Path):
+    """verdicts() should read parquet once and reuse the cached DataFrame."""
+    import pandas as pd
+
+    parquet = tmp_path / "verdicts.parquet"
+    pd.DataFrame({"a": [1, 2], "b": [3, 4]}).to_parquet(parquet)
+    results = MetricResults(
+        scores={"gold_score": 0.5},
+        n_samples_graded=2,
+        n_rubrics_graded=2,
+        judge_metadata={},
+        verdicts_path=parquet,
+    )
+    view_local = MetricResultsView(results=results)
+    first = view_local.verdicts()
+    second = view_local.verdicts()
+    assert list(first.columns) == ["a", "b"]
+    # Memoised: the second call returns the same DataFrame instance.
+    assert first is second
+
+
+def test_verdicts_raises_file_not_found_when_path_missing():
+    """Views constructed in-memory (no output_dir) raise on verdicts()."""
+    results = MetricResults(
+        scores={"gold_score": 0.5},
+        n_samples_graded=1,
+        n_rubrics_graded=1,
+        judge_metadata={},
+    )
+    view_local = MetricResultsView(results=results)
+    with pytest.raises(FileNotFoundError, match="verdicts_path is None"):
+        view_local.verdicts()

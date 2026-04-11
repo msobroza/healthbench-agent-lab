@@ -410,13 +410,13 @@ Use the ZOMBIES heuristic to identify what to test for each function:
 - **Registry** — `run_category("exploration", ...)` calls only exploration functions.
 
 ### Coverage
-Run coverage after every test session and enforce a minimum of **80%** per module:
+Run coverage after every test session and enforce a minimum of **95%** per module:
 
 ```bash
 uv run pytest tests/ --cov=src/healthbench_agent --cov-report=term-missing
 ```
 
-- If any module falls below 80%, add tests before merging.
+- If any module falls below 95%, add tests before merging.
 - Aim for 100% on pure functions (`scoring.py`) — they have no I/O to mock and no excuse for gaps.
 - Uncovered lines must be either tested or explicitly excluded with `# pragma: no cover` (only for unreachable abstract stubs like `raise NotImplementedError`).
 
