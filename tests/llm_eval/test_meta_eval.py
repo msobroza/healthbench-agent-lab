@@ -562,6 +562,199 @@ def test_meta_evaluate_with_fake_judge_returns_view(monkeypatch, tmp_path):
     assert view.results.scores
 
 
+def test_load_subset_for_meta_eval_populates_gold_and_skips_missing(monkeypatch):
+    """_load_subset_for_meta_eval should backfill gold/expected and drop rows without gold."""
+    from healthbench_agent.domain.dataset import HealthBenchDataset, HealthBenchSample
+    from healthbench_agent.llm_eval.meta_eval.api import _load_subset_for_meta_eval
+
+    sample_with_gold = HealthBenchSample(
+        prompt_id="with-gold",
+        prompt=[{"role": "user", "content": "q1"}],
+        rubrics=[
+            RubricItem(criterion="good", points=2.0, tags=()),
+            RubricItem(criterion="bad", points=-1.0, tags=()),
+            RubricItem(criterion="zero", points=0.0, tags=()),
+        ],
+        example_tags=["theme:demo"],
+        ideal_completions_data={"ideal_completion": "answer"},
+    )
+    sample_without_gold = HealthBenchSample(
+        prompt_id="no-gold",
+        prompt=[{"role": "user", "content": "q2"}],
+        rubrics=[RubricItem(criterion="x", points=1.0, tags=())],
+        example_tags=["theme:demo"],
+        ideal_completions_data=None,
+    )
+    dataset = HealthBenchDataset(
+        subset="consensus",
+        samples=[sample_with_gold, sample_without_gold],
+        source_path="fake.jsonl",
+    )
+    monkeypatch.setattr(
+        "healthbench_agent.dataset.loader.load_dataset",
+        lambda subset: dataset,
+    )
+    monkeypatch.setattr(
+        "healthbench_agent.dataset.split_utils.stratified_sample",
+        lambda ds, n, tag_prefix, seed: ds,
+    )
+    gold_lookup = {"with-gold": "gold answer", "no-gold": None}
+    monkeypatch.setattr(
+        "healthbench_agent.dataset.extraction.extract_ideal_completion_text",
+        lambda data: gold_lookup["with-gold"] if data else None,
+    )
+
+    out = _load_subset_for_meta_eval("consensus", sample_size=2, seed=0)
+
+    assert len(out) == 1
+    assert out[0].prompt_id == "with-gold"
+    assert out[0].gold_response == "gold answer"
+    # Only rubrics with non-zero points become expected labels.
+    assert out[0].expected == {"good": True, "bad": False}
+
+
+def test_build_judge_for_meta_eval_from_path(monkeypatch):
+    """_build_judge_for_meta_eval should load a JudgeConfig from a YAML path."""
+    from healthbench_agent.llm_eval.grading.config import JudgeConfig
+    from healthbench_agent.llm_eval.meta_eval.api import _build_judge_for_meta_eval
+
+    cfg = JudgeConfig(
+        provider="openai",
+        model="gpt-4.1",
+        temperature=0.0,
+        prompt_path="prompts/llm_grader/v1_llm_grader.yaml",
+    )
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.grading.config.JudgeConfig.from_yaml",
+        classmethod(lambda cls, path: cfg),
+    )
+    fake_judge = FakeJudge("always_met")
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.grading.judge.create_judge",
+        lambda c: fake_judge,
+    )
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.grading.judge.load_grader_prompt",
+        lambda path: ("template", {}, "prompt-sha-123"),
+    )
+
+    judge, fingerprint, prompt_sha = _build_judge_for_meta_eval(
+        "config/judges/fake.yaml", temperature=0.25
+    )
+
+    assert judge is fake_judge
+    assert fingerprint == "openai/gpt-4.1@0.25"
+    assert prompt_sha == "prompt-sha-123"
+
+
+def test_build_judge_for_meta_eval_from_config_instance(monkeypatch):
+    """_build_judge_for_meta_eval should accept a pre-built JudgeConfig directly."""
+    from healthbench_agent.llm_eval.grading.config import JudgeConfig
+    from healthbench_agent.llm_eval.meta_eval.api import _build_judge_for_meta_eval
+
+    cfg = JudgeConfig(
+        provider="gemini",
+        model="gemini-2.5-flash",
+        temperature=0.0,
+        prompt_path="prompts/llm_grader/v1_llm_grader.yaml",
+    )
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.grading.judge.create_judge",
+        lambda c: FakeJudge("always_met"),
+    )
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.grading.judge.load_grader_prompt",
+        lambda path: ("template", {}, "sha"),
+    )
+
+    _, fingerprint, _ = _build_judge_for_meta_eval(cfg, temperature=0.5)
+
+    assert fingerprint == "gemini/gemini-2.5-flash@0.5"
+
+
+def test_build_judge_for_meta_eval_rejects_unknown_type():
+    """Passing an unsupported type should raise TypeError."""
+    from healthbench_agent.llm_eval.meta_eval.api import _build_judge_for_meta_eval
+
+    with pytest.raises(TypeError, match="judge_config must be a path or JudgeConfig"):
+        _build_judge_for_meta_eval(123, temperature=0.0)  # type: ignore[arg-type]
+
+
+def test_meta_evaluate_with_cache_true_creates_default_verdict_cache(monkeypatch, tmp_path):
+    """cache=True should construct a default VerdictCache and pass it to run_meta_eval."""
+    from healthbench_agent.llm_eval import meta_evaluate
+    from healthbench_agent.llm_eval.cache.store import VerdictCache
+
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.meta_eval.api._load_subset_for_meta_eval",
+        lambda subset, sample_size, seed: demo_labelled_set(),
+    )
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.meta_eval.api._build_judge_for_meta_eval",
+        lambda config, temperature: (FakeJudge("always_met"), "fake/model@1.0", "sha"),
+    )
+    captured: dict[str, Any] = {}
+
+    def fake_run(**kwargs):
+        captured.update(kwargs)
+        return MetricResults(
+            scores={"gold_score": 0.5},
+            n_samples_graded=1,
+            n_rubrics_graded=1,
+            judge_metadata={"judge_model": "fake/model@1.0"},
+        )
+
+    monkeypatch.setattr("healthbench_agent.llm_eval.meta_eval.api.run_meta_eval", fake_run)
+
+    meta_evaluate(
+        judge_config="config/judges/fake.yaml",
+        sample_size=1,
+        n_samples=1,
+        cache=True,
+        output_dir=tmp_path,
+    )
+    assert isinstance(captured["cache"], VerdictCache)
+    assert captured["cache"].enabled is True
+
+
+def test_meta_evaluate_with_explicit_cache_instance_passes_through(monkeypatch, tmp_path):
+    """A pre-built VerdictCache should be forwarded unchanged."""
+    from healthbench_agent.llm_eval import meta_evaluate
+    from healthbench_agent.llm_eval.cache.store import VerdictCache
+
+    explicit = VerdictCache(root=tmp_path / "custom", enabled=True)
+
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.meta_eval.api._load_subset_for_meta_eval",
+        lambda subset, sample_size, seed: demo_labelled_set(),
+    )
+    monkeypatch.setattr(
+        "healthbench_agent.llm_eval.meta_eval.api._build_judge_for_meta_eval",
+        lambda config, temperature: (FakeJudge("always_met"), "fake/model@1.0", "sha"),
+    )
+    captured: dict[str, Any] = {}
+
+    def fake_run(**kwargs):
+        captured.update(kwargs)
+        return MetricResults(
+            scores={"gold_score": 0.5},
+            n_samples_graded=1,
+            n_rubrics_graded=1,
+            judge_metadata={"judge_model": "fake/model@1.0"},
+        )
+
+    monkeypatch.setattr("healthbench_agent.llm_eval.meta_eval.api.run_meta_eval", fake_run)
+
+    meta_evaluate(
+        judge_config="config/judges/fake.yaml",
+        sample_size=1,
+        n_samples=1,
+        cache=explicit,
+        output_dir=tmp_path,
+    )
+    assert captured["cache"] is explicit
+
+
 def test_cli_run_dispatches_to_run_meta_eval(monkeypatch, tmp_path, capsys):
     """CLI run subcommand should call run_meta_eval with parsed args."""
     from healthbench_agent.llm_eval.cli import meta_eval as cli_meta_eval
