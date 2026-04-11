@@ -18,7 +18,7 @@ from healthbench_agent.domain.rubric import RubricItem
 
 
 class OracleJudge(JudgeGrader):
-    """Deterministic oracle JudgeGrader for meta-evaluation fixtures.
+    """Deterministic oracle JudgeGrader for meta-evaluation smoke tests and demos.
 
     An oracle judge scores rubric items against a deterministic strategy
     rather than calling an LLM. Used as the baseline "known-answer"
@@ -59,7 +59,7 @@ class OracleJudge(JudgeGrader):
         for idx, item in enumerate(rubric_items):
             met = self._verdict_for(item, idx)
             verdicts.append(
-                CriterionVerdict(criterion=item.criterion, criteria_met=met, explanation="fake")
+                CriterionVerdict(criterion=item.criterion, criteria_met=met, explanation="oracle")
             )
         return verdicts
 
