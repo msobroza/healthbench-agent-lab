@@ -26,17 +26,20 @@ frameworks — ADK (which we use today), PydanticAI, LangChain/LangGraph, and
 CrewAI — by shipping adapters for all four and exercising them in CI.
 
 The abstraction is deliberately minimal: it holds only the fields every
-framework needs (name, description, callable, optional Pydantic args schema).
-Framework-specific quirks (return_direct, timeout, confirmation hooks, MCP
-annotations) are intentionally out of scope; they can be added later as
-optional `Tool` fields without breaking existing consumers.
+framework needs (name, description, callable, optional Pydantic args schema)
+plus three reproducibility fields (version, captured source text, source
+hash). Framework-specific quirks (return_direct, timeout, confirmation
+hooks, MCP annotations) are intentionally out of scope; they can be added
+later as optional `Tool` fields without breaking existing consumers.
 
 ## 2. Goals and non-goals
 
 ### Goals
 
-- Define a `Tool` dataclass and a single `@tool` decorator that is the only
-  authoring entry point.
+- Define a `Tool` Pydantic model and a single `@tool` decorator that is
+  the only authoring entry point. Pydantic validators enforce
+  identifier-style names, semver-style versions, and source/hash
+  consistency.
 - Define a `ToolAdapter` ABC and a decorator-based registry matching the
   existing `prompt_optimization` adapter pattern.
 - Ship four adapters: ADK (required dep), PydanticAI, LangChain, CrewAI
@@ -45,6 +48,10 @@ optional `Tool` fields without breaking existing consumers.
   `symptom_checker`, `emergency_flag`) onto `@tool` with a two-line diff each.
 - Wire the ADK pipeline adapter to resolve tools through
   `get_tool_adapter("adk").convert(t)` rather than by passing bare callables.
+- Capture per-tool reproducibility metadata at decoration time: explicit
+  `version` (semver-style, author-supplied, default `"1.0.0"`); `source`
+  via `inspect.getsource`; `source_hash` via truncated SHA-256. Matches
+  the existing `prompt_version` convention in `config/agents/*.yaml`.
 - Install `--extra tool-adapters` in CI so every adapter is exercised on
   every run. Document this as a repeating convention in `CLAUDE.md`.
 
@@ -112,7 +119,7 @@ constructor.
 ```
 src/healthbench_agent/tools/
 ├── __init__.py                   # re-exports public API
-├── tool.py                       # Tool frozen dataclass
+├── tool.py                       # Tool frozen Pydantic model + validators
 ├── registry.py                   # @tool decorator + accessors
 ├── tool_adapter.py               # ToolAdapter ABC + require_optional
 ├── tool_adapter_registry.py      # @register_tool_adapter decorator + get_tool_adapter
@@ -203,8 +210,8 @@ unambiguous and module docstrings clarify intent.
 tests/tools/
 ├── __init__.py
 ├── conftest.py                          # clean_tool_registry + clean_tool_adapter_registry autouse fixtures
-├── test_tool.py                         # 4 tests
-├── test_registry.py                     # 12 tests
+├── test_tool.py                         # 9 tests
+├── test_registry.py                     # 16 tests
 ├── test_tool_adapter.py                 # 4 tests
 ├── test_tool_adapter_registry.py        # 5 tests
 └── adapters/
@@ -215,23 +222,24 @@ tests/tools/
     └── test_crewai_adapter.py           # 7 tests (importorskip)
 ```
 
-**Total new test count: 49.** Plus one pipeline integration test added to
+**Total new test count: 58.** Plus one pipeline integration test added to
 the existing [tests/agents/test_tool_agent.py](../../../tests/agents/test_tool_agent.py).
 
-## 5. `Tool` dataclass
+## 5. `Tool` Pydantic model
 
 Defined in `src/healthbench_agent/tools/tool.py`:
 
 ```python
+from __future__ import annotations
+
+import hashlib
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 
-@dataclass(frozen=True)
-class Tool:
+class Tool(BaseModel):
     """Framework-agnostic tool definition.
 
     Authored exclusively via the :func:`tool` decorator, which builds a
@@ -253,20 +261,106 @@ class Tool:
     callable in a thin shim that surfaces the schema through the
     framework's own declaration hook.
 
+    ``version``, ``source``, and ``source_hash`` support reproducibility:
+    they are captured once at decoration time and logged by the
+    experiment tracker alongside the prompt version and agent config.
+
     Attributes:
         name: Unique string identifier the LLM uses to call the tool.
+            Must be a non-empty valid Python identifier — LLM-callable
+            names cannot contain spaces, dashes, or punctuation.
         description: Human-readable explanation of what the tool does,
-            shown to the LLM.
+            shown to the LLM. Must be non-empty.
         func: The underlying Python callable, sync or async.
         args_schema: Optional Pydantic model describing the LLM-visible
             arguments. When ``None``, adapters infer from ``func``'s
             type hints + docstring natively.
+        version: Dotted MAJOR.MINOR.PATCH version string (e.g.
+            ``"1.0.0"``, ``"2.1.3-beta"``). Bumped manually on
+            behavioral changes. Default ``"1.0.0"``.
+        source: Full source text of ``func`` as captured by
+            ``inspect.getsource`` at decoration time. Empty string
+            when the source was not available (REPL, C extension,
+            builtin).
+        source_hash: Truncated SHA-256 (16 hex chars) of ``source``,
+            or empty string when ``source`` is empty. Enables change
+            detection when authors forget to bump ``version``.
     """
 
-    name: str
-    description: str
+    model_config = ConfigDict(
+        frozen=True,
+        arbitrary_types_allowed=True,  # Callable is not a native Pydantic type.
+    )
+
+    name: str = Field(min_length=1)
+    description: str = Field(min_length=1)
     func: Callable[..., Any]
     args_schema: type[BaseModel] | None = None
+    version: str = "1.0.0"
+    source: str = ""
+    source_hash: str = ""
+
+    @field_validator("name")
+    @classmethod
+    def _name_must_be_identifier(cls, value: str) -> str:
+        """Reject tool names that are not valid Python identifiers.
+
+        LLMs call tools by name, and frameworks pass the name directly
+        into function-calling JSON schemas where non-identifier
+        characters break the schema. Enforcing ``str.isidentifier()``
+        at construction time surfaces the error at decoration time
+        rather than inside an adapter.
+        """
+        if not value.isidentifier():
+            raise ValueError(
+                f"Tool name {value!r} must be a valid Python identifier "
+                "(LLM-callable tool names cannot contain spaces, dashes, "
+                "or punctuation)."
+            )
+        return value
+
+    @field_validator("version")
+    @classmethod
+    def _version_must_be_semver_like(cls, value: str) -> str:
+        """Require a dotted numeric version string (e.g. ``1.2.3``).
+
+        Matches the format already used by ``prompt_version`` fields
+        in :file:`config/agents/*.yaml`. Does not enforce strict
+        semver — pre-release tags and build metadata are allowed —
+        but the leading ``MAJOR.MINOR.PATCH`` numeric triple must be
+        present so the version sorts naturally in MLflow tag lists.
+        """
+        parts = value.split(".", maxsplit=3)
+        if len(parts) < 3 or not all(p[:1].isdigit() for p in parts[:3]):
+            raise ValueError(
+                f"Tool version {value!r} must start with MAJOR.MINOR.PATCH "
+                f'(e.g. "1.0.0", "2.1.3-beta"); got {value!r}.'
+            )
+        return value
+
+    @field_validator("source_hash")
+    @classmethod
+    def _source_hash_matches_source(
+        cls, value: str, info: ValidationInfo
+    ) -> str:
+        """Reject a source_hash that does not match the captured source.
+
+        Tight invariant: either both ``source`` and ``source_hash`` are
+        empty strings (source was unavailable at decoration time), or
+        ``source_hash`` is the truncated SHA-256 of ``source``. The
+        decorator is the only caller that sets these fields, so a
+        mismatch here always indicates programmer error.
+        """
+        source = info.data.get("source", "")
+        if not source and not value:
+            return value
+        expected = hashlib.sha256(source.encode("utf-8")).hexdigest()[:16]
+        if value != expected:
+            raise ValueError(
+                f"source_hash {value!r} does not match SHA-256 of source "
+                f"(expected {expected!r}). Did you construct a Tool manually?"
+            )
+        return value
 ```
 
 **Field naming.** `func` (not `callable`, not `function`). `callable`
@@ -275,12 +369,38 @@ across ADK, CrewAI, and LangChain; only PydanticAI uses `function`. `fn`
 would violate the "no abbreviations" rule in
 [CLAUDE.md](../../../CLAUDE.md).
 
+**Why Pydantic instead of a frozen dataclass.** Every other configuration
+surface in the project (`AgentNodeConfig`, `PlannerConfig`, `JudgeConfig`,
+all of `prompt_optimization/config.py`) is a Pydantic model; using a
+dataclass for `Tool` would be the odd one out. Pydantic also enforces the
+invariants the dataclass version trusted to convention:
+
+- ``name`` is a valid Python identifier — catches ``@tool(name="drug reference")``
+  at decoration time before any adapter sees it.
+- ``description`` is non-empty — caught by ``min_length=1`` even if the
+  decorator is bypassed.
+- ``version`` is semver-like — catches typos like ``"v1"`` or ``"1.0"``.
+- ``source_hash`` matches ``source`` — tight invariant for anyone
+  constructing ``Tool(...)`` manually.
+
 **Pydantic args_schema is the escape hatch for richer validation.** Type
 hints alone cannot express per-parameter descriptions, enum constraints,
 validators, or regex patterns. A Pydantic model gives the author all of
 them in one place, and every framework we target accepts a
 `BaseModel`-derived schema (LangChain and CrewAI natively; PydanticAI
 via flattening; ADK via a `BaseTool._get_declaration()` override).
+
+**Reproducibility fields — version, source, source_hash.** Matches the
+existing ``prompt_version`` convention in
+[config/agents/tool_agent.yaml:5](../../../config/agents/tool_agent.yaml#L5).
+``version`` is author-supplied (declarative semver, not auto-inferred —
+semantic-versioning decisions need author judgment). ``source`` and
+``source_hash`` are populated automatically by the decorator at
+decoration time via ``inspect.getsource`` + ``hashlib.sha256``. Together
+they enable MLflow-logged reproducibility and detect the case where the
+author changes behavior but forgets to bump the version. Adapters ignore
+these fields entirely — they are reproducibility metadata, not runtime
+dispatch inputs.
 
 ## 6. `@tool` decorator
 
@@ -291,13 +411,16 @@ Defined in `src/healthbench_agent/tools/registry.py`:
 
 Tools are authored by decorating a plain Python function with ``@tool``.
 The decorator infers ``name`` from ``func.__name__`` and ``description``
-from ``inspect.getdoc(func)``, builds a :class:`Tool`, and registers it
-in the module-level ``_REGISTRY``. All inferred and defaulted fields
-can be overridden via kwargs:
+from ``inspect.getdoc(func)``, captures the function's source via
+``inspect.getsource`` and computes a truncated SHA-256 for reproducibility,
+builds a :class:`Tool`, and registers it in the module-level ``_REGISTRY``.
+All inferred and defaulted fields can be overridden via kwargs:
 
 * ``@tool(name=..., description=...)`` — rename / redescribe.
 * ``@tool(args_schema=MyPydanticModel)`` — force a specific argument
   schema, bypassing type-hint inference.
+* ``@tool(version="2.0.0")`` — bump the tool's semver-style version
+  on behavioral change.
 
 The decorator returns the original function unchanged, so tests and
 other callers can invoke it directly — the Tool instance lives only in
@@ -306,6 +429,7 @@ the registry.
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 from collections.abc import Callable
 from typing import Any, TypeVar, overload
@@ -337,6 +461,29 @@ def _insert(tool_instance: Tool) -> None:
     _REGISTRY[tool_instance.name] = tool_instance
 
 
+def _capture_source(fn: Callable[..., Any]) -> tuple[str, str]:
+    """Capture a function's source text and truncated SHA-256 hash.
+
+    Uses ``inspect.getsource``. Returns empty strings for callables
+    whose source is not available at import time — builtins, C
+    extensions, dynamically generated functions, and REPL code.
+
+    Args:
+        fn: The function to snapshot.
+
+    Returns:
+        Tuple ``(source, source_hash)``. ``source_hash`` is the first
+        16 hex characters of the SHA-256 digest of ``source``, or the
+        empty string if ``source`` could not be captured.
+    """
+    try:
+        source = inspect.getsource(fn)
+    except (OSError, TypeError):
+        return ("", "")
+    source_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()[:16]
+    return (source, source_hash)
+
+
 @overload
 def tool(func: F) -> F: ...
 @overload
@@ -345,6 +492,7 @@ def tool(
     name: str | None = None,
     description: str | None = None,
     args_schema: type[BaseModel] | None = None,
+    version: str = "1.0.0",
 ) -> Callable[[F], F]: ...
 
 
@@ -354,22 +502,31 @@ def tool(
     name: str | None = None,
     description: str | None = None,
     args_schema: type[BaseModel] | None = None,
+    version: str = "1.0.0",
 ) -> F | Callable[[F], F]:
     """Decorator that builds a :class:`Tool` from a function and registers it.
 
     Two forms:
 
     * ``@tool`` — bare. Name inferred from ``func.__name__``,
-      description from ``inspect.getdoc(func)``, and the argument
-      schema inferred by each adapter from ``func``'s type hints.
-    * ``@tool(name=..., description=..., args_schema=...)`` — any
-      kwarg overrides its inferred / defaulted value. Omitted kwargs
-      keep their inference behavior.
+      description from ``inspect.getdoc(func)``, the argument schema
+      inferred by each adapter from ``func``'s type hints, and
+      ``version`` defaulted to ``"1.0.0"``.
+    * ``@tool(name=..., description=..., args_schema=..., version=...)``
+      — any kwarg overrides its inferred / defaulted value. Omitted
+      kwargs keep their inference behavior.
 
     Use ``args_schema`` when type hints alone don't capture what the
     LLM needs to see: per-parameter descriptions, enum constraints,
     validators, or a restructured shape. The Pydantic model you pass
     becomes the authoritative LLM-visible schema across every adapter.
+
+    Use ``version`` to track the tool's semver-style behavioral
+    version. Bump it manually when the tool's logic changes in a way
+    that should be reproducible in MLflow logs. The decorator also
+    captures ``func``'s source text and SHA-256 hash automatically so
+    silent behavioral drift (author changes code but forgets to bump
+    the version) is detectable after the fact.
 
     The decorator returns the **original function** unchanged, so the
     decorated symbol remains directly callable by tests and other
@@ -381,6 +538,7 @@ def tool(
         description: Override the inferred description.
         args_schema: Optional Pydantic model that replaces type-hint
             inference as the authoritative argument schema.
+        version: Dotted MAJOR.MINOR.PATCH string. Default ``"1.0.0"``.
 
     Returns:
         The original function, unchanged.
@@ -389,6 +547,9 @@ def tool(
         ValueError: If the resolved description is empty (no docstring
             and no explicit override), or if the resolved name is
             already registered.
+        pydantic.ValidationError: If ``Tool`` construction fails — for
+            example when the resolved ``name`` is not a valid Python
+            identifier or ``version`` is not semver-like.
     """
 
     def _apply(fn: F) -> F:
@@ -402,12 +563,16 @@ def tool(
                 f"Add a docstring to {fn.__qualname__} or pass "
                 f"description=... to @tool."
             )
+        source, source_hash = _capture_source(fn)
         _insert(
             Tool(
                 name=resolved_name,
                 description=resolved_description,
                 func=fn,
                 args_schema=args_schema,
+                version=version,
+                source=source,
+                source_hash=source_hash,
             )
         )
         return fn
@@ -445,10 +610,10 @@ def registered_tools() -> dict[str, Tool]:
     return dict(_REGISTRY)
 ```
 
-**Authoring ergonomics — three forms, all on a plain function:**
+**Authoring ergonomics — four forms, all on a plain function:**
 
 ```python
-# Bare — inference for everything
+# Bare — inference for everything, version defaults to "1.0.0"
 @tool
 def drug_reference(drug_name: str) -> dict:
     """Look up drug information including dosage, interactions, and contraindications.
@@ -461,6 +626,12 @@ def drug_reference(drug_name: str) -> dict:
 # Rename / redescribe only
 @tool(name="drug_lookup_v2", description="Alternate drug lookup.")
 def drug_reference(drug_name: str) -> dict:
+    ...
+
+# Explicit version bump after a behavioral change
+@tool(version="2.0.0")
+def drug_reference(drug_name: str) -> dict:
+    """Look up drug information — now covers EU drug database."""
     ...
 
 # Redefine the argument schema via a Pydantic model
@@ -476,7 +647,7 @@ class DrugLookupArgs(BaseModel):
     )
 
 
-@tool(args_schema=DrugLookupArgs)
+@tool(args_schema=DrugLookupArgs, version="2.1.0")
 def drug_reference(drug_name: str, country: str = "global") -> dict:
     """Look up drug information by region."""
     ...
@@ -844,7 +1015,7 @@ harmless for our purposes.
 - Every adapter's `convert()` is the only method; adapters are stateless.
 - None of the adapters read `tool.func.__name__` or `tool.func.__doc__`
   directly — they consume the explicit `tool.name` and `tool.description`
-  from the dataclass and pass them through. The ADK
+  from the Pydantic model and pass them through. The ADK
   `args_schema is None` path uses `functools.wraps` to transfer those
   explicit values onto the callable's dunders so ADK's native
   introspection picks them up.
@@ -878,8 +1049,8 @@ entries:
     - `__init__.py` — re-exports `Tool`, `tool`, `get_tool`, `get_tools`,
       `registered_tools`, `ToolAdapter`, `register_tool_adapter`,
       `get_tool_adapter`, `registered_tool_adapters`
-    - `tool.py` — `Tool` (frozen dataclass: name, description, func, args_schema)
-    - `registry.py` — `@tool` decorator, `_insert`, `get_tool`, `get_tools`, `registered_tools`
+    - `tool.py` — `Tool` (frozen Pydantic model: name, description, func, args_schema, version, source, source_hash; validators enforce identifier names, semver versions, and source/hash consistency)
+    - `registry.py` — `@tool` decorator (captures source + hash, accepts version kwarg), `_insert`, `get_tool`, `get_tools`, `registered_tools`
     - `tool_adapter.py` — `ToolAdapter` ABC with `convert(tool) -> Any`, plus `require_optional`
     - `tool_adapter_registry.py` — `@register_tool_adapter` decorator, `get_tool_adapter`, `registered_tool_adapters`
     - `adapters/` — per-framework adapter implementations (lazy-imported)
@@ -901,13 +1072,18 @@ Added under **Architecture** right after the three agent descriptions:
 > **Tool abstraction.** All three agent architectures consume tools
 > through the framework-agnostic `healthbench_agent.tools` subpackage.
 > Authors define a tool with `@tool` on a plain function (inferring
-> name/description from `__name__` and `inspect.getdoc`); the registry
-> stores a `Tool` dataclass; the pipeline adapter (currently only ADK)
-> resolves the registered names to `Tool` instances and runs each
-> through `get_tool_adapter("<framework>").convert(tool)` to obtain the
-> framework-native tool type. Four framework adapters ship in
-> `tools/adapters/` — `adk`, `pydantic_ai`, `langchain`, `crewai` —
-> and adding a fifth is one new file under `adapters/` with
+> name/description from `__name__` and `inspect.getdoc`, and capturing
+> the function's source + SHA-256 for reproducibility); the registry
+> stores a frozen `Tool` Pydantic model with validators enforcing
+> identifier names and semver versions; the pipeline adapter (currently
+> only ADK) resolves the registered names to `Tool` instances and runs
+> each through `get_tool_adapter("<framework>").convert(tool)` to
+> obtain the framework-native tool type. Tool versions follow the same
+> dotted MAJOR.MINOR.PATCH convention as `prompt_version` in
+> `config/agents/*.yaml` and should be logged to MLflow alongside the
+> prompt version for reproducible experiments. Four framework adapters
+> ship in `tools/adapters/` — `adk`, `pydantic_ai`, `langchain`,
+> `crewai` — and adding a fifth is one new file under `adapters/` with
 > `@register_tool_adapter`, no other code touches.
 
 ## 10. Testing strategy
@@ -945,14 +1121,27 @@ This pattern is already used in
 
 ### 10.2 Test inventory
 
-**`test_tool.py` (4 tests)** — frozen dataclass contract:
+**`test_tool.py` (9 tests)** — Pydantic model contract:
 
-- `test_tool_is_frozen`
-- `test_tool_requires_three_fields`
-- `test_tool_accepts_sync_and_async_func` (parametrised)
-- `test_tool_args_schema_defaults_to_none`
+- `test_tool_is_frozen` — mutating a field on an instance raises
+  `pydantic.ValidationError` (not `FrozenInstanceError` — Pydantic
+  raises its own exception type for frozen-model violations).
+- `test_tool_requires_three_fields` — omitting `name`, `description`,
+  or `func` raises `pydantic.ValidationError`.
+- `test_tool_accepts_sync_and_async_func` (parametrised).
+- `test_tool_args_schema_defaults_to_none`.
+- `test_tool_name_must_be_identifier` — `Tool(name="has space", ...)`
+  raises `pydantic.ValidationError` with the identifier message.
+- `test_tool_name_empty_string_raises` — `min_length=1` catches
+  empty string separately from the identifier check.
+- `test_tool_version_defaults_to_1_0_0` — confirm default.
+- `test_tool_version_must_be_semver_like` — `Tool(version="v1", ...)`,
+  `Tool(version="1.0", ...)` both raise `pydantic.ValidationError`.
+- `test_tool_source_hash_must_match_source` — constructing a Tool
+  with mismatched `source`/`source_hash` fields manually raises
+  `pydantic.ValidationError`.
 
-**`test_registry.py` (12 tests)** — `@tool` decorator behavior:
+**`test_registry.py` (16 tests)** — `@tool` decorator behavior:
 
 - `test_bare_decorator_registers_with_inferred_name_and_description`
 - `test_bare_decorator_returns_original_function`
@@ -966,6 +1155,18 @@ This pattern is already used in
 - `test_get_tools_preserves_order`
 - `test_get_tools_raises_on_any_unknown_name`
 - `test_registered_tools_returns_copy`
+- `test_decorator_captures_function_source` — decorate a function
+  defined on disk, assert `get_tool("...").source` contains the
+  function's source text.
+- `test_decorator_computes_source_hash` — confirm `source_hash` is
+  16 hex chars and equals the truncated SHA-256 of `source`.
+- `test_decorator_accepts_version_kwarg_with_default` — bare
+  `@tool` produces `version == "1.0.0"`; `@tool(version="2.1.0")`
+  propagates to the registered Tool.
+- `test_decorator_handles_unavailable_source` — wrap a `lambda` or
+  a builtin (where `inspect.getsource` raises `OSError`/`TypeError`)
+  and assert `source == ""` and `source_hash == ""` rather than a
+  decoration-time crash.
 
 **`test_tool_adapter.py` (4 tests)** — ABC + `require_optional`:
 
@@ -1019,7 +1220,9 @@ tools:
 - `test_convert_medical_tool_round_trip`
 - `test_require_optional_raises_clean_error`
 
-**Total new test count: 49.**
+**Total new test count: 58.** (9 up from 4 in `test_tool.py` for the
+Pydantic validators, 16 up from 12 in `test_registry.py` for source
+capture and version kwarg — everything else unchanged.)
 
 ### 10.3 Pipeline integration test
 
@@ -1071,13 +1274,17 @@ points are marked.
    `src/healthbench_agent/tools/__init__.py`,
    `tests/tools/__init__.py`, `tests/tools/adapters/__init__.py`. No
    re-exports yet — just package markers.
-2. **`Tool` dataclass.** Implement `tools/tool.py` with the four fields;
-   re-export `Tool` from `tools/__init__.py`; add `tests/tools/test_tool.py`
-   (4 tests).
-3. **`@tool` decorator + accessors.** Implement `tools/registry.py`;
+2. **`Tool` Pydantic model.** Implement `tools/tool.py` with the seven
+   fields (`name`, `description`, `func`, `args_schema`, `version`,
+   `source`, `source_hash`) and the three validators (identifier check
+   on `name`, semver check on `version`, source/hash consistency).
+   Re-export `Tool` from `tools/__init__.py`; add
+   `tests/tools/test_tool.py` (9 tests).
+3. **`@tool` decorator + accessors.** Implement `tools/registry.py`,
+   including `_capture_source` and the `version` kwarg on `@tool`;
    re-export `tool`, `get_tool`, `get_tools`, `registered_tools`; add
    `tests/tools/conftest.py` (`clean_tool_registry` fixture); add
-   `tests/tools/test_registry.py` (12 tests).
+   `tests/tools/test_registry.py` (16 tests).
 4. **`ToolAdapter` ABC + `require_optional`.** Implement
    `tools/tool_adapter.py`; re-export `ToolAdapter` and `require_optional`;
    add `tests/tools/test_tool_adapter.py` (4 tests).
@@ -1142,9 +1349,12 @@ points are marked.
 
 ## 12. SOLID check
 
-- **SRP.** `Tool` holds data only. `registry.py` owns name→Tool mapping.
-  `tool_adapter.py` defines the one-method contract. `tool_adapter_registry.py`
-  owns name→class mapping. Each adapter file knows exactly one framework.
+- **SRP.** `Tool` holds data and its own validation invariants (via
+  Pydantic validators) — one reason to change: the set of fields a
+  Tool holds. `registry.py` owns name→Tool mapping.
+  `tool_adapter.py` defines the one-method contract.
+  `tool_adapter_registry.py` owns name→class mapping. Each adapter
+  file knows exactly one framework.
 - **OCP.** Adding a fifth framework is one new file under
   `tools/adapters/` with `@register_tool_adapter`, plus one line in
   `adapters/__init__.py`. Zero touches to the ABC, either registry, or
@@ -1154,11 +1364,20 @@ points are marked.
 - **LSP.** No `Tool` hierarchy. The one ABC is `ToolAdapter` with a
   single `convert(tool) -> Any` contract that every subclass honours.
 - **ISP.** Authors see the `@tool` decorator. Adapters see the `Tool`
-  dataclass and the `ToolAdapter` ABC. Pipeline code sees the adapter
-  registry. No consumer pays for a path it does not use.
+  Pydantic model and the `ToolAdapter` ABC. Pipeline code sees the
+  adapter registry. No consumer pays for a path it does not use.
 - **DIP.** `healthbench_agent/tools/` has zero imports from
   `healthbench_agent/agent/`. The pipeline adapter in
   `agent/adapters/adk_adapter.py` depends on the abstract registry
   (`get_tool_adapter("adk")`), not on the concrete `ADKToolAdapter`
   class. Framework imports live only inside the adapter files that
   need them.
+- **Pydantic validation as invariants.** Converting `Tool` from a
+  `@dataclass(frozen=True)` to a `BaseModel` with `frozen=True` and
+  field validators moves three previously-convention-only invariants
+  — identifier-style names, non-empty descriptions, semver-style
+  versions, and source/hash consistency — into the type itself. Any
+  construction path (decorator, test fixture, future programmatic
+  builder) that violates these raises `pydantic.ValidationError`
+  before the object exists, not inside an adapter where the error
+  would be confusing.
