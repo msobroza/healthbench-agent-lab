@@ -53,7 +53,12 @@ class JudgeConfig(BaseSettings):
             within a single sample. Kept separate from ``max_workers`` to
             avoid thread explosion when the two pools are nested.
         mode: Execution mode — async (ThreadPool) or batch (OpenAI Batch API).
-        prompt_path: Path to the Jinja2 grader prompt YAML file.
+        prompt_path: Path to the Jinja2 grader prompt YAML file. The default
+            (``prompts/llm_grader/v1_llm_grader.yaml``) targets the
+            HealthBench rubric grader verbatim from simple-evals. Point this
+            at a different YAML file under ``prompts/llm_grader/`` (or
+            anywhere on disk) to grade samples from another dataset — the
+            judge itself is dataset-agnostic.
         openai_api_key: OpenAI API key. Read from ``OPENAI_API_KEY`` or
             ``JUDGE_OPENAI_API_KEY``. Masked in ``model_dump()``.
         google_api_key: Google API key. Read from ``GOOGLE_API_KEY`` or
@@ -70,7 +75,13 @@ class JudgeConfig(BaseSettings):
     max_workers: int = Field(120, ge=1)
     grader_max_workers: int = Field(8, ge=1)
     mode: EvalMode = EvalMode.ASYNC
-    prompt_path: str = "prompts/llm_grader/v1_llm_grader.yaml"
+    prompt_path: str = Field(
+        default="prompts/llm_grader/v1_llm_grader.yaml",
+        description=(
+            "Path to the grader prompt YAML. Default targets HealthBench; "
+            "override with a dataset-specific YAML to grade other benchmarks."
+        ),
+    )
 
     openai_api_key: SecretStr | None = Field(
         default=None,

@@ -4,7 +4,6 @@ Replicates the exact evaluation methodology from simple-evals
 healthbench_eval.py. Supports any LLMClient-compatible model.
 
 Public API:
-    - GRADER_TEMPLATE: The verbatim grader prompt from simple-evals.
     - LLMJudgeGrader: Concrete JudgeGrader that uses an LLM client.
     - create_judge: Factory to build a judge from JudgeConfig.
     - grade_sample: Convenience wrapper for one-off grading.
@@ -24,7 +23,6 @@ Public API:
 from .cache import CachedJudgeGrader, VerdictCache
 from .clients import create_llm_client
 from .grading import (
-    GRADER_TEMPLATE,
     EvalMode,
     JudgeConfig,
     LLMJudgeGrader,
@@ -55,7 +53,6 @@ from .runner import EvalRunner
 
 __all__ = [
     "AXIS_TAG_PREFIX",
-    "GRADER_TEMPLATE",
     "CachedJudgeGrader",
     "EmptyFilterError",
     "EvalMode",
