@@ -5,7 +5,7 @@ Public surface:
 * :class:`JudgeConfig`, :class:`EvalMode` from :mod:`.config`.
 * :class:`LLMJudgeGrader`, :func:`create_judge`, :func:`grade_sample`,
   :func:`format_conversation`, :func:`parse_grading_response`,
-  :func:`load_grader_prompt` from :mod:`.judge`.
+  :func:`load_grader_prompt`, :func:`make_template` from :mod:`.judge`.
 
 Grader templates themselves live under ``prompts/llm_grader/`` as YAML
 files; this package does not embed any dataset-specific prompt string.
@@ -18,6 +18,7 @@ from .judge import (
     format_conversation,
     grade_sample,
     load_grader_prompt,
+    make_template,
     parse_grading_response,
 )
 
@@ -29,5 +30,6 @@ __all__ = [
     "format_conversation",
     "grade_sample",
     "load_grader_prompt",
+    "make_template",
     "parse_grading_response",
 ]

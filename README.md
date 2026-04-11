@@ -364,7 +364,7 @@ healthbench-agent-lab/
 │   │   └── visualization.py        #   8 matplotlib visualizations
 │   ├── llm_eval/                   # ⚖️ LLM-as-judge evaluation
 │   │   ├── config_grader.py        #   JudgeConfig, EvalMode
-│   │   ├── grader.py               #   LLMJudgeGrader, GRADER_TEMPLATE
+│   │   ├── grader.py               #   LLMJudgeGrader, make_template, load_grader_prompt
 │   │   ├── samplers.py             #   OpenAIChatSampler, GeminiChatSampler
 │   │   └── runner.py               #   EvalRunner (async/batch)
 │   └── prompt_optimization/        # 🪄 Automatic prompt optimization (domain-agnostic)

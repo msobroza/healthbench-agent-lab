@@ -17,11 +17,11 @@ from healthbench_agent.domain.llm_client import LLMResponse
 from healthbench_agent.domain.rubric import RubricItem
 from healthbench_agent.llm_eval.grading.judge import (
     LLMJudgeGrader,
-    _make_template,
     create_judge,
     format_conversation,
     grade_sample,
     load_grader_prompt,
+    make_template,
     parse_grading_response,
 )
 
@@ -49,7 +49,7 @@ def minimal_template():
     Used by tests that exercise plumbing (judge construction, mock-driven
     grading) and do not care about the real grader wording.
     """
-    return _make_template("<<conversation>> <<rubric_item>>")
+    return make_template("<<conversation>> <<rubric_item>>")
 
 
 # ---------------------------------------------------------------------------

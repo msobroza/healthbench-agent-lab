@@ -10,6 +10,7 @@ Public API:
     - format_conversation: Format a MessageList for the grader prompt.
     - parse_grading_response: Parse JSON grading response.
     - load_grader_prompt: Load and hash a grader prompt YAML file.
+    - make_template: Build a Jinja2 template from a raw grader prompt string.
     - EvalRunner: Orchestrates evaluation across multiple samples.
     - JudgeConfig: Type-safe judge configuration.
     - EvalMode: Execution mode enum (ASYNC, BATCH).
@@ -30,6 +31,7 @@ from .grading import (
     format_conversation,
     grade_sample,
     load_grader_prompt,
+    make_template,
     parse_grading_response,
 )
 from .meta_eval import (
@@ -72,6 +74,7 @@ __all__ = [
     "get_meta_metric",
     "grade_sample",
     "load_grader_prompt",
+    "make_template",
     "meta_evaluate",
     "metadata_filter",
     "parse_grading_response",
