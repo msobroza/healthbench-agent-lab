@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -54,7 +55,7 @@ def test_make_key_is_deterministic_across_instances(tmp_path: Path):
     ],
 )
 def test_make_key_changes_when_any_input_changes(cache: VerdictCache, kwargs):
-    base = dict(
+    base: dict[str, Any] = dict(
         judge_model="m",
         judge_prompt_sha="sha",
         conversation=_conv(),
