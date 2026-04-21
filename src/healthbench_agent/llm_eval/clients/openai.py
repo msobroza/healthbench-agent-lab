@@ -50,7 +50,13 @@ class OpenAIChatClient(LLMClient):
         if self._client is None:
             import openai
 
-            key = self._api_key or os.environ["OPENAI_API_KEY"]
+            key = self._api_key or os.environ.get("OPENAI_API_KEY")
+            if not key:
+                raise RuntimeError(
+                    "OpenAI API key not configured — pass api_key= to "
+                    "OpenAIChatClient, set OPENAI_API_KEY in the environment, "
+                    "or provide JUDGE_OPENAI_API_KEY via JudgeConfig."
+                )
             self._client = openai.OpenAI(
                 api_key=key,
                 timeout=self.timeout,

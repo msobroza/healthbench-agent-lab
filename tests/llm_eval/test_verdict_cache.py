@@ -50,7 +50,7 @@ def test_make_key_is_deterministic_across_instances(tmp_path: Path):
         {"judge_model": "m2"},
         {"judge_prompt_sha": "sha2"},
         {"conversation": [{"role": "user", "content": "different"}]},
-        {"rubric_text": "different"},
+        {"rubric_key": "different"},
         {"k_index": 2},
     ],
 )
@@ -59,7 +59,7 @@ def test_make_key_changes_when_any_input_changes(cache: VerdictCache, kwargs):
         judge_model="m",
         judge_prompt_sha="sha",
         conversation=_conv(),
-        rubric_text="rt",
+        rubric_key="rt",
         k_index=1,
     )
     base_key = cache.make_key(**base)

@@ -47,7 +47,13 @@ class GeminiChatClient(LLMClient):
         if self._client is None:
             import google.genai as genai
 
-            key = self._api_key or os.environ["GOOGLE_API_KEY"]
+            key = self._api_key or os.environ.get("GOOGLE_API_KEY")
+            if not key:
+                raise RuntimeError(
+                    "Google API key not configured — pass api_key= to "
+                    "GeminiChatClient, set GOOGLE_API_KEY in the environment, "
+                    "or provide JUDGE_GOOGLE_API_KEY via JudgeConfig."
+                )
             self._client = genai.Client(api_key=key)
         return self._client
 

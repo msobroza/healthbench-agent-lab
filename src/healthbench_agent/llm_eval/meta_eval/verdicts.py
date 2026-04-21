@@ -62,9 +62,9 @@ def _build_verdict_rows(
     judge: JudgeGrader,
     samples: list[LabelledSample],
     dimension_extractor: Callable[[RubricItem], str | None],
-    n_samples: int,
+    k: int,
 ) -> list[dict[str, Any]]:
-    """Run k passes over each (sample, flow) combination and emit verdict rows.
+    """Run one k-pass over each (sample, flow) combination and emit verdict rows.
 
     For each sample, runs three independent grading flows when the
     relevant data is present:
@@ -80,74 +80,76 @@ def _build_verdict_rows(
         judge: Grader to invoke for every flow.
         samples: Filter-surviving labelled samples.
         dimension_extractor: Maps a rubric item to its optional dimension tag.
-        n_samples: Number of repeated k passes per (sample, flow) combo.
+        k: Pass index stamped on every emitted row's ``sample_k`` column.
+            Callers that need multiple passes loop externally and invoke
+            this helper once per ``k`` (so each call can be dispatched to
+            its own worker).
 
     Returns:
         Flat list of row dicts, ready to feed into ``pd.DataFrame``.
     """
     rows: list[dict[str, Any]] = []
-    for k in range(1, n_samples + 1):
-        for sample in samples:
-            # Sample-level flow: grade the gold response.
-            if sample.gold_response is not None:
-                gold_rubrics = [r for r in sample.rubrics if r.points != 0]
-                if gold_rubrics:
-                    gold_turn: dict[str, Any] = {
-                        "role": "assistant",
-                        "content": sample.gold_response,
-                    }
-                    conversation = sample.prompt + [gold_turn]
-                    verdicts = judge.grade(conversation, gold_rubrics)
-                    for rubric, verdict in zip(gold_rubrics, verdicts, strict=True):
-                        rows.append(
-                            _row(
-                                sample,
-                                rubric,
-                                verdict,
-                                k,
-                                "ideal_completion",
-                                expected_met=rubric.points > 0,
-                                dimension_extractor=dimension_extractor,
-                            )
-                        )
-            # Adversarial flows: grade the known-good and known-bad examples.
-            for rubric in sample.rubrics:
-                if rubric.example_meets is not None:
-                    meets_turn: dict[str, Any] = {
-                        "role": "assistant",
-                        "content": rubric.example_meets,
-                    }
-                    conversation = sample.prompt + [meets_turn]
-                    [verdict] = judge.grade(conversation, [rubric])
+    for sample in samples:
+        # Sample-level flow: grade the gold response.
+        if sample.gold_response is not None:
+            gold_rubrics = [r for r in sample.rubrics if r.points != 0]
+            if gold_rubrics:
+                gold_turn: dict[str, Any] = {
+                    "role": "assistant",
+                    "content": sample.gold_response,
+                }
+                conversation = sample.prompt + [gold_turn]
+                verdicts = judge.grade(conversation, gold_rubrics)
+                for rubric, verdict in zip(gold_rubrics, verdicts, strict=True):
                     rows.append(
                         _row(
                             sample,
                             rubric,
                             verdict,
                             k,
-                            "example_meets",
-                            expected_met=True,
+                            "ideal_completion",
+                            expected_met=rubric.points > 0,
                             dimension_extractor=dimension_extractor,
                         )
                     )
-                if rubric.example_fails is not None:
-                    fails_turn: dict[str, Any] = {
-                        "role": "assistant",
-                        "content": rubric.example_fails,
-                    }
-                    conversation = sample.prompt + [fails_turn]
-                    [verdict] = judge.grade(conversation, [rubric])
-                    rows.append(
-                        _row(
-                            sample,
-                            rubric,
-                            verdict,
-                            k,
-                            "example_fails",
-                            expected_met=False,
-                            dimension_extractor=dimension_extractor,
-                        )
+        # Adversarial flows: grade the known-good and known-bad examples.
+        for rubric in sample.rubrics:
+            if rubric.example_meets is not None:
+                meets_turn: dict[str, Any] = {
+                    "role": "assistant",
+                    "content": rubric.example_meets,
+                }
+                conversation = sample.prompt + [meets_turn]
+                [verdict] = judge.grade(conversation, [rubric])
+                rows.append(
+                    _row(
+                        sample,
+                        rubric,
+                        verdict,
+                        k,
+                        "example_meets",
+                        expected_met=True,
+                        dimension_extractor=dimension_extractor,
                     )
+                )
+            if rubric.example_fails is not None:
+                fails_turn: dict[str, Any] = {
+                    "role": "assistant",
+                    "content": rubric.example_fails,
+                }
+                conversation = sample.prompt + [fails_turn]
+                [verdict] = judge.grade(conversation, [rubric])
+                rows.append(
+                    _row(
+                        sample,
+                        rubric,
+                        verdict,
+                        k,
+                        "example_fails",
+                        expected_met=False,
+                        dimension_extractor=dimension_extractor,
+                    )
+                )
     return rows
 
 

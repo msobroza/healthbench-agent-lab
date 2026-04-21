@@ -3,7 +3,7 @@
 Enables iterating on metric definitions, filters, or output formats without
 re-paying the LLM. Cache key is
 
-    sha256(judge_model || judge_prompt_sha || conversation_hash || k_index || rubric_text)
+    sha256(judge_model || judge_prompt_sha || conversation_hash || k_index || rubric_key)
 
 where conversation_hash is sha256 of the JSON-serialised MessageList.
 
@@ -48,7 +48,7 @@ def make_verdict_cache_key(
     judge_model: str,
     judge_prompt_sha: str,
     conversation: MessageList,
-    rubric_text: str,
+    rubric_key: str,
     k_index: int,
 ) -> str:
     """Compute the deterministic sha256 cache key for a verdict.
@@ -61,7 +61,11 @@ def make_verdict_cache_key(
         judge_model: Identifier of the judge model (e.g. ``"gpt-4o"``).
         judge_prompt_sha: Hash of the rendered judge prompt template.
         conversation: Full conversation being graded.
-        rubric_text: Text of the rubric criterion being graded.
+        rubric_key: Arbitrary string that uniquely identifies the rubric
+            within the cache — typically the ``criterion_id`` when set,
+            otherwise a composite fingerprint like
+            ``f"{criterion}|points={points}|tags={tags}"``. Any stable
+            deterministic fingerprint is acceptable.
         k_index: Index of this sample within a multi-sample majority
             vote, so independent samples get distinct keys.
 
@@ -70,7 +74,7 @@ def make_verdict_cache_key(
         conversation, rubric, k) tuple.
     """
     conv_hash = hashlib.sha256(json.dumps(conversation, sort_keys=True).encode("utf-8")).hexdigest()
-    payload = "||".join([judge_model, judge_prompt_sha, conv_hash, str(k_index), rubric_text])
+    payload = "||".join([judge_model, judge_prompt_sha, conv_hash, str(k_index), rubric_key])
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -120,7 +124,7 @@ class VerdictCache:
         judge_model: str,
         judge_prompt_sha: str,
         conversation: MessageList,
-        rubric_text: str,
+        rubric_key: str,
         k_index: int,
     ) -> str:
         """Compute the deterministic sha256 cache key.
@@ -133,7 +137,9 @@ class VerdictCache:
             judge_model: Identifier of the judge model (e.g. ``"gpt-4o"``).
             judge_prompt_sha: Hash of the rendered judge prompt template.
             conversation: Full conversation being graded.
-            rubric_text: Text of the rubric criterion being graded.
+            rubric_key: Arbitrary string that uniquely identifies the
+                rubric within the cache (``criterion_id`` or a composite
+                fingerprint — see :func:`make_verdict_cache_key`).
             k_index: Index of this sample within a multi-sample majority
                 vote, so independent samples get distinct keys.
 
@@ -145,7 +151,7 @@ class VerdictCache:
             judge_model=judge_model,
             judge_prompt_sha=judge_prompt_sha,
             conversation=conversation,
-            rubric_text=rubric_text,
+            rubric_key=rubric_key,
             k_index=k_index,
         )
 
