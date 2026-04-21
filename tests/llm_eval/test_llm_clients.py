@@ -45,6 +45,12 @@ class TestOpenAIChatClient:
         llm_client = OpenAIChatClient(api_key="test-key-123")
         assert llm_client._api_key == "test-key-123"
 
+    def test_missing_api_key_raises_runtime_error_with_guidance(self, monkeypatch):
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        llm_client = OpenAIChatClient()
+        with pytest.raises(RuntimeError, match="OpenAI API key not configured"):
+            llm_client._get_client()
+
     @patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"})
     def test_call_returns_llm_response(self):
         # Setup mock response
@@ -102,6 +108,12 @@ class TestGeminiChatClient:
     def test_explicit_api_key_stored(self):
         llm_client = GeminiChatClient(api_key="test-key-456")
         assert llm_client._api_key == "test-key-456"
+
+    def test_missing_api_key_raises_runtime_error_with_guidance(self, monkeypatch):
+        monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+        llm_client = GeminiChatClient()
+        with pytest.raises(RuntimeError, match="Google API key not configured"):
+            llm_client._get_client()
 
     @patch.dict("os.environ", {"GOOGLE_API_KEY": "test-key"})
     def test_call_returns_llm_response(self):

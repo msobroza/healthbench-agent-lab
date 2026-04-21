@@ -151,11 +151,7 @@ def run_meta_eval(
 
     def work(pair: tuple[LabelledSample, int]) -> list[dict[str, Any]]:
         sample, k = pair
-        chunk = _build_verdict_rows(grade_for_k(k), [sample], dimension_extractor, 1)
-        # _build_verdict_rows emits rows with sample_k=1; rewrite to outer k.
-        for row in chunk:
-            row["sample_k"] = k
-        return chunk
+        return _build_verdict_rows(grade_for_k(k), [sample], dimension_extractor, k)
 
     show_progress = progress if progress is not None else sys.stdout.isatty()
     chunks: list[list[dict[str, Any]]]
@@ -210,8 +206,15 @@ def run_meta_eval(
     # --- Step 7: build MetricResults + persist --------------------------
     metadata = dict(judge_metadata or {})
     cache_stats = cache.stats() if cache is not None else {"hits": 0, "misses": 0}
-    metadata.setdefault("cache_hits", cache_stats["hits"])
-    metadata.setdefault("cache_misses", cache_stats["misses"])
+    # Cache counters are ground truth for this run — overwrite any caller-provided
+    # "cache_hits"/"cache_misses" so the persisted metrics reflect real cache activity.
+    for key in ("cache_hits", "cache_misses"):
+        if key in metadata:
+            logger.warning(
+                "judge_metadata[%r]=%r overwritten by real cache stats", key, metadata[key]
+            )
+    metadata["cache_hits"] = cache_stats["hits"]
+    metadata["cache_misses"] = cache_stats["misses"]
 
     results = MetricResults(
         scores=scores,

@@ -1134,6 +1134,35 @@ def test_run_meta_eval_with_cache_wraps_judge_in_cached_grader(tmp_path):
     assert view2.results.judge_metadata["cache_hits"] > 0
 
 
+def test_run_meta_eval_overwrites_caller_provided_cache_counters(tmp_path, caplog):
+    """Caller-provided cache_hits/cache_misses must be overwritten by real stats and logged."""
+    import logging
+
+    from healthbench_agent.llm_eval.cache.store import VerdictCache
+
+    cache = VerdictCache(root=tmp_path / "cache", enabled=True)
+    with caplog.at_level(logging.WARNING, logger="healthbench_agent.llm_eval.meta_eval.runner"):
+        view = run_meta_eval(
+            OracleJudge("always_met"),
+            demo_labelled_set(),
+            dimension_extractor=_axis_extractor,
+            n_samples=1,
+            cache=cache,
+            model_fingerprint="fake/model@1.0",
+            judge_prompt_sha="sha-abc",
+            judge_metadata={"cache_hits": 9999, "cache_misses": 9999},
+            progress=False,
+        )
+    stats = cache.stats()
+    assert view.results.judge_metadata["cache_hits"] == stats["hits"]
+    assert view.results.judge_metadata["cache_misses"] == stats["misses"]
+    assert view.results.judge_metadata["cache_hits"] != 9999
+    assert any(
+        "cache_hits" in record.message and "overwritten" in record.message
+        for record in caplog.records
+    )
+
+
 def test_run_meta_eval_with_progress_true_uses_thread_map(monkeypatch):
     """progress=True should dispatch via tqdm's thread_map helper."""
     called: dict[str, Any] = {}
