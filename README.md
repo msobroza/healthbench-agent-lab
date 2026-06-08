@@ -1,6 +1,6 @@
 # 🏥 healthbench-agent-lab
 
-> **Building, evaluating, and iterating on agentic AI systems for health question answering — benchmarked against [HealthBench](https://github.com/openai/healthbench).**
+> **Building, evaluating, and iterating on agentic AI systems for health question answering — benchmarked against [HealthBench](https://openai.com/index/healthbench/).**
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
